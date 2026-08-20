@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "mode": "idle",
   "activePlanPath": "docs/project/credit-transfer-plan.md",
-  "activeCheckpointPath": "docs/work/credit-transfer/CT-12",
-  "activeCheckpointId": "CT-12",
-  "nextAction": "PF-1 and CT-12 are closed and the public issue graph is active. Begin maintainer issue #20 while Qhatahet starts #5, AhmadKrarha starts #9, and Abood-essa starts #14 or #15 from forks."
+  "activeCheckpointPath": "docs/work/traversal/I20",
+  "activeCheckpointId": "I20",
+  "nextAction": "Issue #20 is closed after review and final verification. Stop for owner direction before starting newly unblocked Issue #19."
 }

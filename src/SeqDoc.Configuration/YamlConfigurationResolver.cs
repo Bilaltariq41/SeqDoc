@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using SeqDoc.Application.Analysis;
 using SeqDoc.Core.Diagnostics;
+using SeqDoc.Core.Configuration;
 using SeqDoc.Core.Evidence;
 using SeqDoc.Core.Identity;
 using YamlDotNet.Core;
@@ -65,6 +66,7 @@ public sealed class YamlConfigurationResolver : IConfigurationResolver
         var roots = new ResolvedConfigurationValue<ImmutableSortedSet<string>>(ImmutableSortedSet.Create<string>(StringComparer.Ordinal), ConfigurationProvenance.Default);
         var msbuildProperties = EmptyResolvedMap();
         var knownValues = EmptyResolvedMap();
+        var diagramBudget = DefaultDiagramBudget();
         bool rootsSpecified = false;
 
         if (document is not null)
@@ -90,6 +92,7 @@ public sealed class YamlConfigurationResolver : IConfigurationResolver
             rootsSpecified = document.RootsSpecified;
             roots = new ResolvedConfigurationValue<ImmutableSortedSet<string>>(document.Roots,
                 document.RootsSpecified ? ConfigurationProvenance.ConfigurationFile : ConfigurationProvenance.Default);
+            diagramBudget = ResolveDiagramBudget(document.Diagrams);
         }
 
         if (request.Profile is not null)
@@ -158,10 +161,11 @@ public sealed class YamlConfigurationResolver : IConfigurationResolver
                 sourceLink,
                 roots,
                 msbuildProperties,
-                 knownValues,
-                  rootsSpecified,
-                  excludeParticipants,
-                  excludeCalls))
+                knownValues,
+                rootsSpecified,
+                excludeParticipants,
+                excludeCalls)
+            { DiagramBudget = diagramBudget })
             : ApplicationResult.Failure<ResolvedPassAConfiguration>(ApplicationOutcome.InvalidInput, [invalid]);
     }
 
@@ -301,6 +305,19 @@ public sealed class YamlConfigurationResolver : IConfigurationResolver
         ResolvedConfigurationValue<int> current,
         ConfigurationProvenance provenance) =>
         overlay is null ? current : new ResolvedConfigurationValue<int>(overlay.Value, provenance);
+
+    private static ResolvedDiagramBudget ResolveDiagramBudget(DiagramSettings settings) => new(
+        ResolveBudgetValue(settings.MaxExpandedMethods, SeqDoc.Core.Configuration.DiagramBudget.Default.MaxExpandedMethods),
+        ResolveBudgetValue(settings.MaxExpandedCalls, SeqDoc.Core.Configuration.DiagramBudget.Default.MaxExpandedCalls),
+        ResolveBudgetValue(settings.MaxMaterialMessages, SeqDoc.Core.Configuration.DiagramBudget.Default.MaxMaterialMessages),
+        ResolveBudgetValue(settings.MaxParticipants, SeqDoc.Core.Configuration.DiagramBudget.Default.MaxParticipants),
+        ResolveBudgetValue(settings.MaxMermaidCharacters, SeqDoc.Core.Configuration.DiagramBudget.Default.MaxMermaidCharacters));
+
+    private static ResolvedDiagramBudget DefaultDiagramBudget() => ResolveDiagramBudget(
+        new DiagramSettings(null, null, null, null, null));
+
+    private static ResolvedConfigurationValue<int> ResolveBudgetValue(int? value, int defaultValue) =>
+        new(value ?? defaultValue, value.HasValue ? ConfigurationProvenance.ConfigurationFile : ConfigurationProvenance.Default);
 
     private static ImmutableSortedDictionary<string, ResolvedConfigurationValue<string>> OverlayMap(
         ImmutableSortedDictionary<string, ResolvedConfigurationValue<string>> current,

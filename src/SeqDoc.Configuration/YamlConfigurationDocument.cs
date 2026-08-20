@@ -14,6 +14,13 @@ internal sealed record AnalysisSettings(
     string? SourceLink,
     ImmutableSortedSet<string> SpecifiedFields);
 
+internal sealed record DiagramSettings(
+    int? MaxExpandedMethods,
+    int? MaxExpandedCalls,
+    int? MaxMaterialMessages,
+    int? MaxParticipants,
+    int? MaxMermaidCharacters);
+
 internal sealed record NamedProfileSettings(
     ImmutableSortedDictionary<string, string> MsBuildProperties,
     ImmutableSortedDictionary<string, string> KnownValues);
@@ -24,7 +31,8 @@ internal sealed record YamlConfigurationDocument(
     ImmutableSortedSet<string> Roots,
     bool RootsSpecified,
     ImmutableSortedSet<string> ExcludeParticipants,
-    ImmutableSortedSet<string> ExcludeCalls)
+    ImmutableSortedSet<string> ExcludeCalls,
+    DiagramSettings Diagrams)
 {
     private static readonly StringComparer KeyComparer = StringComparer.Ordinal;
 
@@ -62,8 +70,8 @@ internal sealed record YamlConfigurationDocument(
             ? ParseProfiles(profilesNode)
             : EmptyProfiles();
 
-        var (roots, rootsSpecified, excludeParticipants, excludeCalls) = ValidateLaterSections(fields);
-        return new YamlConfigurationDocument(analysis, profiles, roots, rootsSpecified, excludeParticipants, excludeCalls);
+        var (roots, rootsSpecified, excludeParticipants, excludeCalls, diagrams) = ValidateLaterSections(fields);
+        return new YamlConfigurationDocument(analysis, profiles, roots, rootsSpecified, excludeParticipants, excludeCalls, diagrams);
     }
 
     private static AnalysisSettings ParseAnalysis(YamlNode node)
@@ -109,11 +117,12 @@ internal sealed record YamlConfigurationDocument(
         return result.ToImmutable();
     }
 
-    private static (ImmutableSortedSet<string> Roots, bool Specified, ImmutableSortedSet<string> ExcludeParticipants, ImmutableSortedSet<string> ExcludeCalls) ValidateLaterSections(Dictionary<string, YamlNode> root)
+    private static (ImmutableSortedSet<string> Roots, bool Specified, ImmutableSortedSet<string> ExcludeParticipants, ImmutableSortedSet<string> ExcludeCalls, DiagramSettings Diagrams) ValidateLaterSections(Dictionary<string, YamlNode> root)
     {
         var roots = ImmutableSortedSet.Create<string>(KeyComparer);
         var excludeParticipants = ImmutableSortedSet.Create<string>(KeyComparer);
         var excludeCalls = ImmutableSortedSet.Create<string>(KeyComparer);
+        var diagramSettings = new DiagramSettings(null, null, null, null, null);
         bool rootsSpecified = false;
         if (root.TryGetValue("documentation", out var documentation))
         {
@@ -166,13 +175,14 @@ internal sealed record YamlConfigurationDocument(
             ValidateRuntimeBindings(bindings);
         }
 
-        if (root.TryGetValue("diagrams", out var diagrams))
+        if (root.TryGetValue("diagrams", out var diagramsNode))
         {
-            var fields = ReadFields(RequireMapping(diagrams, "$.diagrams"), "$.diagrams", [
-                "maxParticipants", "maxMaterialMessages", "maxFragmentDepth", "processingColor", "successColor",
+            var fields = ReadFields(RequireMapping(diagramsNode, "$.diagrams"), "$.diagrams", [
+                "maxExpandedMethods", "maxExpandedCalls", "maxParticipants", "maxMaterialMessages", "maxMermaidCharacters",
+                "maxFragmentDepth", "processingColor", "successColor",
                 "recoveryColor", "warningColor", "terminalFailureColor",
             ]);
-            foreach (string key in new[] { "maxParticipants", "maxMaterialMessages", "maxFragmentDepth" })
+            foreach (string key in new[] { "maxExpandedMethods", "maxExpandedCalls", "maxParticipants", "maxMaterialMessages", "maxMermaidCharacters", "maxFragmentDepth" })
             {
                 if (fields.TryGetValue(key, out var value))
                 {
@@ -180,10 +190,17 @@ internal sealed record YamlConfigurationDocument(
                 }
             }
 
+            diagramSettings = new DiagramSettings(
+                OptionalInteger(fields, "maxExpandedMethods", "$.diagrams.maxExpandedMethods"),
+                OptionalInteger(fields, "maxExpandedCalls", "$.diagrams.maxExpandedCalls"),
+                OptionalInteger(fields, "maxMaterialMessages", "$.diagrams.maxMaterialMessages"),
+                OptionalInteger(fields, "maxParticipants", "$.diagrams.maxParticipants"),
+                OptionalInteger(fields, "maxMermaidCharacters", "$.diagrams.maxMermaidCharacters"));
+
             ValidateOptionalStrings(fields, "$.diagrams", "processingColor", "successColor", "recoveryColor", "warningColor", "terminalFailureColor");
         }
 
-        return (roots, rootsSpecified, excludeParticipants, excludeCalls);
+        return (roots, rootsSpecified, excludeParticipants, excludeCalls, diagramSettings);
     }
 
     private static ImmutableSortedSet<string> OptionalDocumentationSet(
@@ -392,6 +409,9 @@ internal sealed record YamlConfigurationDocument(
 
         return value;
     }
+
+    private static int? OptionalInteger(Dictionary<string, YamlNode> fields, string key, string path) =>
+        fields.TryGetValue(key, out var value) ? RequireInteger(value, path, minimum: 1) : null;
 
     private static void ValidateOptionalBoolean(Dictionary<string, YamlNode> fields, string key, string path)
     {

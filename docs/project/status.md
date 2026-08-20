@@ -75,6 +75,9 @@ arbitrary depth cap under cycle and Mermaid-size budgets while three contributor
 persistence/state, and worker/recovery semantics in parallel.
 GitHub parents #1–#4 and sub-issues #5–#23 now encode those workstreams, owners, sub-issue relationships, and blocking
 dependencies. Initial ready issues are #5, #9, #14, #15, and maintainer issue #20.
+Maintainer Issue #20 is closed: configuration now resolves finite per-field method, call, material-message, participant,
+and 45,000-character Mermaid budgets with provenance and CLI visibility, while preserving current traversal/output and
+the public configuration ABI. Issue #19 is the next maintainer implementation boundary.
 
 ## Next execution order
 

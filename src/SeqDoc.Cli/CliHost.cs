@@ -808,6 +808,14 @@ public static class CliHost
         roots = configuration.Roots,
         msbuildProperties = configuration.MsBuildProperties,
         knownValues = configuration.KnownValues,
+        diagramBudget = new
+        {
+            maxExpandedMethods = configuration.MaxExpandedMethods,
+            maxExpandedCalls = configuration.MaxExpandedCalls,
+            maxMaterialMessages = configuration.MaxMaterialMessages,
+            maxParticipants = configuration.MaxParticipants,
+            maxMermaidCharacters = configuration.MaxMermaidCharacters,
+        },
     };
 
     private static void WriteConfiguration(TextWriter output, ResolvedPassAConfiguration configuration)
@@ -818,6 +826,11 @@ public static class CliHost
         output.WriteLine($"Maximum parallelism: {configuration.MaxParallelism.Value} ({configuration.MaxParallelism.Provenance})");
         output.WriteLine($"Binary analysis: {configuration.BinaryAnalysis.Value ?? "<default>"} ({configuration.BinaryAnalysis.Provenance})");
         output.WriteLine($"Source Link: {configuration.SourceLink.Value ?? "<default>"} ({configuration.SourceLink.Provenance})");
+        output.WriteLine($"Maximum expanded methods: {configuration.MaxExpandedMethods.Value} ({configuration.MaxExpandedMethods.Provenance})");
+        output.WriteLine($"Maximum expanded calls: {configuration.MaxExpandedCalls.Value} ({configuration.MaxExpandedCalls.Provenance})");
+        output.WriteLine($"Maximum material messages: {configuration.MaxMaterialMessages.Value} ({configuration.MaxMaterialMessages.Provenance})");
+        output.WriteLine($"Maximum participants: {configuration.MaxParticipants.Value} ({configuration.MaxParticipants.Provenance})");
+        output.WriteLine($"Maximum Mermaid characters: {configuration.MaxMermaidCharacters.Value} ({configuration.MaxMermaidCharacters.Provenance})");
         output.WriteLine($"Configured roots: {string.Join(", ", configuration.Roots.Value)} ({configuration.Roots.Provenance})");
         foreach ((string key, ResolvedConfigurationValue<string> value) in configuration.MsBuildProperties)
         {

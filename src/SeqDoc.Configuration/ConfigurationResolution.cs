@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using SeqDoc.Application.Analysis;
+using SeqDoc.Core.Configuration;
 
 namespace SeqDoc.Configuration;
 
@@ -12,6 +13,13 @@ public enum ConfigurationProvenance
 }
 
 public sealed record ResolvedConfigurationValue<T>(T Value, ConfigurationProvenance Provenance);
+
+public sealed record ResolvedDiagramBudget(
+    ResolvedConfigurationValue<int> MaxExpandedMethods,
+    ResolvedConfigurationValue<int> MaxExpandedCalls,
+    ResolvedConfigurationValue<int> MaxMaterialMessages,
+    ResolvedConfigurationValue<int> MaxParticipants,
+    ResolvedConfigurationValue<int> MaxMermaidCharacters);
 
 /// <summary>Contains command-line values that replace the corresponding file or default values.</summary>
 public sealed record PassAConfigurationOverrides(
@@ -48,7 +56,26 @@ public sealed record ResolvedPassAConfiguration(
     ImmutableSortedDictionary<string, ResolvedConfigurationValue<string>> KnownValues,
     bool RootsSpecified = false,
     ResolvedConfigurationValue<ImmutableSortedSet<string>>? ExcludeParticipants = null,
-    ResolvedConfigurationValue<ImmutableSortedSet<string>>? ExcludeCalls = null);
+    ResolvedConfigurationValue<ImmutableSortedSet<string>>? ExcludeCalls = null)
+{
+    public ResolvedDiagramBudget DiagramBudget { get; init; } = DefaultDiagramBudget;
+    public ResolvedDiagramBudget ResolvedDiagramBudget => DiagramBudget;
+    public ResolvedConfigurationValue<int> MaxExpandedMethods => ResolvedDiagramBudget.MaxExpandedMethods;
+    public ResolvedConfigurationValue<int> MaxExpandedCalls => ResolvedDiagramBudget.MaxExpandedCalls;
+    public ResolvedConfigurationValue<int> MaxMaterialMessages => ResolvedDiagramBudget.MaxMaterialMessages;
+    public ResolvedConfigurationValue<int> MaxParticipants => ResolvedDiagramBudget.MaxParticipants;
+    public ResolvedConfigurationValue<int> MaxMermaidCharacters => ResolvedDiagramBudget.MaxMermaidCharacters;
+
+    private static ResolvedDiagramBudget DefaultDiagramBudget => new(
+        Default(SeqDoc.Core.Configuration.DiagramBudget.Default.MaxExpandedMethods),
+        Default(SeqDoc.Core.Configuration.DiagramBudget.Default.MaxExpandedCalls),
+        Default(SeqDoc.Core.Configuration.DiagramBudget.Default.MaxMaterialMessages),
+        Default(SeqDoc.Core.Configuration.DiagramBudget.Default.MaxParticipants),
+        Default(SeqDoc.Core.Configuration.DiagramBudget.Default.MaxMermaidCharacters));
+
+    private static ResolvedConfigurationValue<int> Default(int value) =>
+        new(value, ConfigurationProvenance.Default);
+}
 
 public interface IConfigurationResolver
 {

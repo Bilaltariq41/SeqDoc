@@ -56,6 +56,11 @@ public sealed class YamlConfigurationResolverTests
         Assert.Null(value.RuntimeIdentifier.Value);
         Assert.Equal("metadata-only", value.BinaryAnalysis.Value);
         Assert.Equal("offline", value.SourceLink.Value);
+        Assert.Equal(1024, value.MaxExpandedMethods.Value);
+        Assert.Equal(4096, value.MaxExpandedCalls.Value);
+        Assert.Equal(1024, value.MaxMaterialMessages.Value);
+        Assert.Equal(256, value.MaxParticipants.Value);
+        Assert.Equal(45_000, value.MaxMermaidCharacters.Value);
         Assert.All(
             new[]
             {
@@ -65,6 +70,11 @@ public sealed class YamlConfigurationResolverTests
                 value.RuntimeIdentifier.Provenance,
                 value.BinaryAnalysis.Provenance,
                 value.SourceLink.Provenance,
+                value.MaxExpandedMethods.Provenance,
+                value.MaxExpandedCalls.Provenance,
+                value.MaxMaterialMessages.Provenance,
+                value.MaxParticipants.Provenance,
+                value.MaxMermaidCharacters.Provenance,
             },
             provenance => Assert.Equal(ConfigurationProvenance.Default, provenance));
         Assert.Empty(value.MsBuildProperties);
