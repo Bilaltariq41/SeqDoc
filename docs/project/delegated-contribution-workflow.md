@@ -21,6 +21,18 @@ Canonical documentation is rewritten from verified evidence. For each integrated
 what was repaired or rejected, why, the verification performed, and whether delegation reduced total work. Optimize
 the workflow from recurring defect categories rather than weakening review standards.
 
+## Delivery package sizing
+
+Use sub-issues to model dependencies and acceptance, but avoid requiring maintainer review after every small internal
+step. A parent workstream should group 1–3 cohesive sub-issues into an approved delivery package when they share target
+paths and one vertical outcome. The contributor and agent may use multiple ordered commits inside one package PR; the
+PR closes every included issue and receives one complete self-review.
+
+Keep a contract and its first consumer together when that makes the abstraction demonstrably useful. Separate a shared
+foundation when its review could materially redirect dependent work, and keep supplied-project acceptance separate
+when it would obscure the semantic implementation diff. Never enlarge a package with unrelated cleanup merely to
+reduce review count.
+
 ## Review latency and dependent work
 
 Maintain at least one independent `ready` issue per contributor where practical. A contributor with a review-ready PR

@@ -59,7 +59,11 @@ documentation to SeqDoc. See `docs/usage.md` for setup.
 ## Pull requests and review
 
 - Work in a fork and a focused branch. Never push directly to SeqDoc `main`.
-- Link the assigned issue with `Closes #<number>` and list included sub-issues.
+- Follow the parent workstream's approved delivery packages. One PR may close 1–3 cohesive sub-issues when they share a
+  contract, target paths, and acceptance boundary; list every included issue with `Closes #<number>`.
+- Do not combine unrelated issues or invent a package without maintainer approval. Shared contracts should include
+  their first real consumer in the same package when that makes the design reviewable, but review-sensitive foundations
+  may still be separated explicitly.
 - Describe the problem, design, risks, changed paths, focused verification, final gate, and remaining boundaries.
 - Open a draft PR early for substantial work, but request review only after tests and self-review pass.
 - The maintainer will batch findings. Fix every finding on the same PR branch, explain the repair, rerun only affected
@@ -69,8 +73,8 @@ documentation to SeqDoc. See `docs/usage.md` for setup.
 ### While waiting for review
 
 1. Finish and self-review the submitted PR before starting more implementation.
-2. Prefer another independent issue labeled `ready`, branched from current `main`. Keep at most two implementation PRs
-   open per contributor.
+2. Prefer another independent issue or approved delivery package labeled `ready`, branched from current `main`. Keep
+   at most two implementation PRs open per contributor.
 3. For a blocked next issue, research and comment a plan, risks, fixtures, and tests without changing production code.
 4. A dependent implementation may start only after the maintainer comments approval and applies `stack-approved`.
    Keep the GitHub dependency in place, branch from the pending PR, open a draft PR, state `Depends on PR #...`, and

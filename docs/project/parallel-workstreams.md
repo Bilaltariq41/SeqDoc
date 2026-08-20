@@ -104,6 +104,25 @@ risks, focused verification, final gate, and supplied-app acceptance. PRs use `C
 findings; the contributor and their coding agent repair the same PR. After two unsuccessful repair rounds, the work is
 split, rejected, or explicitly taken over. Only reviewed merges update parent progress and canonical docs.
 
+### Approved contributor delivery packages
+
+Sub-issues remain separate for dependencies and completion tracking, but the normal human/agent delivery unit is a
+larger vertical PR:
+
+- **Service package 1:** #5 exact facts + #7 CoreWCF roots/dispatch.
+- **Service package 2:** #6 clients, outbound boundaries, faults, and responses.
+- **Service package 3:** #8 supplied-project acceptance.
+- **Persistence package 1:** #9 shared contracts + #10 EF Core behavior.
+- **Persistence package 2:** #11 EF6/EDMX + #12 state transitions/outcomes.
+- **Persistence package 3:** #13 supplied-project acceptance.
+- **Worker package 1:** #14 worker lifecycle + #15 scheduler/job facts.
+- **Worker package 2:** #16 polling/retry/cancellation + #17 recovery/callbacks.
+- **Worker package 3:** #18 supplied-project acceptance.
+
+The maintainer traversal issues #19, #22, #21, and #23 are already substantial and remain separate. Package grouping
+does not remove GitHub dependencies: a PR can implement a contract and its approved first consumer together, but
+merge order and external acceptance still follow the issue graph.
+
 ## Completion ladder
 
 ### Immediate

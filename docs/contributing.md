@@ -44,6 +44,11 @@ For assigned team work, the parent issue defines the workstream and sub-issues d
 `Closes #<issue>` in the PR body. Follow the planning, self-review, and repair loop in [`AGENTS.md`](../AGENTS.md)
 whether the change is written manually or with a coding agent.
 
+Sub-issues are planning and dependency units, not necessarily one-PR units. Parent workstreams define approved
+delivery packages of 1–3 cohesive sub-issues. A package should deliver one complete vertical capability with production
+code, tests, and realistic acceptance while avoiding unrelated scope. List every closed sub-issue in the PR body. Do
+not create a new package without maintainer approval.
+
 By submitting a contribution, you represent that you have the right to submit it and agree that it
 is licensed under the [Mozilla Public License 2.0](../LICENSE), the same license as the project.
 
