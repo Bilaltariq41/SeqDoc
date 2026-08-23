@@ -39,6 +39,21 @@ Scope drift is a separate recurring category. SDK/build files, CLI behavior, pub
 the issue allowlist require prior maintainer approval. A useful unrelated fix stays out of the candidate until it has
 its own authority and coverage.
 
+## Semantic delivery sequence
+
+Use one primary contributor or coding agent for a semantic package from issue brief through production implementation,
+focused tests, and complete-candidate self-review. The issue brief must name the exact compiler identity and operation
+shape, registration or admission requirement, evidence chain to the first observable consumer, unsupported forms,
+negative lookalikes, target paths, and one focused command. Do not split one semantic chain among layer-specific agents
+unless the contract has already been reviewed and the paths are independent.
+
+Invoke one independent reviewer only after the vertical candidate is complete. Batch findings by proof-gate failure,
+repair the same branch and PR, and rerun affected focused tests before the declared final gate. After two unsuccessful
+repair rounds, stop contributor churn: split or reject the candidate, or explicitly transfer ownership to a bounded
+maintainer integration checkpoint. A takeover preserves the contributor's accepted implementation, records every
+maintainer repair, publishes through the original PR when practical, and acknowledges both retained work and the final
+verification. This sequence reduces handoffs; it does not weaken evidence, review, or test requirements.
+
 ## Delivery package sizing
 
 Use sub-issues to model dependencies and acceptance, but avoid requiring maintainer review after every small internal

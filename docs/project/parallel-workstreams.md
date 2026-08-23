@@ -21,8 +21,9 @@ Public execution graph:
 - persistence/state: parent [#3](https://github.com/Bilaltariq41/SeqDoc/issues/3), sub-issues #9–#13;
 - worker/recovery: parent [#4](https://github.com/Bilaltariq41/SeqDoc/issues/4), sub-issues #14–#18.
 
-Issues #5, #9, #14, and #15 remain contributor-ready. Maintainer Issue #20 established the finite depthless budget
-contract and unblocks #19. GitHub sub-issue and `blocked by` relationships are authoritative for later availability.
+Issues #14 and #15 merged through the original contributor PR after bounded maintainer integration. Issue #16 is the
+next ready worker package boundary; #17 remains blocked by the persistence-state contract. Issues #5 and #9 remain
+contributor-ready. GitHub sub-issue and `blocked by` relationships are authoritative for availability.
 
 ## Maintainer stream — Depthless traversal and large diagrams
 
@@ -80,8 +81,8 @@ Deliver generic worker lifecycle, scheduling, batch, retry, callback, and recove
 
 Planned slices:
 
-1. hosted worker start/stop and executable-root admission;
-2. scheduler/timer registration and job invocation facts;
+1. hosted worker start/stop and executable-root admission — merged;
+2. scheduler/timer registration and job invocation facts — merged;
 3. polling, batch loops, retry, cancellation, and terminal boundaries;
 4. recovery/state progression and callback/event boundaries;
 5. FraudManagement, SMSGateway, CreditTransfer, and unrelated negative-fixture acceptance.

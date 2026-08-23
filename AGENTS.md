@@ -92,10 +92,16 @@ documentation to SeqDoc. See `docs/usage.md` for setup.
   their first real consumer in the same package when that makes the design reviewable, but review-sensitive foundations
   may still be separated explicitly.
 - Describe the problem, design, risks, changed paths, focused verification, final gate, and remaining boundaries.
+- For a semantic package, one contributor or coding agent owns the complete vertical candidate from compiler producer
+  through its first observable consumer and self-review. Independent review starts after that candidate is complete;
+  avoid layer-by-layer handoffs unless the contract is already accepted and the paths are independent.
 - Open a draft PR early for substantial work, but request review only after tests and self-review pass.
 - The maintainer will batch findings. Fix every finding on the same PR branch, record the repair trace described in
   `docs/project/delegated-contribution-workflow.md`, re-review the complete candidate, rerun affected focused tests plus
   the required gate, and request review again.
+- After two unsuccessful repair rounds, stop and wait for an explicit split, rejection, or bounded maintainer takeover.
+  A takeover retains accepted contributor work and attribution, records its repair delta, and uses the original PR when
+  practical.
 - Do not rewrite canonical roadmap/status files to claim completion. The maintainer updates them after merge.
 
 ### While waiting for review
