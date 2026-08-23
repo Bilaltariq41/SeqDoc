@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Text;
 using SeqDoc.Core.Diagnostics;
+using SeqDoc.Core.Configuration;
 using SeqDoc.Core.DiagramPlan;
 using SeqDoc.Core.Evidence;
 using SeqDoc.Core.Frameworks;
@@ -178,14 +179,15 @@ public static class DocumentationPlanner
     public static DocumentationPlan Plan(
         ScenarioGraph graph,
         ImmutableSortedSet<string>? excludeParticipants = null,
-        ImmutableSortedSet<string>? excludeCalls = null)
+        ImmutableSortedSet<string>? excludeCalls = null,
+        DiagramBudget? diagramBudget = null)
     {
         ArgumentNullException.ThrowIfNull(graph);
         ValidateStructuralExclusions(graph, excludeParticipants);
         var filter = PresentationFilter.Create(graph, excludeParticipants, excludeCalls);
 
         var phrases = BuildPhrases(graph, filter);
-        var diagram = BuildDiagram(graph, filter);
+        var diagram = BuildDiagram(graph, filter, diagramBudget);
 
         var wording = new WordingDocument(
             graph.EntryPoint,
@@ -519,7 +521,7 @@ public static class DocumentationPlanner
         _ => null,
     };
 
-    private static DiagramPlan BuildDiagram(ScenarioGraph graph, PresentationFilter filter)
+    private static DiagramPlan BuildDiagram(ScenarioGraph graph, PresentationFilter filter, DiagramBudget? diagramBudget)
     {
         var participants = new Dictionary<string, DiagramParticipant>(StringComparer.Ordinal);
         var messages = new List<DiagramMessage>();
@@ -1055,6 +1057,72 @@ public static class DocumentationPlanner
         var orderedMessages = messages.ToImmutableArray();
         var orderedBranches = branches.ToImmutableArray();
 
+        if (diagramBudget is not null)
+        {
+            var limit = diagramBudget;
+            if (orderedMessages.Length <= limit.MaxMaterialMessages && orderedParticipants.Length <= limit.MaxParticipants)
+            {
+                goto SkipMaterialBudget;
+            }
+            var admitted = new List<DiagramMessage>();
+            var admittedParticipants = new HashSet<string>(StringComparer.Ordinal);
+            bool messageLimitReached = false;
+            bool participantLimitReached = false;
+            foreach (var message in orderedMessages)
+            {
+                if (admitted.Count >= limit.MaxMaterialMessages)
+                {
+                    messageLimitReached = true;
+                    break;
+                }
+                var newParticipants = new[] { message.Source, message.Target }
+                    .Where(item => !admittedParticipants.Contains(item)).Distinct(StringComparer.Ordinal).ToArray();
+                if (admittedParticipants.Count + newParticipants.Length > limit.MaxParticipants)
+                {
+                    participantLimitReached = true;
+                    break;
+                }
+                admitted.Add(message);
+                foreach (var participant in newParticipants)
+                {
+                    admittedParticipants.Add(participant);
+                }
+            }
+            var materialMessages = admitted.ToImmutableArray();
+            var refs = materialMessages.Select(item => item.Id).ToHashSet();
+            if (!sequence.Elements.IsEmpty)
+            {
+                sequence = TrimSequence(sequence, refs);
+                orderedMessages = materialMessages.Where(item => SequenceContains(sequence, item.Id)).ToImmutableArray();
+            }
+            else
+            {
+                orderedMessages = materialMessages;
+            }
+            var used = orderedMessages.SelectMany(item => new[] { item.Source, item.Target }).ToHashSet(StringComparer.Ordinal);
+            orderedParticipants = orderedParticipants.Where(item => used.Contains(item.Key)).ToImmutableArray();
+            var keptKeys = orderedMessages.Select(item => item.Key).ToHashSet(StringComparer.Ordinal);
+            orderedBranches = orderedBranches
+                .Where(branch => branch.MessageKeys.Any(keptKeys.Contains))
+                .Select(branch => new DiagramBranch(branch.Id, branch.Key, branch.Label, branch.Kind,
+                    branch.MessageKeys.Where(keptKeys.Contains).ToImmutableArray(), branch.Evidence, branch.Certainty))
+                .ToImmutableArray();
+            if (messageLimitReached || participantLimitReached)
+            {
+                var dimensions = string.Join(",", new[]
+                    { messageLimitReached ? $"messages={limit.MaxMaterialMessages}" : null,
+                      participantLimitReached ? $"participants={limit.MaxParticipants}" : null }.Where(item => item is not null));
+                diagnostics = diagnostics.Add(new DiagramPlanDiagnostic(
+                    StableIdentity.CreateDiagnosticId(new DiagnosticIdentityDescriptor(
+                        "DP-BUDGET-TRUNCATED", AnalysisStage.CommandLine, graph.Profile,
+                        $"{graph.EntryPoint.Value}:material", 0)),
+                    "DP-BUDGET-TRUNCATED", "The diagram was truncated to its configured material budget.",
+                    dimensions));
+            }
+        }
+
+    SkipMaterialBudget:
+
         return new DiagramPlan(
             graph.EntryPoint,
             graph.Profile,
@@ -1069,6 +1137,43 @@ public static class DocumentationPlanner
             sequence,
             diagnostics);
     }
+
+    private static DiagramSequence TrimSequence(DiagramSequence sequence, HashSet<DiagramPlanElementId> refs)
+        => new(sequence.Elements.Select(element => element.IsMessageRef
+                ? refs.Contains(element.MessageRefId!.Value) ? element : null
+                : TrimFragment(element.NestedFragment!, refs))
+            .Where(element => element is not null).Select(element => element!).ToImmutableArray());
+
+    private static DiagramSequenceElement? TrimFragment(DiagramFragment fragment, HashSet<DiagramPlanElementId> refs)
+    {
+        var messages = fragment.MessageRefs.Where(refId => refs.Contains(refId)).ToImmutableArray();
+        var nested = fragment.Fragments.Select(item => TrimFragment(item, refs)).Where(item => item is not null).Select(item => item!.NestedFragment!).ToImmutableArray();
+        var arms = fragment.Arms.Select(arm =>
+        {
+            var armMessages = arm.MessageRefs.Where(refId => refs.Contains(refId)).ToImmutableArray();
+            var armFragments = arm.Fragments.Select(item => TrimFragment(item, refs)).Where(item => item is not null).Select(item => item!.NestedFragment!).ToImmutableArray();
+            return new DiagramAltArm(arm.Id, arm.Key, arm.Label, arm.IsElse, armMessages, armFragments, arm.Evidence, arm.Certainty);
+        }).Where(arm => arm.MessageRefs.Length > 0 || arm.Fragments.Length > 0).ToImmutableArray();
+        if (messages.Length == 0 && nested.Length == 0 && arms.Length == 0) { return null; }
+        if (arms.Length == 1)
+        {
+            var arm = arms[0];
+            return DiagramSequenceElement.Fragment(new DiagramFragment(fragment.Id, fragment.Key, fragment.Label,
+                DiagramFragmentKind.Opt, [], arm.MessageRefs, arm.Fragments, fragment.Evidence, fragment.Certainty));
+        }
+        return DiagramSequenceElement.Fragment(new DiagramFragment(fragment.Id, fragment.Key, fragment.Label, fragment.Kind,
+            arms, messages, nested, fragment.Evidence, fragment.Certainty));
+    }
+
+    private static bool SequenceContains(DiagramSequence sequence, DiagramPlanElementId id)
+        => sequence.Elements.Any(element => element.IsMessageRef
+            ? element.MessageRefId == id
+            : FragmentContains(element.NestedFragment!, id));
+
+    private static bool FragmentContains(DiagramFragment fragment, DiagramPlanElementId id)
+        => fragment.MessageRefs.Contains(id)
+            || fragment.Arms.Any(arm => arm.MessageRefs.Contains(id) || arm.Fragments.Any(item => FragmentContains(item, id)))
+            || fragment.Fragments.Any(item => FragmentContains(item, id));
 
     /// <summary>Default maximum nested fragment depth; deeper unambiguous topology fails closed to a flat fallback.</summary>
     private const int MaxFragmentDepthLimit = 3;

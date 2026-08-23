@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "mode": "idle",
   "activePlanPath": "docs/project/credit-transfer-plan.md",
-  "activeCheckpointPath": "docs/work/traversal/I20",
-  "activeCheckpointId": "I20",
-  "nextAction": "Issue #20 is closed after review and final verification. Stop for owner direction before starting newly unblocked Issue #19."
+  "activeCheckpointPath": "docs/work/traversal/I19",
+  "activeCheckpointId": "I19",
+  "nextAction": "Issue #19 is closed locally after review resolution and final verification. Preserve the uncommitted, unpushed candidate and stop for owner publication or next-checkpoint direction."
 }

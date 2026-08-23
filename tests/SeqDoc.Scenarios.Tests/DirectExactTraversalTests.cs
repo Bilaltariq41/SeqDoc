@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using SeqDoc.Analysis.Scenarios;
 using SeqDoc.Application.Documentation;
+using SeqDoc.Core.Configuration;
 using SeqDoc.Core.Identity;
 using SeqDoc.Core.ScenarioGraph;
 using Xunit;
@@ -80,26 +81,78 @@ public sealed class DirectExactTraversalTests
     }
 
     [Fact]
-    public void DepthBoundaryKeepsProvenPrefixAndDiagnosesExactDeeperWork()
+    public void DeepChainExpandsInDeterministicDepthFirstChronologyWithoutDepthBoundary()
     {
-        var expansion = DirectExactTraversalFixture.BuildGraph("depth-three").DirectCallExpansion;
+        var expansion = DirectExactTraversalFixture.BuildGraph("deep-chain").DirectCallExpansion;
 
-        Assert.DoesNotContain(expansion.Steps, step => step.Depth > 2);
+        Assert.Equal(1024, expansion.Steps.Length);
+        Assert.Equal(Enumerable.Range(1, 1024), expansion.Steps.Select(step => step.Depth));
+        Assert.Equal(Enumerable.Range(0, 1024).Select(index => $"operation:v1:chain.{index:D3}"),
+            expansion.Steps.Select(step => step.Operation.Value));
         Assert.False(expansion.IsComplete);
-        Assert.Contains(expansion.Diagnostics, diagnostic => diagnostic.Code == "SC-DIRECT-DEPTH");
+        Assert.False(expansion.Steps[^1].IsComplete);
+        Assert.Equal("operation:v1:chain.1023", expansion.Steps[^1].Operation.Value);
+        var budgetDiagnostic = Assert.Single(expansion.Diagnostics, diagnostic => diagnostic.Code == "SC-DIRECT-METHOD-BUDGET");
+        Assert.Contains("1024", budgetDiagnostic.Detail, StringComparison.Ordinal);
+        Assert.NotEmpty(budgetDiagnostic.Evidence);
+        Assert.DoesNotContain(expansion.Diagnostics, diagnostic => diagnostic.Code == "SC-DIRECT-DEPTH");
     }
 
-    [Theory]
-    [InlineData("node-budget")]
-    [InlineData("node-budget-reversed")]
-    public void NodeBudgetKeepsDeterministicPrefixAndDiagnosesExhaustion(string partition)
+    [Fact]
+    public void DeepChainReversedFactsProduceIdenticalExpansionAndPlan()
     {
-        var expansion = DirectExactTraversalFixture.BuildGraph(partition).DirectCallExpansion;
+        var normal = DirectExactTraversalFixture.BuildGraph("deep-chain");
+        var reversed = DirectExactTraversalFixture.BuildGraph("deep-chain-reversed");
 
-        Assert.Equal(64, expansion.Steps.Length);
-        Assert.Equal(64, expansion.Steps.Select(step => step.Id).Distinct().Count());
+        Assert.Equal(normal.DebugProjection, reversed.DebugProjection);
+        Assert.Equal(normal.DirectCallExpansion!.Steps.Select(step => step.Id), reversed.DirectCallExpansion!.Steps.Select(step => step.Id));
+        Assert.Equal(normal.DirectCallExpansion.Steps.Select(step => (step.Depth, step.Operation.Value, step.IsComplete, step.IsCycleBoundary)),
+            reversed.DirectCallExpansion.Steps.Select(step => (step.Depth, step.Operation.Value, step.IsComplete, step.IsCycleBoundary)));
+        Assert.Equal(normal.DirectCallExpansion.Diagnostics.Select(item => $"{item.Code}|{item.Detail}|{string.Join(',', item.Evidence.Select(evidence => evidence.Id.Value))}"),
+            reversed.DirectCallExpansion.Diagnostics.Select(item => $"{item.Code}|{item.Detail}|{string.Join(',', item.Evidence.Select(evidence => evidence.Id.Value))}"));
+        Assert.Equal(DirectExactTraversalFixture.Plan(normal), DirectExactTraversalFixture.Plan(reversed));
+    }
+
+    [Fact]
+    public void CallBudgetKeepsExactDeterministicPrefixAndNamesConfiguredLimit()
+    {
+        var expansion = DirectExactTraversalFixture.BuildGraph("deep-chain", new DiagramBudget(1024, 4, 1024, 256, 45_000)).DirectCallExpansion;
+
+        Assert.Equal(4, expansion.Steps.Length);
+        Assert.Equal(["operation:v1:chain.000", "operation:v1:chain.001", "operation:v1:chain.002", "operation:v1:chain.003"],
+            expansion.Steps.Select(step => step.Operation.Value));
+        var diagnostic = Assert.Single(expansion.Diagnostics, item => item.Code == "SC-DIRECT-CALL-BUDGET");
+        Assert.Contains("4", diagnostic.Detail, StringComparison.Ordinal);
+        Assert.NotEmpty(diagnostic.Evidence);
         Assert.False(expansion.IsComplete);
-        Assert.Contains(expansion.Diagnostics, diagnostic => diagnostic.Code == "SC-DIRECT-NODE-BUDGET");
+    }
+
+    [Fact]
+    public void MethodBudgetCountsConfiguredRootAndPreservesIncompleteBoundaryCallSite()
+    {
+        var expansion = DirectExactTraversalFixture.BuildGraph("deep-chain", new DiagramBudget(3, 1024, 1024, 256, 45_000)).DirectCallExpansion;
+
+        Assert.Equal(3, expansion.Steps.Length);
+        Assert.Equal(["operation:v1:chain.000", "operation:v1:chain.001", "operation:v1:chain.002"],
+            expansion.Steps.Select(step => step.Operation.Value));
+        var boundary = Assert.Single(expansion.Steps.Where(step => !step.IsComplete));
+        Assert.Equal("operation:v1:chain.002", boundary.Operation.Value);
+        var diagnostic = Assert.Single(expansion.Diagnostics, item => item.Code == "SC-DIRECT-METHOD-BUDGET");
+        Assert.Contains("3", diagnostic.Detail, StringComparison.Ordinal);
+        Assert.NotEmpty(diagnostic.Evidence);
+    }
+
+    [Fact]
+    public void SharedCalleeConsumesDistinctMethodOnceButEachOccurrenceConsumesCallBudget()
+    {
+        var expansion = DirectExactTraversalFixture.BuildGraph("shared-callee", new DiagramBudget(3, 3, 1024, 256, 45_000)).DirectCallExpansion;
+
+        Assert.Equal(3, expansion.Steps.Length);
+        Assert.Equal(["operation:v1:root.first", "operation:v1:shared.first", "operation:v1:root.second"],
+            expansion.Steps.Select(step => step.Operation.Value));
+        Assert.Contains(expansion.Diagnostics, item => item.Code == "SC-DIRECT-CALL-BUDGET");
+        Assert.DoesNotContain(expansion.Diagnostics, item => item.Code == "SC-DIRECT-METHOD-BUDGET");
+        Assert.Equal(2, expansion.Steps.Count(step => step.TargetMethod == DirectExactTraversalFixture.SharedCallee));
     }
 
     [Theory]

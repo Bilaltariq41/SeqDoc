@@ -1,4 +1,7 @@
+using System.Collections.Immutable;
 using System.Text.Json;
+using SeqDoc.Core.Configuration;
+using SeqDoc.Core.DiagramPlan;
 using SeqDoc.Rendering.Markdown;
 using Xunit;
 
@@ -84,6 +87,70 @@ public sealed class DiagramPlanRenderingTests : IDisposable
 
         string mermaid = File.ReadAllText(Path.Combine(first, "get-api-test-1234abcd.mmd"));
         Assert.Empty(MermaidValidator.Validate(mermaid));
+    }
+
+    [Fact]
+    public void ConfiguredMermaidBudgetProducesValidDeterministicBoundedPrefixAndDiagnostic()
+    {
+        var original = PlanTestFactory.CreateDiagramPlan();
+        var firstMessage = original.Messages[0];
+        var oneMessageParticipants = original.Participants
+            .Where(participant => participant.Key == firstMessage.Source || participant.Key == firstMessage.Target)
+            .ToImmutableArray();
+        var oneMessagePlan = new DiagramPlan(original.EntryPoint, original.Profile, original.OperationKey,
+            oneMessageParticipants, [firstMessage], [], "legacy-one-message");
+        int oneMessageLimit = MermaidRenderer.Render(oneMessagePlan).Length;
+        var entry = new DocumentSetEntry("get-api-test-1234abcd", PlanTestFactory.CreateWordingDocument(), original);
+        var budget = new DiagramBudget(1024, 4096, 1024, 256, oneMessageLimit);
+        var first = DocumentationSetBuilder.Build("profile:v1:test", "fingerprint", [entry], budget);
+        var second = DocumentationSetBuilder.Build("profile:v1:test", "fingerprint", [entry], budget);
+
+        Assert.True(first.Succeeded, string.Join("; ", first.Errors));
+        var firstMermaid = first.Files.Single(file => file.RelativePath.EndsWith(".mmd", StringComparison.Ordinal));
+        var secondMermaid = second.Files.Single(file => file.RelativePath.EndsWith(".mmd", StringComparison.Ordinal));
+        string firstText = System.Text.Encoding.UTF8.GetString(firstMermaid.Content);
+        Assert.True(firstText.Length <= budget.MaxMermaidCharacters);
+        Assert.Empty(MermaidValidator.Validate(firstText));
+        Assert.Contains(firstMessage.Label, firstText, StringComparison.Ordinal);
+        Assert.DoesNotContain(original.Messages[1].Label, firstText, StringComparison.Ordinal);
+        Assert.Equal(firstMermaid.Content, secondMermaid.Content);
+        Assert.Contains(first.Diagnostics, diagnostic => diagnostic.Code == "DP-MERMAID-TRUNCATED");
+    }
+
+    [Fact]
+    public void DefaultBudgetPreservesLegacyBytesAndMinimumMermaidLimitFailsExplicitly()
+    {
+        var entry = new DocumentSetEntry("get-api-test-1234abcd", PlanTestFactory.CreateWordingDocument(), PlanTestFactory.CreateDiagramPlan());
+        var legacy = DocumentationSetBuilder.Build("profile:v1:test", "fingerprint", [entry]);
+        var explicitDefault = DocumentationSetBuilder.Build("profile:v1:test", "fingerprint", [entry], DiagramBudget.Default);
+        Assert.Equal(legacy.Files.Select(file => (file.RelativePath, file.Content)), explicitDefault.Files.Select(file => (file.RelativePath, file.Content)));
+
+        var belowMinimum = DocumentationSetBuilder.Build("profile:v1:test", "fingerprint", [entry], new DiagramBudget(1, 1, 1, 1, 14));
+        Assert.False(belowMinimum.Succeeded);
+        Assert.Empty(belowMinimum.Files);
+        Assert.Contains(belowMinimum.Errors, error => error.Contains("at least 15", StringComparison.Ordinal));
+
+        var exactMinimum = DocumentationSetBuilder.Build("profile:v1:test", "fingerprint", [entry], new DiagramBudget(1, 1, 1, 1, 15));
+        Assert.True(exactMinimum.Succeeded, string.Join("; ", exactMinimum.Errors));
+        var mermaid = exactMinimum.Files.Single(file => file.RelativePath.EndsWith(".mmd", StringComparison.Ordinal));
+        Assert.Equal(15, System.Text.Encoding.UTF8.GetString(mermaid.Content).Length);
+        Assert.Empty(MermaidValidator.Validate(System.Text.Encoding.UTF8.GetString(mermaid.Content)));
+    }
+
+    [Fact]
+    public void DiagramDiagnosticsAreVisibleInGeneratedMarkdown()
+    {
+        var original = PlanTestFactory.CreateDiagramPlan();
+        var diagnostic = new DiagramPlanDiagnostic(
+            new SeqDoc.Core.Identity.DiagnosticId("diagnostic:v1:test:diagram"),
+            "DP-BUDGET-TRUNCATED", "The diagram was truncated.", "messages=1");
+        var diagram = new DiagramPlan(original.EntryPoint, original.Profile, original.OperationKey,
+            original.Participants, original.Messages, original.Branches, original.DebugProjection,
+            original.Sequence, [diagnostic]);
+        var markdown = MarkdownRenderer.RenderDocument(PlanTestFactory.CreateWordingDocument(), diagram);
+        Assert.Contains("## Diagram diagnostics", markdown, StringComparison.Ordinal);
+        Assert.Contains("DP-BUDGET-TRUNCATED", markdown, StringComparison.Ordinal);
+        Assert.Contains("messages=1", markdown, StringComparison.Ordinal);
     }
 
     [Fact]

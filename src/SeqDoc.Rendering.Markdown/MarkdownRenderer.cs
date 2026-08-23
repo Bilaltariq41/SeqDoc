@@ -51,6 +51,17 @@ public static class MarkdownRenderer
             }
         }
 
+        if (diagram.Diagnostics.Length > 0)
+        {
+            builder.Append('\n').Append("## Diagram diagnostics").Append('\n').Append('\n');
+            foreach (var diagnostic in diagram.Diagnostics.OrderBy(item => item.Id.Value, StringComparer.Ordinal))
+            {
+                builder.Append("- ").Append(diagnostic.Summary)
+                    .Append(" _(code: ").Append(diagnostic.Code)
+                    .Append("; detail: ").Append(diagnostic.Detail).Append(")_").Append('\n');
+            }
+        }
+
         return builder.ToString();
     }
 

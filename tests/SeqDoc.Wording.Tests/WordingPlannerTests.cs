@@ -1,4 +1,5 @@
 using SeqDoc.Application.Documentation;
+using SeqDoc.Core.Configuration;
 using SeqDoc.Core.Evidence;
 using SeqDoc.Core.Wording;
 using Xunit;
@@ -102,5 +103,36 @@ public sealed class WordingPlannerTests
         Assert.Equal("fallback:SC005", fallback.Key, StringComparer.Ordinal);
         Assert.Contains(fallback.Evidence, evidence => evidence.Id.Value == "evidence:v1:ef-query");
         Assert.DoesNotContain(fallback.Evidence, evidence => evidence.Id.Value == "evidence:v1:entry-point");
+    }
+
+    [Fact]
+    public void MaterialBudgetKeepsLegacyChronologicalPrefixAndClosesBranchesAndParticipants()
+    {
+        var graph = ScenarioGraphTestFactory.CreateCompleteGetGraph();
+        var full = DocumentationPlanner.Plan(graph).Diagram;
+        var bounded = DocumentationPlanner.Plan(graph, diagramBudget: new DiagramBudget(1024, 4096, 1, 256, 45_000)).Diagram;
+
+        Assert.Equal(full.Messages[0].Id, Assert.Single(bounded.Messages).Id);
+        Assert.All(bounded.Branches, branch => Assert.All(branch.MessageKeys,
+            key => Assert.Contains(bounded.Messages, message => message.Key == key)));
+        Assert.All(bounded.Participants, participant =>
+            Assert.Contains(bounded.Messages, message => message.Source == participant.Key || message.Target == participant.Key));
+        var diagnostic = Assert.Single(bounded.Diagnostics, item => item.Code == "DP-BUDGET-TRUNCATED");
+        Assert.Contains("messages=1", diagnostic.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParticipantBudgetStopsAtFirstCumulativeOverflowAndPreservesDeterministicClosure()
+    {
+        var graph = ScenarioGraphTestFactory.CreateCompleteGetGraph();
+        var full = DocumentationPlanner.Plan(graph).Diagram;
+        var bounded = DocumentationPlanner.Plan(graph, diagramBudget: new DiagramBudget(1024, 4096, 1024, 2, 45_000)).Diagram;
+
+        Assert.True(bounded.Messages.Length < full.Messages.Length);
+        Assert.Equal(full.Messages.Take(bounded.Messages.Length).Select(message => message.Id), bounded.Messages.Select(message => message.Id));
+        Assert.All(bounded.Participants, participant =>
+            Assert.Contains(bounded.Messages, message => message.Source == participant.Key || message.Target == participant.Key));
+        var diagnostic = Assert.Single(bounded.Diagnostics, item => item.Code == "DP-BUDGET-TRUNCATED");
+        Assert.Contains("participants=2", diagnostic.Detail, StringComparison.Ordinal);
     }
 }

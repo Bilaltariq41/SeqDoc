@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using SeqDoc.Analysis.Scenarios;
 using SeqDoc.Application.Documentation;
 using SeqDoc.Core.Behavior;
+using SeqDoc.Core.Configuration;
 using SeqDoc.Core.Evidence;
 using SeqDoc.Core.Frameworks;
 using SeqDoc.Core.Identity;
@@ -12,7 +13,7 @@ using Xunit;
 namespace SeqDoc.Scenarios.Tests;
 
 /// <summary>
-/// A compiler-shaped, Roslyn-neutral fixture for CT-6.  The graph is deliberately produced by
+/// A compiler-shaped, Roslyn-neutral fixture for the bounded traversal checkpoints. The graph is deliberately produced by
 /// ScenarioGraphBuilder; this fixture only supplies the joined Program Index, Method Flow, and
 /// Call Graph facts that the product normally receives from the earlier pipeline stages.
 /// </summary>
@@ -22,9 +23,9 @@ internal static class DirectExactTraversalFixture
     internal static readonly ScenarioArmId RootTrueArm = new("scenario-arm:v1:fixture.root:true");
     internal static readonly string[] ExpectedSharedDescendantOrder = ["root.first", "shared.first", "root.second", "shared.second"];
 
-    internal static ScenarioGraph BuildGraph(string partition)
+    internal static ScenarioGraph BuildGraph(string partition, DiagramBudget? budget = null)
     {
-        var request = CreateRequest(partition);
+        var request = CreateRequest(partition, budget);
         return Assert.Single(ScenarioGraphBuilder.Build(request).Graphs);
     }
 
@@ -34,7 +35,7 @@ internal static class DirectExactTraversalFixture
     internal static string[] ExpectedCycleSites(string partition) =>
         partition == "direct-recursion" ? ["self.call"] : [];
 
-    private static ScenarioAnalysisRequest CreateRequest(string partition)
+    private static ScenarioAnalysisRequest CreateRequest(string partition, DiagramBudget? budget = null)
     {
         var root = Method("Root");
         var child = Method("Child");
@@ -58,6 +59,21 @@ internal static class DirectExactTraversalFixture
             [leaf] = [],
         };
 
+        if (partition is "deep-chain" or "deep-chain-reversed")
+        {
+            const int chainLength = 1024;
+            var chain = Enumerable.Range(0, chainLength)
+                .Select(itemIndex => Method($"Chain{itemIndex:D3}"))
+                .ToArray();
+            methods.AddRange(chain.Select((method, itemIndex) => new MethodSpec(method, $"Chain{itemIndex:D3}", project)));
+            calls[root] = [new CallSpec("chain.000", chain[0])];
+            for (var chainIndex = 0; chainIndex < chain.Length - 1; chainIndex++)
+            {
+                calls[chain[chainIndex]] = [new CallSpec($"chain.{chainIndex + 1:D3}", chain[chainIndex + 1])];
+            }
+            calls[chain[^1]] = [];
+        }
+
         switch (partition)
         {
             case "depth-three":
@@ -72,11 +88,6 @@ internal static class DirectExactTraversalFixture
             case "shared-callee":
                 calls[root] = [new("root.first", shared), new("root.second", shared)];
                 calls[shared] = [new("shared.first", leaf)];
-                break;
-            case "node-budget":
-            case "node-budget-reversed":
-                calls[root] = Enumerable.Range(0, 65)
-                    .Select(index => new CallSpec($"step-{index}", leaf)).ToList();
                 break;
             case "duplicate-agreeing":
             case "duplicate-disagreeing":
@@ -146,6 +157,7 @@ internal static class DirectExactTraversalFixture
             Behavior = behavior,
             FrameworkFacts = new FrameworkAnalysisResult(true, [], [], [], [], [], []),
             ConfiguredRoots = [root],
+            DiagramBudget = budget,
         };
         if (partition.EndsWith("-reversed", StringComparison.Ordinal))
         {

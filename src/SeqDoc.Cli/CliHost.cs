@@ -168,6 +168,12 @@ public static class CliHost
 
             var aggregateBuilder = new AggregateAnalysisBuilder();
             aggregateBuilder.ConfigureRoots(configuration.Roots.Value);
+            aggregateBuilder.ConfigureDiagramBudget(new SeqDoc.Core.Configuration.DiagramBudget(
+                configuration.MaxExpandedMethods.Value,
+                configuration.MaxExpandedCalls.Value,
+                configuration.MaxMaterialMessages.Value,
+                configuration.MaxParticipants.Value,
+                configuration.MaxMermaidCharacters.Value));
             var workflow = new PassAWorkflow(
                 new MsBuildCompilationProfileResolver(),
                 new RoslynProgramIndexBuilder(),
@@ -243,7 +249,10 @@ public static class CliHost
             var generation = GenerateDocumentation(
                 result.Value!, paths.RepositoryRoot, outputPath, entry,
                 configuration.ExcludeParticipants?.Value ?? ImmutableSortedSet.Create<string>(StringComparer.Ordinal),
-                configuration.ExcludeCalls?.Value ?? ImmutableSortedSet.Create<string>(StringComparer.Ordinal));
+                 configuration.ExcludeCalls?.Value ?? ImmutableSortedSet.Create<string>(StringComparer.Ordinal),
+                 new SeqDoc.Core.Configuration.DiagramBudget(configuration.MaxExpandedMethods.Value,
+                     configuration.MaxExpandedCalls.Value, configuration.MaxMaterialMessages.Value,
+                     configuration.MaxParticipants.Value, configuration.MaxMermaidCharacters.Value));
             if (generation.InvalidEntry)
             {
                 // An unknown or ambiguous focused entry is user input error, never a documentation
@@ -380,7 +389,8 @@ public static class CliHost
     /// </summary>
     private static GenerationResult GenerateDocumentation(
         PassAAnalysisSummary summary, string repositoryRoot, string outputPath, string? entry,
-        ImmutableSortedSet<string> excludeParticipants, ImmutableSortedSet<string> excludeCalls)
+        ImmutableSortedSet<string> excludeParticipants, ImmutableSortedSet<string> excludeCalls,
+        SeqDoc.Core.Configuration.DiagramBudget? diagramBudget = null)
     {
         string absoluteOutput = Path.GetFullPath(outputPath, repositoryRoot);
         var graphs = summary.CompanionInspections
@@ -411,7 +421,7 @@ public static class CliHost
             DocumentationPlan plan;
             try
             {
-                plan = DocumentationPlanner.Plan(graph, excludeParticipants, excludeCalls);
+                plan = DocumentationPlanner.Plan(graph, excludeParticipants, excludeCalls, diagramBudget);
             }
             catch (ArgumentException exception) when (exception.ParamName == "excludeParticipants")
             {
@@ -431,7 +441,7 @@ public static class CliHost
             .FirstOrDefault();
         string profileId = contributing?.ProfileId.Value ?? string.Empty;
         string fingerprint = contributing?.ScenarioGraphs.ProgramIndexFingerprint ?? string.Empty;
-        var built = DocumentationSetBuilder.Build(profileId, fingerprint, entries);
+        var built = DocumentationSetBuilder.Build(profileId, fingerprint, entries, diagramBudget);
         if (!built.Succeeded)
         {
             OutputSetActivator.MarkStale(absoluteOutput);

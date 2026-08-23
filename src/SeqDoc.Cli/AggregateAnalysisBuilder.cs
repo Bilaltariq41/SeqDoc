@@ -5,6 +5,7 @@ using SeqDoc.Analysis.Scenarios;
 using SeqDoc.Application.Analysis;
 using SeqDoc.Application.Persistence;
 using SeqDoc.Core.Frameworks;
+using SeqDoc.Core.Configuration;
 using SeqDoc.Core.Diagnostics;
 using SeqDoc.Core.Evidence;
 using SeqDoc.Core.Identity;
@@ -31,11 +32,14 @@ internal sealed class AggregateAnalysisBuilder : IAnalysisBuilder
     private readonly BehaviorAnalyzer analyzer;
     private readonly FrameworkModelHost host;
     private ImmutableArray<MethodId> configuredRoots = [];
+    private DiagramBudget diagramBudget = DiagramBudget.Default;
 
     public void ConfigureRoots(ImmutableSortedSet<string> roots)
     {
         configuredRoots = roots.Select(value => new MethodId(value)).ToImmutableArray();
     }
+
+    public void ConfigureDiagramBudget(DiagramBudget budget) => diagramBudget = budget ?? DiagramBudget.Default;
 
     public AggregateAnalysisBuilder()
     {
@@ -111,7 +115,8 @@ internal sealed class AggregateAnalysisBuilder : IAnalysisBuilder
             artifacts.CallbackBoundaryFacts,
             artifacts.PredicateSemanticFacts,
             artifacts.MinimalApiHandlerFacts,
-            ConfiguredRoots: configuredRoots));
+             ConfiguredRoots: configuredRoots,
+             DiagramBudget: diagramBudget));
 
         return ApplicationResult.Success(
             new AnalysisProfileCandidate(

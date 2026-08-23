@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Text;
 using SeqDoc.Core.Behavior;
+using SeqDoc.Core.Configuration;
 using SeqDoc.Core.Diagnostics;
 using SeqDoc.Core.Evidence;
 using SeqDoc.Core.Frameworks;
@@ -33,7 +34,11 @@ public sealed record ScenarioAnalysisRequest(
     CallbackBoundaryFactSet? CallbackBoundaryFacts = null,
     PredicateSemanticFactSet? PredicateSemanticFacts = null,
     MinimalApiHandlerFactSet? HandlerFacts = null,
-    ImmutableArray<MethodId> ConfiguredRoots = default);
+    ImmutableArray<MethodId> ConfiguredRoots = default,
+    DiagramBudget? DiagramBudget = null)
+{
+    public DiagramBudget EffectiveDiagramBudget => DiagramBudget ?? SeqDoc.Core.Configuration.DiagramBudget.Default;
+}
 
 /// <summary>
 /// Builds deterministic, evidence-backed v0 scenario graphs by joining the accepted entry-point,
@@ -479,9 +484,6 @@ public static class ScenarioGraphBuilder
 
     }
 
-    private const int DirectCallMaxDepth = 2;
-    private const int DirectCallMaxNodes = 64;
-
     private static ScenarioDirectCallExpansion AddConfiguredDirectCalls(
         ScenarioAnalysisRequest request,
         NormalizedEntry entryPoint,
@@ -493,6 +495,8 @@ public static class ScenarioGraphBuilder
     {
         var steps = new List<ScenarioDirectCallExpansionStep>();
         var path = new HashSet<MethodId>();
+        var expandedMethods = new HashSet<MethodId> { entryPoint.RootMethod };
+        var budget = request.EffectiveDiagramBudget;
         var complete = true;
         var duplicateOperations = DuplicateInvocationOperations(request, entryPoint.RootMethod);
         foreach (var operation in duplicateOperations)
@@ -509,9 +513,9 @@ public static class ScenarioGraphBuilder
             complete = false;
             var label = code switch
             {
-                "SC-DIRECT-NODE-BUDGET" => "node budget",
+                "SC-DIRECT-METHOD-BUDGET" => "expanded-method budget",
+                "SC-DIRECT-CALL-BUDGET" => "call budget",
                 "SC-DIRECT-CYCLE" => "cycle",
-                "SC-DIRECT-DEPTH" => "depth",
                 "SC-DIRECT-BODY-UNAVAILABLE" => "body-unavailable",
                 "SC-DIRECT-SOURCE-UNAVAILABLE" => "source-unavailable",
                 "SC-DIRECT-CROSS-PROJECT" => "cross-project",
@@ -526,22 +530,41 @@ public static class ScenarioGraphBuilder
             diagnostics.Add(diagnostic);
         }
 
-        void Visit(MethodId caller, (InvocationFlowNode Invocation, CallSite Site) candidate, int depth,
-            string? parentStepId)
+        var work = new Stack<(MethodId Caller, (InvocationFlowNode Invocation, CallSite Site) Candidate,
+            int Depth, string? ParentStepId, bool Exit, MethodId Target)>();
+        path.Add(entryPoint.RootMethod);
+        foreach (var root in rootCalls.Reverse())
         {
+            work.Push((entryPoint.RootMethod, root, 1, null, false, default));
+        }
+
+        while (work.Count > 0)
+        {
+            var frame = work.Pop();
+            if (frame.Exit)
+            {
+                path.Remove(frame.Target);
+                continue;
+            }
+
+            var caller = frame.Caller;
+            var candidate = frame.Candidate;
+            var depth = frame.Depth;
+            var parentStepId = frame.ParentStepId;
             var invocation = candidate.Invocation;
             var site = candidate.Site;
-            if (steps.Count >= DirectCallMaxNodes)
+            var evidence = Combine(invocation.Evidence, site.Evidence, site.Resolution.Evidence);
+            if (steps.Count >= budget.MaxExpandedCalls)
             {
-                Boundary("SC-DIRECT-NODE-BUDGET", invocation.Operation.Value, Combine(invocation.Evidence, site.Evidence), "maximum projected nodes reached");
-                return;
+                Boundary("SC-DIRECT-CALL-BUDGET", invocation.Operation.Value, evidence,
+                    $"maximum projected call occurrences reached ({budget.MaxExpandedCalls})");
+                continue;
             }
 
             var target = site.Resolution.Candidates[0];
             var stepId = StableIdentity.CreateScenarioDirectCallExpansionId(
                 new ScenarioDirectCallExpansionIdentityDescriptor(profileId, entryPoint.EntryPointId, site.Id.Value,
                     parentStepId, caller, target, invocation.Operation, depth));
-            var evidence = Combine(invocation.Evidence, site.Evidence, site.Resolution.Evidence);
             var node = CreateNodeWithPresentation(profileId, entryPoint.EntryPointId, ScenarioNodeKind.MethodCall,
                 $"method-call:{stepId}", target, invocation.Operation,
                 $"calls {invocation.TargetContainingTypeName}.{invocation.TargetMethodName}",
@@ -586,19 +609,18 @@ public static class ScenarioGraphBuilder
                 Boundary("SC-DIRECT-CYCLE", invocation.Operation.Value, evidence, target.Value);
                 stepComplete = false;
             }
-            else if (depth >= DirectCallMaxDepth)
+            else if (!expandedMethods.Contains(target) && expandedMethods.Count >= budget.MaxExpandedMethods)
             {
-                if (DirectCalls(request, target).Length > 0)
-                {
-                    Boundary("SC-DIRECT-DEPTH", invocation.Operation.Value, evidence, target.Value);
-                }
-                stepComplete = DirectCalls(request, target).Length == 0;
+                Boundary("SC-DIRECT-METHOD-BUDGET", invocation.Operation.Value, evidence,
+                    $"maximum expanded methods reached ({budget.MaxExpandedMethods})");
+                stepComplete = false;
             }
             var step = new ScenarioDirectCallExpansionStep(stepId, parentStepId, depth, caller, target,
                 invocation.Operation, node.Id, SourceOrdinal(invocation), evidence, CertaintyLevel.Exact, stepComplete, cycle);
             steps.Add(step);
-            if (!stepComplete) { complete = false; return; }
+            if (!stepComplete) { complete = false; continue; }
 
+            expandedMethods.Add(target);
             path.Add(target);
             foreach (var operation in DuplicateInvocationOperations(request, target))
             {
@@ -607,6 +629,7 @@ public static class ScenarioGraphBuilder
                 Boundary("SC-DIRECT-DUPLICATE", operation.Value, duplicate.Evidence,
                     "duplicate invocation anchors disagree on material facts");
             }
+            var children = new List<(InvocationFlowNode Invocation, CallSite Site)>();
             foreach (var child in DirectCalls(request, target))
             {
                 if (HasLocalGuard(request, target, child.Invocation))
@@ -615,15 +638,13 @@ public static class ScenarioGraphBuilder
                         Combine(child.Invocation.Evidence, child.Site.Evidence), target.Value);
                     continue;
                 }
-                Visit(target, child, depth + 1, stepId);
+                children.Add(child);
             }
-            path.Remove(target);
-        }
-
-        path.Add(entryPoint.RootMethod);
-        foreach (var root in rootCalls)
-        {
-            Visit(entryPoint.RootMethod, root, 1, null);
+            work.Push((target, default, 0, null, true, target));
+            foreach (var child in children.AsEnumerable().Reverse())
+            {
+                work.Push((target, child, depth + 1, stepId, false, default));
+            }
         }
 
         return new ScenarioDirectCallExpansion(steps.ToImmutableArray(), complete,

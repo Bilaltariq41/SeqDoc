@@ -77,7 +77,10 @@ GitHub parents #1–#4 and sub-issues #5–#23 now encode those workstreams, own
 dependencies. Initial ready issues are #5, #9, #14, #15, and maintainer issue #20.
 Maintainer Issue #20 is closed: configuration now resolves finite per-field method, call, material-message, participant,
 and 45,000-character Mermaid budgets with provenance and CLI visibility, while preserving current traversal/output and
-the public configuration ABI. Issue #19 is the next maintainer implementation boundary.
+the public configuration ABI. Issue #19 is the next maintainer implementation boundary. Its independent review found
+legacy-branch, irreducible Mermaid-size, diagnostic-visibility, chronological participant-budget, and deep-stack gaps.
+Owner-authorized repairs resolved those findings, replaced recursive traversal with deterministic work frames, and
+passed focused verification plus the four-project final gate. The local candidate remains uncommitted and unpushed.
 
 ## Next execution order
 
