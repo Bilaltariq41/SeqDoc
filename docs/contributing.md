@@ -26,7 +26,11 @@ The repository requires the .NET SDK declared in `global.json`. All warnings are
   under `tests/` and run separately when changing those surfaces.
 - Compiler fixtures live under `tests/fixtures/` and are referenced by relative path from tests.
 - Semantic changes should add regression tests with realistic fixtures rather than relying on
-  implementation details.
+  implementation details. A fixture must be consumed through the production extractor it claims to prove; a test that
+  constructs a semantic fact directly proves only its downstream consumer.
+- Exact framework recognition must name the operation shape, original member definition, containing type and assembly,
+  supported overloads, callback or argument mapping, and same-shaped negative. Preserve the weakest contributing
+  certainty and proven profile and control-flow placement.
 - Acceptance assertions should target observable wording, structure, and determinism.
 - Supplied and open-source acceptance applications live in sibling `../SeqDoc-TestProjects`. See
   [Using SeqDoc](usage.md); never copy those repositories into SeqDoc.

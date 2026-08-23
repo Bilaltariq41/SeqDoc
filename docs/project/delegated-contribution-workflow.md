@@ -21,6 +21,22 @@ Canonical documentation is rewritten from verified evidence. For each integrated
 what was repaired or rejected, why, the verification performed, and whether delegation reduced total work. Optimize
 the workflow from recurring defect categories rather than weakening review standards.
 
+## Recurring semantic review failures
+
+Framework and persistence candidates have repeatedly implemented a plausible downstream model without proving that
+real source can create its input. Common signatures are hand-built descriptors that bypass Roslyn extraction, fixtures
+that compile but no test consumes, method-name shape treated as an exact framework slot, and facts rendered without
+registration or control-placement proof. Another recurring failure is silent loss of recognized-but-unsupported forms.
+
+Prevent these defects in the assignment, not only in review. Require an exact-symbol admission table, a realistic
+source-to-first-consumer test, a same-shaped negative, weakest-certainty aggregation, and an explicit account of
+profile/snapshot confinement and guard or terminal placement. Reviewers should search for new fixtures with no test
+reference and tests that construct the new semantic fact directly without exercising its producer.
+
+Scope drift is a separate recurring category. SDK/build files, CLI behavior, public contracts, and other paths outside
+the issue allowlist require prior maintainer approval. A useful unrelated fix stays out of the candidate until it has
+its own authority and coverage.
+
 ## Delivery package sizing
 
 Use sub-issues to model dependencies and acceptance, but avoid requiring maintainer review after every small internal
