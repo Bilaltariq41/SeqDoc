@@ -29,25 +29,21 @@ strategy and execution state; do not edit them unless the issue explicitly requi
 
 ## Semantic proof protocol
 
-New compiler, framework, or intermediate-representation semantics need a complete proof chain. A hand-built fact proves
-only its downstream consumer; it does not prove that production analysis can create that fact.
+New compiler, framework, or intermediate-representation semantics need all five proof gates:
 
-1. Name the accepted Roslyn `IOperation` shape and exact symbol identity: original definition, containing type,
-   assembly, supported overloads, and argument or callback positions.
-2. Prove that realistic source reaches the production extractor. Every added semantic fixture must be consumed by a
-   test through that path.
-3. Keep recognition, admission, and placement separate. A matching type or operation does not by itself prove host
-   registration, scenario-root admission, execution chronology, guard membership, terminal outcome, or persistence.
-4. Carry exact evidence and the least-confident contributing certainty through every typed stage. Combining evidence
-   never upgrades certainty without a separate compiler proof.
-5. State how profile and Program Index snapshot isolation is preserved. If the fact omits those fields, prove that its
-   owning container and every join prevent foreign-profile or foreign-snapshot use.
-6. Distinguish unrelated syntax from recognized-but-unsupported behavior. Ignore the former; retain an evidence-backed
-   conservative boundary or diagnostic for the latter.
-7. Add a lookalike or overload negative that reaches the same extractor, plus one vertical test from realistic source
-   to the first user-visible or persisted consumer.
-8. Preserve proven control topology. Do not render a fact unconditionally when its operation belongs to a guard,
-   terminal arm, exception region, or other unresolved placement.
+1. **Identity and admission:** name the accepted Roslyn `IOperation` shape, original symbol definition, containing type
+   and assembly, supported overloads, and argument positions. Required identity fails closed when missing. A matching
+   operation or type shape does not alone prove registration, root admission, or execution.
+2. **Evidence chain:** prove that realistic source reaches the production extractor and typed stages. Completion means
+   a user-visible or persisted assertion; an intermediate fact is not the first observable consumer. Every new fixture
+   must participate in that production path.
+3. **Monotonic claims:** each stage may preserve or weaken what evidence establishes, never strengthen it. Carry exact
+   evidence and the least-confident contributing certainty; capability cannot become admission, registration cannot
+   become execution, and syntax cannot become persistence without separate proof.
+4. **Isolation and placement:** require exact profile and Program Index snapshot confinement at every join. Preserve
+   proven guards, terminal arms, exception regions, and chronology; withhold placement that topology cannot prove.
+5. **Boundaries:** ignore unrelated syntax, but retain an evidence-backed conservative boundary or diagnostic for
+   recognized-but-unsupported behavior. Exercise supported overloads and a same-shaped negative through the producer.
 
 For framework models, record the admission table in the implementation plan: operation shape, exact framework symbol,
 supported overloads, registration requirement, callback mapping, unsupported forms, negative lookalikes, and the first
@@ -76,11 +72,7 @@ remove conservative diagnostics, guess semantics, or expand scope to make the ta
 - Check `git diff --check`, `git status`, and the full diff from `main`.
 - Look for false positives, profile leakage, unstable ordering, missing evidence/certainty, and previous-state regressions.
 - Confirm negative and boundary cases, not only the happy path.
-- Trace each new semantic from realistic source through production extraction and its first consumer. Search for tests
-  that construct the new fact directly but never prove its extractor.
-- Check exact member slots and overloads, registration versus mere type shape, weakest-certainty aggregation, control
-  placement, and recognized-but-unsupported diagnostics.
-- Confirm every new fixture is referenced by a test and every unexpected changed path has maintainer approval.
+- Apply all five semantic proof gates to the complete diff. Account for every new fixture and unexpected changed path.
 - Remove debug output, generated files, secrets, local paths, copied external source, and unrelated refactoring.
 - Run the focused command and declared final gate; record exact counts and any unavailable external lanes.
 - For generated diagrams, inspect the actual Markdown/Mermaid and use Mermaid CLI when layout behavior changed.
@@ -101,8 +93,9 @@ documentation to SeqDoc. See `docs/usage.md` for setup.
   may still be separated explicitly.
 - Describe the problem, design, risks, changed paths, focused verification, final gate, and remaining boundaries.
 - Open a draft PR early for substantial work, but request review only after tests and self-review pass.
-- The maintainer will batch findings. Fix every finding on the same PR branch, explain the repair, rerun only affected
-  focused tests plus the required gate, and request review again.
+- The maintainer will batch findings. Fix every finding on the same PR branch, record the repair trace described in
+  `docs/project/delegated-contribution-workflow.md`, re-review the complete candidate, rerun affected focused tests plus
+  the required gate, and request review again.
 - Do not rewrite canonical roadmap/status files to claim completion. The maintainer updates them after merge.
 
 ### While waiting for review

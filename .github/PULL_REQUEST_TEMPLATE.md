@@ -27,7 +27,7 @@ Complete this section for compiler, framework, persistence, worker, or IR semant
 | Argument/callback mapping | |
 | Recognized but unsupported forms | |
 | Same-shaped negative | |
-| First observable consumer | |
+| First observable or persisted consumer (not an intermediate fact) | |
 | Profile/snapshot and control-placement proof | |
 
 ## Acceptance evidence
@@ -36,14 +36,20 @@ Complete this section for compiler, framework, persistence, worker, or IR semant
 |---|---|---|---|
 | | | | |
 
+## Repair trace
+
+Complete when responding to review findings. Otherwise write `Not applicable`.
+
+| Finding | Production repair | Producer/boundary test | Observable assertion | Residual boundary |
+|---|---|---|---|---|
+| | | | | |
+
 ## Risk and self-review
 
 - [ ] I re-read the issue and met every acceptance criterion.
 - [ ] I inspected the full diff from `main` and removed unrelated changes.
-- [ ] I checked evidence/certainty, profile isolation, deterministic ordering, and conservative boundaries.
-- [ ] I added risk-based positive and negative tests without duplicate assertions.
-- [ ] Every new semantic fixture is consumed through its production extractor.
-- [ ] Hand-built facts are backed by a separate producer test where the producer changed.
+- [ ] For semantic work, I completed the `AGENTS.md` proof gates and testing-policy proofs, or marked them not applicable.
+- [ ] After repairs, I re-reviewed the complete candidate and completed the repair trace, or marked it not applicable.
 - [ ] Every unexpected path has linked maintainer approval.
 - [ ] I committed no external source, secrets, local paths, caches, generated output, or build artifacts.
 - [ ] Generated Mermaid was actually rendered when diagram layout changed.

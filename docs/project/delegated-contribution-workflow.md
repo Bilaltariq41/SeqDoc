@@ -3,8 +3,16 @@
 Delegated changes remain candidates until the maintainer verifies their complete behavior. Preserve the submitted
 branch, record its base revision, inspect the actual diff, and classify each area as accepted, repairable, or rejected.
 Return bounded findings to human contributors with file/line evidence, risk, expected behavior, and one focused
-verification command; review only the repair delta plus affected risks when they return. After two unsuccessful repair
-rounds, reject, split, or explicitly take ownership of the repair.
+verification command. The contributor re-reviews the complete candidate; the maintainer reviews the repair delta and
+affected risks when it returns. After two unsuccessful repair rounds, reject, split, or explicitly take ownership.
+
+For each finding, record a repair trace:
+
+| Finding | Production repair | Producer/boundary test | Observable assertion | Residual boundary |
+|---|---|---|---|---|
+
+A repair is complete only when the trace reaches its required observable or persisted consumer and the contributor's
+full-candidate self-review finds no regression outside the repair delta.
 
 Use the same return-and-repair loop for an available implementation agent: resume the same agent session with exact
 findings, require it to fix its own delta, and verify only changed risks. Do not have the maintainer silently rewrite
@@ -23,15 +31,9 @@ the workflow from recurring defect categories rather than weakening review stand
 
 ## Recurring semantic review failures
 
-Framework and persistence candidates have repeatedly implemented a plausible downstream model without proving that
-real source can create its input. Common signatures are hand-built descriptors that bypass Roslyn extraction, fixtures
-that compile but no test consumes, method-name shape treated as an exact framework slot, and facts rendered without
-registration or control-placement proof. Another recurring failure is silent loss of recognized-but-unsupported forms.
-
-Prevent these defects in the assignment, not only in review. Require an exact-symbol admission table, a realistic
-source-to-first-consumer test, a same-shaped negative, weakest-certainty aggregation, and an explicit account of
-profile/snapshot confinement and guard or terminal placement. Reviewers should search for new fixtures with no test
-reference and tests that construct the new semantic fact directly without exercising its producer.
+Recurring semantic failures are broken evidence chains, stronger downstream claims, fail-open identity, lost control
+placement, and silent unsupported forms. Apply the five proof gates in `AGENTS.md`. Reviewers should search for fixtures
+with no production-path test and hand-built facts with no producer or observable proof.
 
 Scope drift is a separate recurring category. SDK/build files, CLI behavior, public contracts, and other paths outside
 the issue allowlist require prior maintainer approval. A useful unrelated fix stays out of the candidate until it has
