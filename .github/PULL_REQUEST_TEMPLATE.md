@@ -73,3 +73,9 @@ External acceptance/output inspected:
 ## Remaining boundaries
 
 List honest unsupported behavior, unavailable external lanes, or follow-up issues.
+
+## Copilot pre-review routing
+
+- GitHub MCP issue/owner context retrieved, or Spec axis explicitly marked incomplete and review not clean:
+- Latest-head Copilot findings and focused verification:
+- Review-policy files changed? Require explicit owner review; Copilot is untrusted:
