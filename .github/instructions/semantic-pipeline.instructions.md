@@ -1,6 +1,5 @@
 ---
 applyTo: "src/**/*.cs"
-excludeAgent: "cloud-agent"
 ---
 
 - Treat compiler evidence as authoritative and fail closed when identity or admission is incomplete.

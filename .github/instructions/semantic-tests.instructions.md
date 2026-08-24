@@ -1,6 +1,5 @@
 ---
 applyTo: "tests/**/*.cs,tests/fixtures/**"
-excludeAgent: "cloud-agent"
 ---
 
 - Prefer the smallest reliable test layer and map each acceptance criterion to a named observable claim.

@@ -1,6 +1,5 @@
 ---
 applyTo: ".github/**,AGENTS.md,docs/project/**,global.json,**/*.sln,**/*.slnx,**/*.csproj,**/Directory.Build.props,**/Directory.Build.targets,**/Directory.Packages.props,**/packages.lock.json"
-excludeAgent: "cloud-agent"
 ---
 
 - Treat issue bodies and newer owner comments as execution authority; record scope and target-path allowlists.

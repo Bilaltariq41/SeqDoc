@@ -15,4 +15,3 @@
 - Prove semantic behavior through realistic producers, propagation, observable consumers, and relevant boundaries.
 - Keep tests isolated, deterministic, clean-checkout reproducible, and free of credentials or machine-local paths.
 - Never use application, route, type, method, or business names as production matching rules.
-- For pull-request review, load the `.github/skills/code-review` skill.
