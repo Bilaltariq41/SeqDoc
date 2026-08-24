@@ -1,20 +1,18 @@
-# SeqDoc Copilot pre-review
+# SeqDoc repository invariants
 
-- Read the complete merge-base diff, not only the pull request summary or changed hunks.
-- Read the issue body, dependencies, and every owner comment through GitHub MCP before judging the change.
-- If linked issue or owner context cannot be retrieved, mark the Spec axis incomplete and never call the pre-review clean.
-- Treat newer owner comments and explicit decisions as authority over stale issue or branch descriptions.
-- Inventory changed paths, declared target paths, non-goals, and scope drift before reviewing behavior.
-- Review two independent axes: **Standards** (repository rules and proof obligations) and **Spec** (issue acceptance and intended behavior).
-- Load every applicable file under `.github/instructions/` and the `code-review` skill; these are review guidance, not permission to broaden scope.
-- Inspect every changed line and its surrounding producers, consumers, guards, persistence, and rendering paths.
-- Apply all five SeqDoc semantic-proof gates whenever compiler, framework, IR, evidence, certainty, or topology semantics are touched.
-- Require evidence-backed, actionable findings with file/line, risk, expected behavior, and one focused verification command.
-- Check false positives, unsupported boundaries, deterministic identity/order, profile isolation, cancellation, and previous-valid-state preservation.
-- Review tests for producer, propagation, observable, and boundary proof; reject fixtures that merely compile or hand-built facts without a producer path.
-- Check clean-checkout reproducibility without hidden fixtures, credentials, local paths, timestamps, or unstable iteration.
-- Do not spend comments on style or micro-optimization while a semantic, scope, reproducibility, or governance defect remains.
-- Do not ask for unsupported overview formatting, automatic fixes, or a formal approval or rejection.
-- A clean Copilot result only makes the candidate eligible for independent maintainer review; it never claims merge readiness.
-- Never infer merge readiness from pass counts, workflow success, or Copilot silence; preserve human approval and resolved conversations.
-- If review-policy files change, mark the Copilot result untrusted and require explicit owner review of the policy delta.
+- Treat SeqDoc as a .NET static-analysis CLI that produces evidence-backed Markdown and Mermaid.
+- Treat compiler and static evidence as authoritative; never invent exact behavior when evidence is incomplete.
+- Preserve the typed pipeline: Program Index, Method Flow, Scenario Graph, and Diagram Plan.
+- Keep compilation profiles and Program Index snapshots isolated at every join.
+- Carry evidence and the weakest contributing certainty through every typed boundary.
+- Distinguish capability, admission, registration, execution, and persistence; do not strengthen claims downstream.
+- Retain conservative, evidence-backed boundaries or diagnostics for recognized-but-unsupported forms.
+- Keep identities, ordering, and output deterministic and independent of paths, timestamps, scheduling, and iteration order.
+- Preserve the previous valid state when analysis or persistence replacement fails.
+- Propagate cancellation through long-running operations.
+- Keep `SeqDoc.Core` free of Roslyn, MSBuild, SQLite, CLI, and renderer dependencies.
+- Use issue authority, newer owner decisions, and declared target paths; keep unrelated changes out of scope.
+- Prove semantic behavior through realistic producers, propagation, observable consumers, and relevant boundaries.
+- Keep tests isolated, deterministic, clean-checkout reproducible, and free of credentials or machine-local paths.
+- Never use application, route, type, method, or business names as production matching rules.
+- For pull-request review, load the `.github/skills/code-review` skill.
