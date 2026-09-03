@@ -2,7 +2,7 @@
 
 ## State
 
-`Verifying`
+`ReviewRequired`
 
 GitHub Issue #53. The frozen implementation baseline is merged PR #59 at
 `0b8e4b7a91cf52e4a98542bcc307f9262414efdf`.
@@ -24,6 +24,8 @@ Third repair pass applied and verified 2026-09-03 (test file + `test-writer-note
 Second independent review (reviewer-medium) of the final candidate, 2026-09-03: verdict = acceptable to open as a maintainer PR with specific fixes first; NOT merge-ready as an acceptance lock until the upstream maintainer who owns issue #53 decides the frozen-`indexFingerprint` reproducibility question (the frozen `f9a36fd5…` is reproducible only from the contributor's in-place checkout; a clean/normalised worktree deterministically yields `df23b372…`; the repo has no .NET CI, so the issue's 'lane required before merge' is a maintainer-run local gate that would fail on a clean-cloned corpus). One Major finding (bare fingerprint assertion gives a misleading 'semantic regression' failure) and several Minor/Observation findings. A fourth repair pass is applying them inside the test-file + evidence allowlist: actionable fingerprint-mismatch message pointing at the known boundary, stale MAX_PATH comment corrected, complete (unscoped, tracked-only) external git status also recorded, `SEQHTTP001`-absence checks pointed at the diagnostic stream, `seqdoc.stale` added to the operational-path filter, run-2 identity captured + cross-run equality asserted, Mermaid-budget JSON path asserted present, and the boundary-wording denylist extended to every generated flow that contains an HTTP boundary phrase. No production change. After this pass the candidate is review-ready; the fingerprint decision is escalated to the maintainer in the PR body, not buried.
 
 Fourth repair pass applied and verified 2026-09-03 (test file + notes only, no production change): F1 (actionable fingerprint/profile mismatch message naming the LF/CRLF cause + the normalised value `df23b372…` + the issue #53 owner decision + notes pointer), F2 (stale MAX_PATH comment corrected), F3 (complete unscoped tracked `git status` also recorded, scoped gate unchanged), F4 (`SEQHTTP001`-absence checks re-pointed at the diagnostic stream), F5 (`operationalPaths` = non-`.md`/`.mmd`), F7 (run-2 identity captured, run1==run2 asserted), F10 (Mermaid-budget JSON path presence hard-asserted), F11 (boundary-wording denylist applied to every generated flow carrying an HTTP boundary phrase). F6/F8/F9 acknowledged unchanged. Still 4 tests. Focused lane 4/4 green; final gate `dotnet build SeqDoc.slnx -c Release` 0/0 then filtered AcceptanceTests 4/4 green. Matrix values unchanged from the third pass. Candidate is review-ready. Remaining gate to merge-ready is the upstream maintainer's decision on the non-reproducible frozen `indexFingerprint` — outside the contributor allowlist. Awaiting owner instruction on opening the PR.
+
+Submitted for maintainer review 2026-09-03 as PR https://github.com/Bilaltariq41/SeqDoc/pull/67 (ready-for-review, not draft; base `main`, head `Qhatahet:acceptance/issue-53-outbound-http`, commit `75ac05e`; 3 files, +1648/-1; `Closes #53`). The PR body carries the blocking maintainer question (frozen `indexFingerprint` not reproducible from a clean checkout; decide re-baseline / renormalise-corpus / accept-in-place), the full candidate artifact matrix, the `docs/work/**` path authorization (the owner's 'QHTTP-B ready' comment), and the environment prerequisites. Awaiting maintainer review; no further contributor implementation until findings return.
 
 ## Objective
 
