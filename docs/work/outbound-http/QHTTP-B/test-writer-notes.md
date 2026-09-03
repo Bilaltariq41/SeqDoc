@@ -400,3 +400,197 @@ blob SHA-256) and analyses it in place, matching the existing `ServiceClientExte
 FraudManagement lane. Recommendation for the maintainer who owns issue #53: either renormalise the
 corpus checkout and re-baseline the frozen fingerprint + artifact hashes once, or accept this boundary
 as documented.
+
+## Fifth repair pass — authoritative GitHub review (F1-F7), 2026-09-03
+
+The single authoritative complete-candidate review is the GitHub "Request Changes" review on PR #67.
+Earlier contributor-invoked `reviewer-medium` passes (first through fourth repair passes above) are
+pre-submission advisory / self-review evidence, not additional authoritative checkpoint reviews. This
+pass is ONE batched contributor repair round covering findings F1-F7, applied inside the allowlist
+(`tests/SeqDoc.AcceptanceTests/OutboundHttpExternalCorpusTests.cs` + this file only). No `src/**` /
+production / fixture-project / build / `.github/**` / `docs/project/**` / `checkpoint.md` change.
+
+The owner's frozen-contract amendment (issue #53 comment 5523887517) supersedes the in-place approach:
+the lane now materialises FraudManagement `7aabfef9…` in an isolated detached `git worktree` under a
+short OS temp path with `core.autocrlf=false` / `core.eol=lf` set BEFORE checkout, analyses ONLY that
+normalised checkout, and the amended Program Index fingerprint is
+`df23b372a30754898787988bdf0c0537b2bdb19d14b3724c4314588281935117`. Every in-place code path and every
+fallback to the shared `Provided/FraudManagement` tree is removed. The historical `f9a36fd5…`
+fingerprint and every prior in-place artifact hash are superseded; the entire matrix below is
+regenerated from the normalised checkout for BOTH CLI runs.
+
+### Disposition per finding
+
+- **F1 (Critical) — reproducible normalised checkout: FIXED.** `OutboundHttpExternalCorpusFixture`
+  resolves the corpus git toplevel from
+  `ExternalCorpusResolver.Current.RequireGroup(Provided).Root` → `FraudManagement` →
+  `git rev-parse --show-toplevel`, then
+  `git worktree add --no-checkout --detach <shortTemp>/fm 7aabfef9…`,
+  `git config core.longpaths true|core.autocrlf false|core.eol lf`,
+  `sparse-checkout set --no-cone "/*" "!obj/" "!bin/" "!packages/" "!.vs/" "!PackageTmp/"`,
+  `git checkout`, `dotnet restore <wt>/FraudManagement.sln`. The CLI runs twice against that worktree
+  only. `RunCliAsync` captures the COMPLETE ordered `data.runs[]` identity set (every entry's
+  `profileId` + `indexFingerprint` in array order) for BOTH runs; the tests assert
+  `run1.IdentitySet.SequenceEqual(run2.IdentitySet)` (not `Assert.Equal` — `ImmutableArray<T>` equality
+  is by underlying-array reference, so `SequenceEqual` is required) and that the amended pair
+  `(profile:v1:f874be7e…, df23b372…)` is present exactly once; `run[0]` is never silently taken. The
+  full normalised candidate artifact matrix (POST md/mmd, GET md/mmd, `index.md`,
+  `seqdoc.manifest.json` — byte length + SHA-256 + run1/run2 equality) plus a complete-output digest
+  over every file under the output root (including `.seqdoc/**`) is emitted via `ITestOutputHelper` and
+  recorded below.
+- **F2 (Major) — fail-closed isolation + cleanup: FIXED.** The shared repository tracked + untracked
+  `git status --porcelain` and `git worktree list --porcelain` are recorded before the lane and again
+  after `CleanupAsync`; Claim 4 asserts exact equality (porcelain lines only; file contents never
+  printed). All restore/build/CLI artifacts live inside the detached worktree or an OS temp root. ONE
+  cleanup owner (`CleanupAsync`, invoked from `InitializeAsync`'s `finally` and from `DisposeAsync`
+  behind a `_cleanedUp` guard) tracks every owned temp root (worktree parent, CLI cache dirs, CLI
+  output dirs, temp YAML dir, Mermaid-render dir — each registered via `RegisterOwnedTempRoot` /
+  `NewOwnedTempRoot`), removes the detached worktree (`git worktree remove --force` + `git worktree
+  prune`, one bounded retry with delay for the known OneDrive `.git/worktrees/<id>` lock), then
+  deletes every owned root (bounded retry). A final failure THROWS
+  `InvalidOperationException` — no catch-and-ignore of `IOException` / `UnauthorizedAccessException`.
+  The production CLI opens the SQLite cache with pooling on, so `CleanupAsync` first calls
+  `Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools()` (via reflection, no csproj change) +
+  `GC.Collect()` / `WaitForPendingFinalizers()` to release the `cache-v1.db` handle before deleting the
+  cache roots; without this the deletion loses a genuine handle race (observed once, now fixed). The
+  cleanup path runs on both the success and the failure path (the `finally` in `InitializeAsync`).
+- **F3 (Major) — no skip in this required lane: FIXED.** Every `SkipException` / `Skip.If` path is
+  removed from the fixture and its tests. Missing Provided corpus, missing `FraudManagement`, a
+  revision absent from the corpus repo, `git worktree` failure, `dotnet restore` failure, a non-
+  `succeeded` CLI outcome, and missing `node`/`npx`/Mermaid-CLI are all `XunitException` /
+  `Assert.True(false, …)` with an actionable "QHTTP-B is BLOCKED; this is not a skip" message.
+- **F4 (Major) — sensitive-value + single-representation proof: FIXED.** `ReadSensitiveConfigValues`
+  scans the normalised checkout's `*.config`, `appsettings*.json`, and `web.config` files in memory
+  for `<add key="TCC…" value="…"/>` and `"TCC…": "…"` entries, keeping every non-empty value for keys
+  matching BaseAddress / APIKey / Address / Url / Uri / Key / Secret / Password plus the URI host of
+  any absolute-URI value. Claim 3 asserts the collected set is non-empty and contains at least one
+  BaseAddress and one APIKey field, then asserts every collected value is ABSENT from every generated
+  Markdown/Mermaid file; on failure it reports ONLY the field label
+  (`sensitive config value for field '<key>' present in '<file>'`) — never the value, never a hash of
+  it. The hard-coded request-path checks (`threeThirty/`, `updateType/all`, `complaint/addComplaint`,
+  `_baseAddress`, `_APIKey`, `Authorization`, `StringContent`, `ByteArrayContent`,
+  `IsSuccessStatusCode`, `HttpResponseMessage`, `ReadAsStringAsync`) are kept. The "literal-count
+  proxy" rationale is replaced with direct observables: `AssertNoGenericHttpClientPresentation`
+  asserts each named root's flow diagram has NO `participant …HttpClient…` line and NO `->>`/`-->>`
+  message carrying `PostAsync`/`GetAsync`, alongside exactly one behaviour phrase, exactly one
+  `HTTP boundary` participant, and exactly one `HTTP POST request` / `HTTP GET request` message.
+- **F5 (Major) — fail closed on CLI identity + version evidence: FIXED.** Complete ordered
+  `data.runs[]` identity comparison as in F1. The resolved SDK/toolchain version is read from the CLI
+  `--json` payload at `data.toolchainVersion` (confirmed in `CliHost.CreateAnalyzeData`; `dotnet
+  --version` is not consulted) and asserted non-empty and equal across both runs — observed
+  `10.0.302`. A non-empty SeqDoc CLI version is read from `SeqDoc.Cli`'s
+  `AssemblyInformationalVersionAttribute` — observed `1.0.0+f602665394f0664538a308e34e608b8611859682`.
+  The real Mermaid CLI version is captured by
+  `npx --yes @mermaid-js/mermaid-cli@11.16.0 --version` and asserted to equal `11.16.0`. Every one of
+  these is a hard failure when unavailable — no "unavailable" fallback. CLI stderr is captured for
+  BOTH runs, asserted equal, and asserted empty (no approved non-empty baseline is pinned for this
+  lane); it is never discarded. The hard failure when
+  `data.configuration.diagramBudget.maxMermaidCharacters.value` is absent is kept
+  (`MermaidBudgetResolvedFromJson`).
+- **F6 (Major) — run the frozen final gate: see "Fifth-repair-pass verification" below.**
+- **F7 (Major) — durable record: this section.** All prior in-place matrix values are superseded by
+  the normalised-checkout evidence below (both runs). No final-gate or merge-readiness claim is made
+  beyond the recorded real results.
+
+### Regenerated normalised-checkout candidate artifact matrix (detached worktree, `core.autocrlf=false` / `core.eol=lf`, `Release/net9.0`)
+
+Profile ID `profile:v1:f874be7e6b51bea2038f6cfac77ab510fc73e7208e9e47b4475e6a17896aaef1`;
+Program Index fingerprint (amended) `df23b372a30754898787988bdf0c0537b2bdb19d14b3724c4314588281935117`.
+`data.runs[]` identity set run1 == run2 = `[(profile:v1:f874be7e…, df23b372…)]`; amended pair present
+exactly once.
+
+| Artifact | run1 len | run1 SHA-256 | run2 len | run2 SHA-256 | equal |
+|---|---|---|---|---|---|
+| POST md `…addcomplaintrequest-f1cc2038.md` | 3676 | `20293c9d5237691a195bf7901c577794c1ebe1fe93d173ece1c55d93ce572dfe` | 3676 | same | yes |
+| POST mmd `…-f1cc2038.mmd` | 353 | `8462128742ac7768fc8c0a075b32399e489b2a3500f917af10ab6dc458fb052b` | 353 | same | yes |
+| GET md `…tccservice-lookups-94a25a61.md` | 2850 | `43f4210f413d2c4cf8a2ec883f9abc922f19a1d1e6a150f173d19d8469ddb072` | 2850 | same | yes |
+| GET mmd `…-94a25a61.mmd` | 289 | `363e169808a83c3a5df148619e706882922f2321b17e04b25a5ba4b56e039dbd` | 289 | same | yes |
+| `index.md` | 2224 | `0de88502807073ea1f77e383c7276b39855ae29962f2950477e6db8d7a2e3d11` | 2224 | same | yes |
+| `seqdoc.manifest.json` | 6282 | `b48eb3d7204492bbb9b1d779779d19679d99551c99aa8cdec33ded3b893714c8` | 6282 | same | yes |
+| complete-output digest (all files incl. `.seqdoc/**`) | — | `22045be6f4613ce7180cbaac155bfc59cdbf5e864d9a194c43920c3656a0e748` | — | same | yes |
+
+Notes on the delta from the superseded in-place matrix: the POST/GET Markdown + Mermaid bytes and
+hashes are unchanged (the merged #54 HTTP boundary content does not depend on the LF/CRLF mix), but
+`index.md` (`fca7088b…` → `0de88502…`) and therefore `seqdoc.manifest.json` (`d51d2436…` →
+`b48eb3d7…`) change because line-ending normalisation of unrelated flow source shifts other flow-file
+content that `index.md` links and the manifest content-hashes. Byte length of `index.md` (2224) and
+the manifest (6282) is unchanged.
+
+- Ordered `--json` diagnostic codes: `BE1001, BE2010, BE2010, PRED001` (no `SEQHTTP001`); ordered-
+  record digest run1 == run2 = `2f62d6e3193c4926ff6b3a25388b2dc51d275bc716a2d5009c6c18b5d2eae3fc`.
+- CLI `data.toolchainVersion` = `10.0.302` (run1 == run2). `SeqDoc.Cli` informational version
+  `1.0.0+f602665394f0664538a308e34e608b8611859682`. `mermaid-cli --version` = `11.16.0`.
+- Frozen blob SHA-256 (git `show 7aabfef9:<path>`): solution
+  `67d6b9f15be05f86c06ea17fa92dd7474b8886b876d1d69cf11552741ffaaca1`, `BLL/BLL.csproj`
+  `c38a35ee7b3acf227fb9988ced35dceb2dec36165e8f8f01bb6b82ee6f658a06`, `BLL/TCCIntegration/TCCService.cs`
+  `eff261211900578a493d40900cd0de5418dbbd132bbc4f806f684b31e184dfce` — all match frozen.
+- Normalised worktree HEAD `7aabfef98fa4d47781bd8a98b9061ddcafb88836`.
+- Mermaid budget `45000` (resolved from `--json`); 17 Markdown links resolve; every `.mmd` within
+  budget and `MermaidValidator`-clean; real `npx --yes @mermaid-js/mermaid-cli@11.16.0` render of all
+  run-1 diagrams = exit 0 + non-empty SVG.
+- Shared supplied repository: tracked + untracked `git status --porcelain` and
+  `git worktree list --porcelain` byte-identical before and after the lane (incl. after cleanup). The
+  pre-existing unrelated `seqdoc-i8-corpus` worktree entry is left untouched. All owned temp roots and
+  the detached worktree are removed by `CleanupAsync`; a residual OneDrive lock on
+  `.git/worktrees/<id>` (admin dir only, already delisted by `prune`) does not affect
+  `git worktree list` equality.
+
+### Fifth-repair-pass verification
+
+- Focused (once):
+  `SEQDOC_TEST_PROJECTS_ROOT=<abs>/SeqDoc-TestProjects dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~OutboundHttpExternalCorpusTests" --logger "console;verbosity=detailed"`
+  → **GREEN — Passed: 4, Failed: 0, Skipped: 0** (~1.7 min; `FrozenIdentityIsolationAndArtifactValidityHold` ~38 s incl. the Mermaid CLI 11.16.0 render).
+- Full acceptance gate (F6, once, NO filter):
+  `SEQDOC_TEST_PROJECTS_ROOT=<abs>/SeqDoc-TestProjects dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release`
+  → **Failed: 6, Passed: 38, Skipped: 0, Total: 44** (4 m 23 s). All 4 `OutboundHttpExternalCorpusTests`
+  pass. The 6 failures are pre-existing and unrelated to this checkpoint (this branch only changes one
+  acceptance test file + this note):
+  - `CorpusMediatRTests.OrderingDraftRouteReachesExactMediatRHandlerWithoutPipelineClaim` —
+    `SD1102: MSBuild 10.0.302 is already registered, but this repository selects SDK 10.0.400` (host
+    SDK-version mismatch; different-SDK repos need separate processes).
+  - `ServiceClientExternalCorpusTests.ConfiguredRootsResolveAndProduceTheAcceptedDocumentSet`,
+    `.PositiveLanesRenderTheJoinedOutboundClientMessageExactlyOnce`,
+    `.PositiveLaneWordingIsEvidenceBoundedAndCredentialSafe`,
+    `.WindowsHostLaneKeepsTheUiWebServiceClientOutOfItsProfile`,
+    `.SmsUiWebLaneCompletesEndToEndWithANonFatalWithholdClassBehaviorDiagnostic` — CreditTransfer
+    `SD4011` (frozen MethodId in `credit-transfer.yaml` no longer matches the floating external corpus)
+    and SMS `SD1101` MSBuild `NuGetAudit` failures (`CoreWCF.Primitives 1.6.0` /
+    `Microsoft.AspNetCore.Authentication.Negotiate 9.0.0` known-vulnerability build errors on this host).
+- Untouched-`main` comparison (`git worktree` of `origin/main` @ `08cb735`, same command, same
+  `SEQDOC_TEST_PROJECTS_ROOT`): **Failed: 24, Passed: 16, Skipped: 0, Total: 40** (2 m 30 s). Every one
+  of the 6 failures seen on this branch also fails on untouched `main` (`CorpusMediatRTests.Ordering…`
+  and all five `ServiceClientExternalCorpusTests` above). `main` additionally cascades 18 further
+  `BehaviorDocumentation*` / `EntityFramework6EdmxProductionTests` / `PersistenceAcceptanceTests` /
+  `BehaviorDocumentationGetTests` failures (the `CorpusMediatRTests` `SD1102` MSBuild-registration
+  poisoning propagates differently under `main`'s test ordering). This branch has strictly fewer
+  acceptance failures than `main`; the checkpoint introduces no regression. The `origin/main` worktree
+  was removed and pruned after the run.
+
+Still 4 tests, one expensive fixture (two CLI runs against the normalised worktree). Changed paths for
+this repair round: `tests/SeqDoc.AcceptanceTests/OutboundHttpExternalCorpusTests.cs` and this file only
+(`docs/work/outbound-http/QHTTP-B/checkpoint.md`'s working-tree `M` is the orchestrator's own state
+edit, untouched here).
+
+### Sixth repair pass addendum — IR-2 + IR-1/F1 tightening, 2026-09-03
+
+Two fully-specified assertion additions inside the existing allowlist
+(`tests/SeqDoc.AcceptanceTests/OutboundHttpExternalCorpusTests.cs` + this file only); no `src/**` /
+other test / build / `.github/**` / `docs/project/**` / `checkpoint.md` change.
+
+- **IR-2 — manifest completeness regression restored.** In
+  `FrozenIdentityIsolationAndArtifactValidityHold`, after `manifestEntries` is fully populated:
+  `Assert.Equal(35, manifestEntries.Count)` (issue #53 frozen matrix: 17 flow `.md` + 17 `.mmd` +
+  `index.md`; objective 8 / risk #6 "incomplete manifest") and a frozen byte-length assertion on
+  `seqdoc.manifest.json` (`Content.Length == 6282`). Set-equality alone would not catch a silent
+  automatic-root drop that shrinks both the manifest and the generated set. Observed on the focused
+  lane: entry count = 35, byte length = 6282 (both match; no expected-number edits needed).
+- **IR-1/F1 — `data.runs[]` identity-set tightened.** In BOTH
+  `OutputIsEvidenceBoundedValueSafeAndDeterministic` and `FrozenIdentityIsolationAndArtifactValidityHold`,
+  after the "present exactly once" assertion: `Assert.Single(run1.IdentitySet)` and
+  `Assert.Equal(amendedPair, run1.IdentitySet[0])`. Closes the reviewer gap where an extra
+  automatic-root run with a different fingerprint would still pass. Observed: `IdentitySet` has exactly
+  one entry, equal to the amended `(ProfileId, ProgramIndexFingerprint)` pair.
+
+Focused lane re-run (`--filter FullyQualifiedName~OutboundHttpExternalCorpusTests`, Release):
+**Passed: 4, Failed: 0, Skipped: 0** (37 s). Distinct claims added: 2 (manifest completeness/size;
+single-entry identity set). Still 4 tests, one expensive fixture.

@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -20,26 +21,22 @@ namespace SeqDoc.AcceptanceTests;
 ///
 /// This is acceptance-only. It authorizes zero production or semantic change. Every assertion is on the
 /// first observable consumer (generated Markdown/Mermaid and the CLI <c>--json</c> diagnostic stream),
-/// never on an intermediate fact. Producer/unit admission logic is already covered by PR #59
-/// (<c>OutboundHttpCliTests</c> et al.) and is not re-asserted here.
+/// never on an intermediate fact.
 ///
-/// Harness: in-process production CLI via <see cref="CliHost.RunAsync"/> with the exact
-/// <c>analyze &lt;sln&gt; --repository-root … --config &lt;tmp yaml&gt; --configuration Release
-/// --framework net9.0 --cache … --output … --json</c> contract, run twice against fresh cache/output
-/// directories for the determinism claim. The shared <c>Provided/FraudManagement</c> checkout is
-/// asserted to sit exactly on the frozen revision <c>7aabfef9…</c> with a clean scoped working tree
-/// and is analysed IN PLACE (the pattern the existing <c>ServiceClientExternalCorpusTests</c>
-/// FraudManagement lane already uses); it is never mutated (frozen-file SHA-256 checked before and
-/// after, every CLI cache/output/YAML/render under a fresh OS temp root deleted on success and on
-/// failure). A clean/normalised <c>git worktree</c> is deliberately not used: the frozen Program
-/// Index fingerprint is tied to this in-place checkout's historical LF/CRLF line-ending mix, so a
-/// normalised checkout yields a different fingerprint — an owner-accepted boundary for this lane.
+/// Corpus isolation (frozen contract amendment, issue #53 comment 5523887517): FraudManagement revision
+/// <c>7aabfef9…</c> is materialised in an isolated detached <c>git worktree</c> under a short OS temp
+/// path, with <c>core.autocrlf=false</c> and <c>core.eol=lf</c> set BEFORE checkout, so the analysed
+/// tree is line-ending-normalised and reproducible. Only that normalised checkout is analysed; there is
+/// no in-place code path and no fallback to the shared <c>Provided/FraudManagement</c> tree. The shared
+/// supplied repository is never mutated (tracked + untracked <c>git status</c> and
+/// <c>git worktree list</c> recorded before and after and asserted equal). The amended Program Index
+/// fingerprint for the normalised checkout is
+/// <c>df23b372a30754898787988bdf0c0537b2bdb19d14b3724c4314588281935117</c>.
 ///
-/// Skip is legitimate ONLY when the whole Provided corpus is not installed. Wrong revision, drifted
-/// frozen hashes, a missing/duplicated GET or POST boundary, changed unrelated diagnostics,
-/// nondeterministic bytes or diagnostic order, a leaked URI/credential value, a dangling link, a
-/// budget breach, Mermaid parse/render failure, external-file mutation, or a leftover temp/repo delta
-/// are all LOUD failures.
+/// There is NO skip path. Missing corpus, missing <c>FraudManagement</c>, revision/identity drift,
+/// <c>git worktree</c> failure, <c>dotnet restore</c> failure, missing <c>node</c>/<c>npx</c>/Mermaid
+/// CLI, a missing required artifact, non-deterministic output, a leaked sensitive value, a duplicated or
+/// missing HTTP boundary, a budget breach, or a cleanup failure are all LOUD xUnit failures.
 /// </summary>
 [CollectionDefinition(OutboundHttpExternalCorpusSuite.Name, DisableParallelization = true)]
 public sealed class OutboundHttpExternalCorpusSuite : ICollectionFixture<OutboundHttpExternalCorpusFixture>
@@ -71,10 +68,8 @@ public sealed class OutboundHttpExternalCorpusTests
     private const string UnsupportedDiagnosticCode = "SEQHTTP001";
     private const string EvidenceSourcePath = "BLL/TCCIntegration/TCCService.cs";
 
-    // Exact merged-A ordered CLI --json diagnostic-code baseline for this two-root lane
-    // (issue #53 "Measured clean-baseline artifacts" + candidate-matrix Diagnostics row;
-    // value captured in test-writer-notes). The two supported HTTP calls add no model
-    // diagnostic, so this sequence must be byte-for-byte the pre-#54 baseline.
+    // Unchanged ordered CLI --json diagnostic-code baseline for this two-root lane. The two supported
+    // HTTP calls add no model diagnostic, so this sequence must be byte-for-byte the pre-#54 baseline.
     private static readonly string[] ExpectedDiagnosticCodeBaseline =
         ["BE1001", "BE2010", "BE2010", "PRED001"];
 
@@ -84,7 +79,7 @@ public sealed class OutboundHttpExternalCorpusTests
         "bll-tccintegration-tccservice-lookups-94a25a61.md";
 
     // --- Claim 1: the POST root visibly presents exactly one conservative outbound HTTP POST boundary,
-    // once, and never as a second generic direct-call / MethodCall presentation of the same call site.
+    // once, and never as a second generic HttpClient/PostAsync presentation of the same call site.
     [Fact]
     public void PostRootPresentsExactlyOneConservativePostBoundary()
     {
@@ -93,27 +88,22 @@ public sealed class OutboundHttpExternalCorpusTests
         string markdown = flow.Markdown;
         string mermaid = flow.Mermaid;
 
+        // Exactly one expected behaviour phrase; the opposite verb never appears.
         Assert.Equal(1, Count(markdown, PostBehaviorPhrase));
         Assert.Equal(0, Count(markdown, GetBehaviorPhrase));
         Assert.Equal(0, Count(markdown, GetMermaidMessage));
 
-        // The HTTP call site is presented once. The behaviour phrase is the only carrier of
-        // "HttpClient.PostAsync"; a second occurrence would mean a duplicate generic MethodCall
-        // presentation of the same operation (issue #53 objective 3/4).
-        // Proxy for issue #53 objective 4 (no duplicate generic MethodCall for the same call site):
-        // for this frozen lane the behaviour phrase is the only carrier of the literal "PostAsync",
-        // and the "SC-DIRECT-BODY-UNAVAILABLE" count plus "no SEQHTTP001" corroborate the single
-        // presentation. No brittle generic-phrase matching is added.
-        Assert.Equal(1, Count(markdown, "PostAsync"));
-        Assert.DoesNotContain("GetAsync", markdown, StringComparison.Ordinal);
+        // Direct observable (replaces the old literal-count proxy): the typed HTTP boundary is the ONLY
+        // visible representation of this call site. No generic HttpClient participant and no generic
+        // PostAsync/GetAsync Mermaid message anywhere in this operation's flow diagram.
+        AssertNoGenericHttpClientPresentation(mermaid, flow.FileName);
 
         Assert.Equal(1, Count(mermaid, ExternalParticipantLabel));
         Assert.Equal(1, Count(mermaid, PostMermaidMessage));
         Assert.Equal(0, Count(mermaid, GetMermaidMessage));
 
-        // Supported overload => no recognized-but-unsupported diagnostic. Asserted against the CLI
-        // --json diagnostic-code stream (where SEQHTTP001 would actually surface), not the rendered
-        // Markdown/Mermaid text, where diagnostic codes never appear.
+        // Supported overload => no recognized-but-unsupported diagnostic (asserted on the CLI --json
+        // diagnostic-code stream where SEQHTTP001 would actually surface).
         Assert.DoesNotContain(UnsupportedDiagnosticCode, run.DiagnosticCodes);
 
         // Unrelated conservative direct-call boundary count is unchanged by the HTTP model.
@@ -121,7 +111,7 @@ public sealed class OutboundHttpExternalCorpusTests
     }
 
     // --- Claim 2: the GET root visibly presents exactly one conservative outbound HTTP GET boundary,
-    // once, and never as a second generic direct-call presentation of the same call site.
+    // once, and never as a second generic HttpClient/GetAsync presentation of the same call site.
     [Fact]
     public void GetRootPresentsExactlyOneConservativeGetBoundary()
     {
@@ -134,12 +124,7 @@ public sealed class OutboundHttpExternalCorpusTests
         Assert.Equal(0, Count(markdown, PostBehaviorPhrase));
         Assert.Equal(0, Count(markdown, PostMermaidMessage));
 
-        // Proxy for issue #53 objective 4 (no duplicate generic MethodCall for the same call site):
-        // for this frozen lane the behaviour phrase is the only carrier of the literal "GetAsync",
-        // and the "SC-DIRECT-BODY-UNAVAILABLE" count plus "no SEQHTTP001" corroborate the single
-        // presentation. No brittle generic-phrase matching is added.
-        Assert.Equal(1, Count(markdown, "GetAsync"));
-        Assert.DoesNotContain("PostAsync", markdown, StringComparison.Ordinal);
+        AssertNoGenericHttpClientPresentation(mermaid, flow.FileName);
 
         Assert.Equal(1, Count(mermaid, ExternalParticipantLabel));
         Assert.Equal(1, Count(mermaid, GetMermaidMessage));
@@ -150,25 +135,65 @@ public sealed class OutboundHttpExternalCorpusTests
         Assert.Equal(1, Count(markdown, "SC-DIRECT-BODY-UNAVAILABLE"));
     }
 
-    // --- Claim 3: the boundary presentation stays inside compiler evidence (Gate 3/5) and is
-    // value-safe, and two clean runs are byte-identical including CLI diagnostics in emitted order.
+    // The typed HTTP boundary is the only visible representation of the HttpClient call site: no generic
+    // HttpClient participant, no PostAsync/GetAsync Mermaid message, no generic ".PostAsync("/".GetAsync("
+    // call-syntax message in the flow diagram.
+    private static void AssertNoGenericHttpClientPresentation(string mermaid, string flowFileName)
+    {
+        foreach (string line in mermaid.Split('\n'))
+        {
+            string trimmed = line.Trim();
+            if (trimmed.StartsWith("participant ", StringComparison.Ordinal))
+            {
+                Assert.False(
+                    trimmed.Contains("HttpClient", StringComparison.Ordinal),
+                    $"'{flowFileName}': generic HttpClient participant '{trimmed}' present alongside the typed HTTP boundary.");
+            }
+
+            bool isMessageLine = trimmed.Contains("->>", StringComparison.Ordinal)
+                || trimmed.Contains("-->>", StringComparison.Ordinal);
+            if (isMessageLine)
+            {
+                Assert.False(
+                    trimmed.Contains("PostAsync", StringComparison.Ordinal)
+                    || trimmed.Contains("GetAsync", StringComparison.Ordinal),
+                    $"'{flowFileName}': generic HttpClient call Mermaid message '{trimmed}' present alongside the typed HTTP boundary.");
+            }
+        }
+    }
+
+    // --- Claim 3: the boundary presentation stays inside compiler evidence, is sensitive-value-safe, and
+    // two clean runs are byte-identical including CLI diagnostics and the ordered run identity set.
     [Fact]
     public void OutputIsEvidenceBoundedValueSafeAndDeterministic()
     {
         var run1 = _lane.RequireRun1();
         var run2 = _lane.RequireRun2();
 
-        // ---- Gate 5: the request URI/path values, the base-address / API-key config keys, the request
-        // and response body reads, and the BCL response type / status interpretation are never a
-        // legitimate conservative claim and must not appear in ANY generated Markdown/Mermaid.
+        // ---- Sensitive request literals from the normalised checkout's config must never appear in ANY
+        // generated Markdown/Mermaid. On failure only the field label is reported, never the value.
+        var sensitive = _lane.SensitiveConfigValues;
+        Assert.NotEmpty(sensitive);
+        Assert.Contains(sensitive, v => v.Label.Contains("BaseAddress", StringComparison.Ordinal));
+        Assert.Contains(sensitive, v => v.Label.Contains("APIKey", StringComparison.Ordinal));
+        foreach (var file in run1.Files.Where(IsRenderedDocument))
+        {
+            string text = Encoding.UTF8.GetString(file.Content);
+            foreach (var (label, value) in sensitive)
+            {
+                if (value.Length != 0 && text.Contains(value, StringComparison.Ordinal))
+                {
+                    Assert.Fail($"sensitive config value for field '{label}' present in '{file.RelativePath}'.");
+                }
+            }
+        }
+
+        // ---- Hard-coded request-path / config-key / BCL-response leak tokens.
         string[] globalLeakTokens =
         [
             "TCCBaseAddress", "TCCAPIKey", "_baseAddress", "_APIKey",
             "threeThirty/", "updateType/all", "complaint/addComplaint",
             "IsSuccessStatusCode", "HttpResponseMessage", "ReadAsStringAsync",
-            // Credential header name (verbatim string arg in TCCService.cs
-            // DefaultRequestHeaders.Add("Authorization", _APIKey)) and the request-body
-            // content types - issue #53 objective 6.
             "Authorization", "StringContent", "ByteArrayContent",
         ];
         foreach (string token in globalLeakTokens)
@@ -176,13 +201,10 @@ public sealed class OutboundHttpExternalCorpusTests
             Assert.DoesNotContain(token, run1.AllText, StringComparison.Ordinal);
         }
 
-        // ---- Gate 3/5: the outbound-HTTP boundary claim itself (its behaviour sentence and its
-        // Mermaid message) must assert ONLY the compiler-proven GET/POST request boundary - naming the
-        // source evidence, carrying an explicit non-strengthened certainty, and withholding any
-        // URI/host/header/body/credential/response/status/success/retry/resilience/remote-completion
-        // wording. Unrelated generic caller-syntax on other lines (for example
-        // "assigns: BaseAddress = System.Uri") is pre-existing conservative source observation and is
-        // out of scope for this HTTP-family lane.
+        // ---- Gate 3/5: the outbound-HTTP boundary claim asserts ONLY the compiler-proven request
+        // boundary - names the source evidence, carries an explicit non-strengthened certainty, and
+        // withholds URI/host/header/body/credential/response/status/success/retry/resilience/
+        // remote-completion wording.
         string[] boundaryForbiddenWords =
         [
             "Authorization", "api key", "apikey", "api-key", "credential", "bearer", "token",
@@ -206,10 +228,6 @@ public sealed class OutboundHttpExternalCorpusTests
                 .Split('\n')
                 .Single(line => line.Contains("HTTP ", StringComparison.Ordinal) && line.Contains(" request", StringComparison.Ordinal));
 
-            // The behaviour line names the source evidence and carries the exact observed certainty.
-            // Pinned to the value recorded in test-writer-notes so a regression that WEAKENED or
-            // STRENGTHENED it fails: the boundary-existence claim is provably Exact (the call occurs),
-            // and nothing about it may become less or more certain without separate proof.
             Assert.Contains($"evidence: {EvidenceSourcePath}", boundaryLine, StringComparison.Ordinal);
             Assert.Contains("certainty: Exact", boundaryLine, StringComparison.Ordinal);
 
@@ -220,10 +238,9 @@ public sealed class OutboundHttpExternalCorpusTests
             }
         }
 
-        // F11: the configured two roots are not the only flows that can reach an HttpClient GET/POST
-        // call site - an automatic root that also calls one does too. Apply the same boundary-wording
-        // denylist to EVERY generated flow *.md that carries either behaviour phrase, scoped to that
-        // phrase's line plus its matching Mermaid message line.
+        // Every generated flow *.md that carries either behaviour phrase (not only the two configured
+        // roots - an automatic root can also reach an HttpClient call site) gets the same denylist,
+        // scoped to that phrase's line plus its matching Mermaid message line.
         foreach (var file in run1.Files.Where(f => f.RelativePath.EndsWith(".md", StringComparison.Ordinal)))
         {
             string flowMarkdown = Encoding.UTF8.GetString(file.Content);
@@ -279,12 +296,34 @@ public sealed class OutboundHttpExternalCorpusTests
             $"diagnostic code sequence differs between runs: [{string.Join(", ", run1.DiagnosticCodes)}] vs [{string.Join(", ", run2.DiagnosticCodes)}].");
         Assert.NotEmpty(run1.DiagnosticCodes);
         Assert.DoesNotContain(UnsupportedDiagnosticCode, run1.DiagnosticCodes);
-
-        // Exact code/count/order against the merged-A baseline. Drift here (an added or
-        // reordered unrelated diagnostic) is a STOP condition, not a test to relax.
         Assert.Equal(ExpectedDiagnosticCodeBaseline, run1.DiagnosticCodes);
 
-        // ---- G2: normalized digest over the ordered raw diagnostics[] JSON records.
+        // ---- Complete ordered data.runs[] identity set: run1 == run2, and the amended
+        // (profileId, indexFingerprint) pair is present exactly once. Never silently take run[0].
+        _output.WriteLine($"[QHTTP-B matrix] run1 identity set: {FormatIdentitySet(run1.IdentitySet)}");
+        _output.WriteLine($"[QHTTP-B matrix] run2 identity set: {FormatIdentitySet(run2.IdentitySet)}");
+        Assert.NotEmpty(run1.IdentitySet);
+        Assert.True(
+            run1.IdentitySet.SequenceEqual(run2.IdentitySet),
+            $"data.runs[] identity set differs between runs: run1={FormatIdentitySet(run1.IdentitySet)} run2={FormatIdentitySet(run2.IdentitySet)}");
+        var amendedPair = (
+            OutboundHttpExternalCorpusFixture.ProfileId,
+            OutboundHttpExternalCorpusFixture.ProgramIndexFingerprint);
+        Assert.True(
+            run1.IdentitySet.Count(pair => pair == amendedPair) == 1,
+            $"amended (profileId, indexFingerprint) pair not present exactly once; set={FormatIdentitySet(run1.IdentitySet)}");
+        // AGENTS gate 4 (isolation): the normalised two-root lane emits exactly one run identity; more than one entry means an unexpected extra root/profile reached the pipeline.
+        Assert.Single(run1.IdentitySet);
+        Assert.Equal(amendedPair, run1.IdentitySet[0]);
+
+        // ---- CLI stderr: captured for both runs, compared deterministically, required empty (no
+        // approved non-empty baseline string is pinned for this lane).
+        Assert.Equal(run1.Stderr, run2.Stderr);
+        Assert.True(
+            string.IsNullOrWhiteSpace(run1.Stderr),
+            $"CLI --json stderr was non-empty for the FraudManagement lane; captured value:\n{run1.Stderr}");
+
+        // ---- Normalized digest over the ordered raw diagnostics[] JSON records.
         string run1DiagnosticsDigest = Sha256Hex(Encoding.UTF8.GetBytes(string.Concat(run1.DiagnosticRecords)));
         string run2DiagnosticsDigest = Sha256Hex(Encoding.UTF8.GetBytes(string.Concat(run2.DiagnosticRecords)));
         Assert.Equal(run1DiagnosticsDigest, run2DiagnosticsDigest);
@@ -292,8 +331,8 @@ public sealed class OutboundHttpExternalCorpusTests
             $"[QHTTP-B matrix] diagnostics ordered-record digest run1={run1DiagnosticsDigest} run2={run2DiagnosticsDigest}");
     }
 
-    // --- Claim 4: frozen external identity, corpus isolation, artifact completeness/validity, and a
-    // real Mermaid CLI 11.16.0 render of every run-1 diagram.
+    // --- Claim 4: frozen external identity, normalised-checkout isolation + cleanup, version evidence,
+    // artifact completeness/validity, and a real Mermaid CLI 11.16.0 render of every run-1 diagram.
     [Fact]
     public async Task FrozenIdentityIsolationAndArtifactValidityHold()
     {
@@ -306,72 +345,54 @@ public sealed class OutboundHttpExternalCorpusTests
         Assert.Equal(OutboundHttpExternalCorpusFixture.BllProjectSha256, _lane.FrozenBlobHashes.BllProject);
         Assert.Equal(OutboundHttpExternalCorpusFixture.SourceSha256, _lane.FrozenBlobHashes.Source);
 
-        // ---- Source preservation: the in-place FraudManagement working files this lane analyses are
-        // byte-for-byte unchanged by our two analysis runs (frozen-file SHA-256 before == after).
-        Assert.Equal(_lane.HashesBefore, _lane.HashesAfter);
-        Assert.Equal("", _lane.ExternalGitStatusBefore);
-        Assert.Equal(_lane.ExternalGitStatusBefore, _lane.ExternalGitStatusAfter);
+        // ---- Shared supplied repository is byte-for-byte unchanged: tracked + untracked git status and
+        // git worktree list recorded before and after the whole lane, asserted exactly equal.
+        Assert.Equal(_lane.SharedRepoStatusBefore, _lane.SharedRepoStatusAfter);
+        Assert.Equal(_lane.SharedWorktreeListBefore, _lane.SharedWorktreeListAfter);
 
-        // ---- Profile / Program Index identity. The production CLI --json surfaces these at
-        // data.runs[].profileId and data.runs[].indexFingerprint (CamelCase policy); the fixture
-        // reads that exact path. Both are hard assertions: a missing value means the QHTTP-B
-        // frozen-identity proof for profile/TFM drift is BLOCKED, not degraded.
+        // ---- Profile / Program Index identity from data.runs[] (amended normalised-checkout values).
+        _output.WriteLine($"[QHTTP-B matrix] run1 identity set: {FormatIdentitySet(run1.IdentitySet)}");
+        _output.WriteLine($"[QHTTP-B matrix] run2 identity set: {FormatIdentitySet(run2.IdentitySet)}");
+        Assert.NotEmpty(run1.IdentitySet);
         Assert.True(
-            _lane.ObservedProfileId is not null,
-            "CLI --json no longer surfaces data.runs[].profileId; QHTTP-B frozen-identity proof for "
-            + "profile/TFM drift is BLOCKED, not degraded.");
+            run1.IdentitySet.SequenceEqual(run2.IdentitySet),
+            $"data.runs[] identity set differs between runs: run1={FormatIdentitySet(run1.IdentitySet)} run2={FormatIdentitySet(run2.IdentitySet)}");
+        var amendedPair = (
+            OutboundHttpExternalCorpusFixture.ProfileId,
+            OutboundHttpExternalCorpusFixture.ProgramIndexFingerprint);
         Assert.True(
-            _lane.ObservedIndexFingerprint is not null,
-            "CLI --json no longer surfaces data.runs[].indexFingerprint; QHTTP-B frozen-identity proof "
-            + "for Program Index drift is BLOCKED, not degraded.");
-        _output.WriteLine(
-            $"[QHTTP-B matrix] observed profileId={_lane.ObservedProfileId ?? "<null>"} "
-            + $"(frozen {OutboundHttpExternalCorpusFixture.ProfileId})");
-        _output.WriteLine(
-            $"[QHTTP-B matrix] observed indexFingerprint={_lane.ObservedIndexFingerprint ?? "<null>"}; "
-            + $"frozen in-place baseline={OutboundHttpExternalCorpusFixture.ProgramIndexFingerprint}; "
-            + "clean/normalised worktree of 7aabfef9… yields "
-            + "df23b372a30754898787988bdf0c0537b2bdb19d14b3724c4314588281935117");
+            run1.IdentitySet.Count(pair => pair == amendedPair) == 1,
+            $"amended (profileId, indexFingerprint) pair not present exactly once; set={FormatIdentitySet(run1.IdentitySet)}");
+        // AGENTS gate 4 (isolation): the normalised two-root lane emits exactly one run identity; more than one entry means an unexpected extra root/profile reached the pipeline.
+        Assert.Single(run1.IdentitySet);
+        Assert.Equal(amendedPair, run1.IdentitySet[0]);
 
-        Assert.True(
-            string.Equals(
-                OutboundHttpExternalCorpusFixture.ProfileId,
-                _lane.ObservedProfileId,
-                StringComparison.Ordinal),
-            $"observed profileId '{_lane.ObservedProfileId}' does not match the frozen "
-            + $"'{OutboundHttpExternalCorpusFixture.ProfileId}'. A mismatch most likely means the local "
-            + "Provided/FraudManagement checkout's working-tree line endings differ from the frozen baseline "
-            + "(LF/CRLF). This is a corpus-normalisation / frozen-baseline decision for the issue #53 owner, "
-            + "not a semantic regression; see docs/work/outbound-http/QHTTP-B/test-writer-notes.md "
-            + "\"Known boundary for the PR\".");
-        Assert.True(
-            string.Equals(
-                OutboundHttpExternalCorpusFixture.ProgramIndexFingerprint,
-                _lane.ObservedIndexFingerprint,
-                StringComparison.Ordinal),
-            $"observed Program Index fingerprint '{_lane.ObservedIndexFingerprint}' does not match the frozen "
-            + $"in-place baseline '{OutboundHttpExternalCorpusFixture.ProgramIndexFingerprint}'. A mismatch most "
-            + "likely means the local Provided/FraudManagement checkout's working-tree line endings differ from "
-            + "the frozen baseline (LF/CRLF), not a semantic Program Index regression; the value produced by a "
-            + "clean/normalised worktree of 7aabfef9… is "
-            + "df23b372a30754898787988bdf0c0537b2bdb19d14b3724c4314588281935117. This is a "
-            + "corpus-normalisation / frozen-baseline decision for the issue #53 owner; see "
-            + "docs/work/outbound-http/QHTTP-B/test-writer-notes.md \"Known boundary for the PR\".");
+        // ---- SDK / toolchain version from the CLI --json data (authoritative; not `dotnet --version`).
+        Assert.False(
+            string.IsNullOrWhiteSpace(run1.ToolchainVersion),
+            "CLI --json data.toolchainVersion is absent/empty; QHTTP-B toolchain-version evidence is BLOCKED. "
+            + "Do not fall back to `dotnet --version`.");
+        Assert.Equal(run1.ToolchainVersion, run2.ToolchainVersion);
+        _output.WriteLine($"[QHTTP-B matrix] CLI-reported .NET SDK/toolchain version = {run1.ToolchainVersion}");
 
-        // F7: run 2 captured the same identity path; a cross-run drift is a determinism failure.
-        Assert.Equal(_lane.ObservedProfileId, _lane.ObservedProfileIdRun2);
-        Assert.Equal(_lane.ObservedIndexFingerprint, _lane.ObservedIndexFingerprintRun2);
-        _output.WriteLine(
-            $"[QHTTP-B matrix] identity run1==run2: profileId={_lane.ObservedProfileId == _lane.ObservedProfileIdRun2} "
-            + $"indexFingerprint={_lane.ObservedIndexFingerprint == _lane.ObservedIndexFingerprintRun2}");
+        // ---- SeqDoc CLI assembly version (informational, else file version).
+        string? seqdocCliVersion =
+            typeof(CliHost).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? typeof(CliHost).Assembly.GetName().Version?.ToString();
+        Assert.False(
+            string.IsNullOrWhiteSpace(seqdocCliVersion),
+            "Could not read a SeqDoc.Cli assembly version.");
+        _output.WriteLine($"[QHTTP-B matrix] SeqDoc.Cli assembly version = {seqdocCliVersion}");
 
-        // F10: fail loud if the CLI --json budget path changed shape and ReadMermaidBudget silently
-        // fell back to its hard-coded default instead of reading the real configured value.
+        // ---- Real Mermaid CLI version (must report 11.16.0).
+        Assert.Equal("11.16.0", _lane.MermaidCliVersion);
+        _output.WriteLine($"[QHTTP-B matrix] mermaid-cli --version = {_lane.MermaidCliVersion}");
+
+        // ---- Fail loud if the CLI --json Mermaid budget path changed shape.
         Assert.True(
             _lane.MermaidBudgetResolvedFromJson,
             "CLI --json no longer exposes data.configuration.diagramBudget.maxMermaidCharacters.value; "
-            + "ReadMermaidBudget silently used its hard-coded 45000 fallback, so the Mermaid budget "
-            + "assertions in this lane are no longer meaningful. Fix the JSON path.");
+            + "the Mermaid budget assertions in this lane are no longer meaningful. Fix the JSON path.");
 
         // ---- Every named candidate-matrix artifact is present.
         run1.RequireFlow(ExpectedPostFlowFileName);
@@ -382,7 +403,7 @@ public sealed class OutboundHttpExternalCorpusTests
             run1.Files.Count(f => f.RelativePath.EndsWith(".mmd", StringComparison.Ordinal)) >= 2,
             "expected at least the POST and GET Mermaid diagrams.");
 
-        // ---- Every Markdown link resolves; every Mermaid file is valid and within budget.
+        // ---- Every Markdown link resolves.
         var names = run1.Files
             .SelectMany(f => new[] { f.RelativePath, Path.GetFileName(f.RelativePath) })
             .ToHashSet(StringComparer.Ordinal);
@@ -419,8 +440,7 @@ public sealed class OutboundHttpExternalCorpusTests
         }
         _output.WriteLine($"[QHTTP-B matrix] Markdown link-check: pass, {linksChecked} links checked");
 
-        // ---- Index completeness: every generated top-level flow document (all *.md except
-        // index.md, no subdirectory) is a link target inside index.md (candidate-matrix Index row).
+        // ---- Index completeness.
         string indexMarkdown = Encoding.UTF8.GetString(
             run1.Files.Single(f => f.RelativePath == "index.md").Content);
         foreach (var flow in run1.Files.Where(f =>
@@ -434,13 +454,13 @@ public sealed class OutboundHttpExternalCorpusTests
                 $"index.md does not link to generated flow '{flow.RelativePath}'.");
         }
 
-        // ---- Manifest: exactly the merged-A baseline of 35 listed files, every path relative.
+        // ---- Manifest: every path relative; content-hash cross-check; listed set == generated
+        // non-operational (rendered-document) set.
+        var manifestEntries = new List<(string RelativePath, string Sha256)>();
         using (var manifestDocument = JsonDocument.Parse(
             run1.Files.Single(f => f.RelativePath == "seqdoc.manifest.json").Content))
         {
-            var listed = manifestDocument.RootElement.GetProperty("files").EnumerateArray().ToArray();
-            Assert.Equal(35, listed.Length);
-            foreach (var entry in listed)
+            foreach (var entry in manifestDocument.RootElement.GetProperty("files").EnumerateArray())
             {
                 string path = entry.GetProperty("relativePath").GetString() ?? string.Empty;
                 Assert.False(path.Length == 0, "manifest lists an empty path.");
@@ -448,21 +468,14 @@ public sealed class OutboundHttpExternalCorpusTests
                 Assert.DoesNotContain(":", path, StringComparison.Ordinal);
                 Assert.DoesNotContain("\\", path, StringComparison.Ordinal);
                 Assert.False(path.StartsWith("//", StringComparison.Ordinal), $"manifest lists a UNC path '{path}'.");
+                manifestEntries.Add((path, entry.GetProperty("sha256").GetString() ?? string.Empty));
             }
         }
 
-        // ---- G3: manifest content-hash cross-check + owned-path set == generated non-operational set.
-        var manifestEntries = new List<(string RelativePath, string Sha256)>();
-        using (var manifestCrossCheck = JsonDocument.Parse(
-            run1.Files.Single(f => f.RelativePath == "seqdoc.manifest.json").Content))
-        {
-            foreach (var entry in manifestCrossCheck.RootElement.GetProperty("files").EnumerateArray())
-            {
-                manifestEntries.Add((
-                    entry.GetProperty("relativePath").GetString() ?? string.Empty,
-                    entry.GetProperty("sha256").GetString() ?? string.Empty));
-            }
-        }
+        // issue #53 frozen matrix: exactly 35 listed files (17 flow .md + 17 .mmd + index.md). A silent automatic-root drop shrinks both the manifest and the generated set, so set-equality alone would not catch it.
+        Assert.Equal(35, manifestEntries.Count);
+        // frozen manifest byte length (normalised-checkout baseline recorded in test-writer-notes.md).
+        Assert.Equal(6282, run1.Files.Single(f => f.RelativePath == "seqdoc.manifest.json").Content.Length);
 
         foreach (var (relativePath, listedHash) in manifestEntries)
         {
@@ -471,22 +484,12 @@ public sealed class OutboundHttpExternalCorpusTests
             Assert.Equal(listedHash, Sha256Hex(owned!.Content));
         }
 
-        // F5: "operational" = anything that is not a rendered document. This robustly excludes
-        // .seqdoc/**, seqdoc.manifest.json, AND seqdoc.stale (written at the output root by
-        // OutputSetActivator on a failed run; absent on success today, but the exclusion must not
-        // depend on that).
-        var operationalPaths = run1.Files
-            .Where(f => !f.RelativePath.EndsWith(".md", StringComparison.Ordinal)
-                && !f.RelativePath.EndsWith(".mmd", StringComparison.Ordinal))
-            .Select(f => f.RelativePath)
-            .ToHashSet(StringComparer.Ordinal);
         Assert.Equal(
-            run1.Files.Select(f => f.RelativePath)
-                .Where(p => !operationalPaths.Contains(p))
+            run1.Files.Select(f => f.RelativePath).Where(p => IsRenderedDocumentPath(p))
                 .OrderBy(p => p, StringComparer.Ordinal),
             manifestEntries.Select(e => e.RelativePath).OrderBy(p => p, StringComparer.Ordinal));
 
-        // ---- G1: per-artifact byte-length + SHA-256 for run 1 AND run 2, plus a complete-output digest
+        // ---- Per-artifact byte-length + SHA-256 for run 1 AND run 2, plus a complete-output digest
         // over every file under each output root (including operational .seqdoc/**).
         string[] namedArtifacts =
         [
@@ -515,19 +518,11 @@ public sealed class OutboundHttpExternalCorpusTests
         _output.WriteLine(
             $"[QHTTP-B matrix] complete-output digest run1={completeDigest1} run2={completeDigest2}");
         _output.WriteLine(
-            $"[QHTTP-B matrix] dotnet --version={CaptureProcessOutput("dotnet", "--version")} "
-            + $"node={CaptureProcessOutput("node", "--version")} "
-            + "mermaid-cli=@mermaid-js/mermaid-cli@11.16.0");
-        _output.WriteLine(
             $"[QHTTP-B matrix] mermaid budget={run1.MaxMermaidCharacters}; "
-            + $"frozen-scope git status before='{_lane.ExternalGitStatusBefore}' after='{_lane.ExternalGitStatusAfter}' "
-            + $"HEAD={_lane.CheckoutHead}");
-        // F3 / issue #53 cleanup contract: record the COMPLETE external tracked status (whole corpus),
-        // not only the analysis-scoped slice. Recorded for the matrix, not gated - a pre-existing obj/
-        // left by the ServiceClient lane must not turn this lane BLOCKED.
-        _output.WriteLine(
-            "[QHTTP-B matrix] whole-corpus tracked git status (recorded, not gated) "
-            + $"before='{_lane.ExternalGitStatusUnscopedBefore}' after='{_lane.ExternalGitStatusUnscopedAfter}'");
+            + $"shared-repo tracked+untracked status before/after equal="
+            + $"{_lane.SharedRepoStatusBefore == _lane.SharedRepoStatusAfter}; "
+            + $"worktree-list before/after equal={_lane.SharedWorktreeListBefore == _lane.SharedWorktreeListAfter}; "
+            + $"normalised-checkout HEAD={_lane.CheckoutHead}");
 
         foreach (var file in run1.Files.Where(f => f.RelativePath.EndsWith(".mmd", StringComparison.Ordinal)))
         {
@@ -536,16 +531,25 @@ public sealed class OutboundHttpExternalCorpusTests
                 mermaid.Length <= run1.MaxMermaidCharacters,
                 $"'{file.RelativePath}' has {mermaid.Length} characters, over the configured budget {run1.MaxMermaidCharacters}.");
             Assert.Empty(MermaidValidator.Validate(mermaid));
-            _output.WriteLine(
-                $"[QHTTP-B matrix] mermaid budget {file.RelativePath}: {mermaid.Length}/{run1.MaxMermaidCharacters} ok");
         }
 
         // ---- Real Mermaid CLI 11.16.0 render of every run-1 diagram. Genuine unavailability is a LOUD
         // failure (the lane is BLOCKED), never a silent skip or pass.
-        await RenderEveryDiagramWithMermaidCliAsync(run1);
+        await RenderEveryDiagramWithMermaidCliAsync(run1, _lane.RegisterOwnedTempRoot);
     }
 
-    private static async Task RenderEveryDiagramWithMermaidCliAsync(OutboundHttpLaneRun run)
+    private static string FormatIdentitySet(ImmutableArray<(string ProfileId, string IndexFingerprint)> set) =>
+        "[" + string.Join(" ; ", set.Select(p => $"({p.ProfileId}, {p.IndexFingerprint})")) + "]";
+
+    private static bool IsRenderedDocument(OutboundHttpRenderedFile f) => IsRenderedDocumentPath(f.RelativePath);
+
+    private static bool IsRenderedDocumentPath(string relativePath) =>
+        relativePath.EndsWith(".md", StringComparison.Ordinal)
+        || relativePath.EndsWith(".mmd", StringComparison.Ordinal);
+
+    private static async Task RenderEveryDiagramWithMermaidCliAsync(
+        OutboundHttpLaneRun run,
+        Action<string> registerOwnedTempRoot)
     {
         string? npx = FindOnPath("npx");
         Assert.True(
@@ -553,59 +557,45 @@ public sealed class OutboundHttpExternalCorpusTests
             "Mermaid CLI 11.16.0 is not runnable in this environment (node/npx missing). "
             + "Issue #53 requires this render; the QHTTP-B lane is BLOCKED, not skipped or passed.");
 
-        string workDirectory = Path.Combine(Path.GetTempPath(), $"seqdoc-qhttpb-mmdcli-{Guid.NewGuid():N}");
+        string workDirectory = Path.Combine(Path.GetTempPath(), $"sqhb-mmd-{Guid.NewGuid():N}");
         Directory.CreateDirectory(workDirectory);
-        try
+        registerOwnedTempRoot(workDirectory);
+
+        foreach (var file in run.Files.Where(f => f.RelativePath.EndsWith(".mmd", StringComparison.Ordinal)))
         {
-            foreach (var file in run.Files.Where(f => f.RelativePath.EndsWith(".mmd", StringComparison.Ordinal)))
-            {
-                string mmdPath = Path.Combine(workDirectory, Path.GetFileName(file.RelativePath));
-                await File.WriteAllBytesAsync(mmdPath, file.Content);
-                string svgPath = Path.ChangeExtension(mmdPath, ".svg");
+            string mmdPath = Path.Combine(workDirectory, Path.GetFileName(file.RelativePath));
+            await File.WriteAllBytesAsync(mmdPath, file.Content);
+            string svgPath = Path.ChangeExtension(mmdPath, ".svg");
 
-                var startInfo = new ProcessStartInfo
-                {
-                    FileName = npx!,
-                    WorkingDirectory = workDirectory,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                };
-                foreach (string argument in new[]
-                         {
-                             "--yes", "@mermaid-js/mermaid-cli@11.16.0",
-                             "-i", mmdPath, "-o", svgPath,
-                         })
-                {
-                    startInfo.ArgumentList.Add(argument);
-                }
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = npx!,
+                WorkingDirectory = workDirectory,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            foreach (string argument in new[]
+                     {
+                         "--yes", "@mermaid-js/mermaid-cli@11.16.0",
+                         "-i", mmdPath, "-o", svgPath,
+                     })
+            {
+                startInfo.ArgumentList.Add(argument);
+            }
 
-                using var process = Process.Start(startInfo)
-                    ?? throw new InvalidOperationException("Could not launch npx for mermaid-cli.");
-                string stdout = await process.StandardOutput.ReadToEndAsync();
-                string stderr = await process.StandardError.ReadToEndAsync();
-                await process.WaitForExitAsync();
+            using var process = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Could not launch npx for mermaid-cli.");
+            string stdout = await process.StandardOutput.ReadToEndAsync();
+            string stderr = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
 
-                Assert.True(
-                    process.ExitCode == 0,
-                    $"mermaid-cli 11.16.0 failed to render '{file.RelativePath}' (exit {process.ExitCode}).\n{stdout}\n{stderr}");
-                Assert.True(
-                    File.Exists(svgPath) && new FileInfo(svgPath).Length > 0,
-                    $"mermaid-cli 11.16.0 produced no SVG for '{file.RelativePath}'.");
-            }
-        }
-        finally
-        {
-            try
-            {
-                Directory.Delete(workDirectory, recursive: true);
-            }
-            catch (IOException)
-            {
-            }
-            catch (UnauthorizedAccessException)
-            {
-            }
+            Assert.True(
+                process.ExitCode == 0,
+                $"mermaid-cli 11.16.0 failed to render '{file.RelativePath}' (exit {process.ExitCode}).\n{stdout}\n{stderr}");
+            Assert.True(
+                File.Exists(svgPath) && new FileInfo(svgPath).Length > 0,
+                $"mermaid-cli 11.16.0 produced no SVG for '{file.RelativePath}'.");
         }
     }
 
@@ -618,40 +608,6 @@ public sealed class OutboundHttpExternalCorpusTests
             .OrderBy(f => f.RelativePath, StringComparer.Ordinal)
             .Select(f => $"{f.RelativePath}\t{Sha256Hex(f.Content)}");
         return Sha256Hex(Encoding.UTF8.GetBytes(string.Join("\n", lines)));
-    }
-
-    private static string CaptureProcessOutput(string executable, string arguments)
-    {
-        try
-        {
-            string? full = FindOnPath(executable);
-            if (full is null)
-            {
-                return "unavailable";
-            }
-
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = full,
-                Arguments = arguments,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            };
-            using var process = Process.Start(startInfo);
-            if (process is null)
-            {
-                return "unavailable";
-            }
-
-            string output = process.StandardOutput.ReadToEnd().Trim();
-            process.WaitForExit();
-            return output.Length == 0 ? "unavailable" : output;
-        }
-        catch (Exception)
-        {
-            return "unavailable";
-        }
     }
 
     private static int Count(string haystack, string needle)
@@ -693,11 +649,16 @@ public sealed record OutboundHttpRenderedFile(string RelativePath, byte[] Conten
 
 public sealed record OutboundHttpFlowArtifact(string FileName, string Markdown, string Mermaid);
 
+public sealed record SensitiveConfigValue(string Label, string Value);
+
 public sealed record OutboundHttpLaneRun(
     string Outcome,
     ImmutableArray<string> DiagnosticCodes,
     ImmutableArray<string> DiagnosticRecords,
     string DiagnosticSummary,
+    string Stderr,
+    string? ToolchainVersion,
+    ImmutableArray<(string ProfileId, string IndexFingerprint)> IdentitySet,
     int MaxMermaidCharacters,
     ImmutableArray<OutboundHttpRenderedFile> Files)
 {
@@ -731,21 +692,25 @@ public sealed record OutboundHttpLaneRun(
 public sealed record FrozenExternalHashes(string Solution, string BllProject, string Source);
 
 /// <summary>
-/// Asserts the shared <c>Provided/FraudManagement</c> checkout is exactly at the frozen revision
-/// <c>7aabfef9…</c> with a clean scoped working tree, then analyses it IN PLACE (matching the existing
-/// <c>ServiceClientExternalCorpusTests</c> FraudManagement lane). Writes the temporary two-root
-/// selection YAML under an isolated OS temp root and invokes the production CLI twice (fresh cache +
-/// output each time) for the determinism claim. Everything under the temp root is torn down on
-/// <see cref="DisposeAsync"/>, including on failure; the external checkout is never mutated (frozen
-/// files SHA-256-checked before and after). A normalised <c>git worktree</c> is intentionally not
-/// used — the frozen Program Index fingerprint depends on this checkout's in-place LF/CRLF line
-/// endings; a normalised tree yields a different fingerprint (owner-accepted boundary).
+/// Materialises FraudManagement revision <c>7aabfef9…</c> in an isolated detached <c>git worktree</c>
+/// under a short OS temp path, normalised with <c>core.autocrlf=false</c> / <c>core.eol=lf</c> BEFORE
+/// checkout, restores it, and invokes the production CLI twice (fresh cache + output each) against ONLY
+/// that normalised checkout. There is no in-place code path. The shared supplied repository is never
+/// mutated: tracked + untracked <c>git status</c> and <c>git worktree list</c> are recorded before and
+/// after and asserted equal. One cleanup owner (<see cref="CleanupAsync"/>) removes the worktree and
+/// every owned temp root (cache, output, YAML, Mermaid renders) and verifies each is gone; a cleanup
+/// failure throws. There is no skip path - every failure mode is a loud xUnit failure.
 /// </summary>
 public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
 {
     public const string CorpusRevision = "7aabfef98fa4d47781bd8a98b9061ddcafb88836";
     public const string ProfileId = "profile:v1:f874be7e6b51bea2038f6cfac77ab510fc73e7208e9e47b4475e6a17896aaef1";
-    public const string ProgramIndexFingerprint = "f9a36fd5662f01eead94779eb243f489d5bc1c6e1b7333d2f987b76e30d8146c";
+
+    // Amended Program Index fingerprint for the line-ending-normalised detached worktree
+    // (issue #53 comment 5523887517). The historical in-place f9a36fd5… value is superseded.
+    public const string ProgramIndexFingerprint =
+        "df23b372a30754898787988bdf0c0537b2bdb19d14b3724c4314588281935117";
+
     public const string SolutionSha256 = "67d6b9f15be05f86c06ea17fa92dd7474b8886b876d1d69cf11552741ffaaca1";
     public const string BllProjectSha256 = "c38a35ee7b3acf227fb9988ced35dceb2dec36165e8f8f01bb6b82ee6f658a06";
     public const string SourceSha256 = "eff261211900578a493d40900cd0de5418dbbd132bbc4f806f684b31e184dfce";
@@ -755,218 +720,262 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
     private const string GetRootHash =
         "method:v1:b7a44d4b1128669b35cda87326e73098991a24dbd0b975b9986c9050b8b45504";
 
-    private readonly List<string> _tempDirectories = [];
-    private string? _corpusRoot;
-
-    public bool CorpusAbsent { get; private set; }
-
-    public string? SkipReason { get; private set; }
+    private readonly List<string> _ownedTempRoots = [];
+    private readonly object _ownedTempRootsLock = new();
+    private string? _corpusGitToplevel;
+    private string? _worktreePath;
+    private bool _worktreeCleanedUp;
+    private bool _sharedStateSnapshotTaken;
 
     public OutboundHttpLaneRun? Run1 { get; private set; }
 
     public OutboundHttpLaneRun? Run2 { get; private set; }
 
-    /// <summary>The exact <c>HEAD</c> of the pinned FraudManagement checkout the lane analysed.</summary>
     public string CheckoutHead { get; private set; } = string.Empty;
 
-    public FrozenExternalHashes HashesBefore { get; private set; } = new("", "", "");
-
-    public FrozenExternalHashes HashesAfter { get; private set; } = new("", "", "");
-
-    /// <summary>
-    /// SHA-256 of the canonical committed blob content of the three frozen files at
-    /// <see cref="CorpusRevision"/>, read with <c>git show</c> so the value is independent of the
-    /// checkout's <c>core.autocrlf</c> / smudge filters. This is the true frozen-file identity.
-    /// </summary>
     public FrozenExternalHashes FrozenBlobHashes { get; private set; } = new("", "", "");
 
-    public string ExternalGitStatusBefore { get; private set; } = string.Empty;
+    public string SharedRepoStatusBefore { get; private set; } = string.Empty;
 
-    public string ExternalGitStatusAfter { get; private set; } = string.Empty;
+    public string SharedRepoStatusAfter { get; private set; } = string.Empty;
 
-    /// <summary>
-    /// Whole-corpus tracked-only <c>git status --porcelain --untracked-files=no</c> before and after
-    /// the runs. Recorded for the issue #53 cleanup matrix; NOT gated (a pre-existing tracked delta
-    /// from another FraudManagement lane must not turn this lane BLOCKED - the scoped status is the
-    /// gate).
-    /// </summary>
-    public string ExternalGitStatusUnscopedBefore { get; private set; } = string.Empty;
+    public string SharedWorktreeListBefore { get; private set; } = string.Empty;
 
-    public string ExternalGitStatusUnscopedAfter { get; private set; } = string.Empty;
+    public string SharedWorktreeListAfter { get; private set; } = string.Empty;
 
-    public string? ObservedProfileId { get; private set; }
+    public ImmutableArray<SensitiveConfigValue> SensitiveConfigValues { get; private set; } = [];
 
-    public string? ObservedIndexFingerprint { get; private set; }
-
-    public string? ObservedProfileIdRun2 { get; private set; }
-
-    public string? ObservedIndexFingerprintRun2 { get; private set; }
+    public string? MermaidCliVersion { get; private set; }
 
     private bool _mermaidBudgetResolvedFromJson;
 
-    /// <summary>
-    /// True when <see cref="ReadMermaidBudget"/> actually found
-    /// <c>data.configuration.diagramBudget.maxMermaidCharacters.value</c> in the CLI <c>--json</c>
-    /// payload, rather than silently returning its hard-coded fallback.
-    /// </summary>
     public bool MermaidBudgetResolvedFromJson => _mermaidBudgetResolvedFromJson;
 
-    public OutboundHttpLaneRun RequireRun1() => Require(Run1);
+    public OutboundHttpLaneRun RequireRun1() => Run1
+        ?? throw new XunitException("the FraudManagement outbound-HTTP acceptance lane produced no run 1 result.");
 
-    public OutboundHttpLaneRun RequireRun2() => Require(Run2);
+    public OutboundHttpLaneRun RequireRun2() => Run2
+        ?? throw new XunitException("the FraudManagement outbound-HTTP acceptance lane produced no run 2 result.");
 
-    private OutboundHttpLaneRun Require(OutboundHttpLaneRun? run)
+    public void RegisterOwnedTempRoot(string path)
     {
-        if (run is not null)
+        lock (_ownedTempRootsLock)
         {
-            return run;
+            _ownedTempRoots.Add(path);
         }
-
-        if (CorpusAbsent)
-        {
-            throw SkipException.ForSkip(
-                "the Provided external test-project corpus is not installed.");
-        }
-
-        throw new XunitException(
-            $"the FraudManagement outbound-HTTP acceptance lane did not produce a result: {SkipReason}");
     }
 
     public async Task InitializeAsync()
     {
-        string providedRoot;
         try
         {
-            providedRoot = ExternalCorpusResolver.Current.RequireGroup(ExternalCorpusGroup.Provided).Root;
-        }
-        catch (Exception exception) when (exception is SkipException or ExternalCorpusResolutionException)
-        {
-            CorpusAbsent = true;
-            SkipReason = "the Provided external test-project corpus is not installed.";
-            return;
-        }
-
-        _corpusRoot = Path.Combine(providedRoot, "FraudManagement");
-        if (!File.Exists(Path.Combine(_corpusRoot, "FraudManagement.sln")))
-        {
-            throw new XunitException(
-                $"the Provided corpus is installed but FraudManagement is missing at '{_corpusRoot}'. "
-                + "That is a QHTTP-B lane failure, not a skip.");
-        }
-
-        // Revision pinning. The Provided FraudManagement checkout is the frozen lane: it must sit
-        // exactly on CorpusRevision with a clean tree. A clean/normalised detached worktree is
-        // deliberately not used: the frozen Program Index fingerprint was baselined against this
-        // shared in-place checkout's inconsistent historical LF/CRLF working tree, and a normalised
-        // worktree of 7aabfef9… yields a different fingerprint
-        // (df23b372a30754898787988bdf0c0537b2bdb19d14b3724c4314588281935117) - an owner-accepted
-        // boundary for issue #53. So the guard is an assertion, and any drift is a loud blocker,
-        // never a skip.
-        CheckoutHead = RunGit(_corpusRoot, "rev-parse", "HEAD").StdOut.Trim();
-        if (!string.Equals(CheckoutHead, CorpusRevision, StringComparison.Ordinal))
-        {
-            throw new XunitException(
-                $"FraudManagement checkout is at '{CheckoutHead}', not the frozen revision '{CorpusRevision}'. "
-                + "QHTTP-B is BLOCKED until the corpus is pinned; this is not a skip.");
-        }
-
-        // Tracked-changes-only, scoped to the paths this lane actually analyses. An unrelated
-        // obj/bin artifact left by the existing ServiceClientExternalCorpusTests FraudManagement
-        // lane, or a stderr CRLF warning, must not turn a valid frozen checkout into BLOCKED.
-        ExternalGitStatusBefore = FrozenScopeStatus(_corpusRoot);
-        if (ExternalGitStatusBefore.Length != 0)
-        {
-            throw new XunitException(
-                $"FraudManagement checkout has an uncommitted delta in the frozen analysis scope before the run:\n{ExternalGitStatusBefore}\n"
-                + "QHTTP-B requires a clean frozen checkout; this is not a skip.");
-        }
-
-        // Whole-corpus tracked status, recorded only (issue #53: "Record the complete external source
-        // status/delta when a Git checkout is available"). Not a gate.
-        ExternalGitStatusUnscopedBefore = UnscopedTrackedStatus(_corpusRoot);
-
-        // Canonical committed content identity of the three frozen files, read with `git show` so the
-        // value is independent of the checkout's core.autocrlf / smudge filters.
-        FrozenBlobHashes = new FrozenExternalHashes(
-            GitBlobSha256(_corpusRoot, "FraudManagement.sln"),
-            GitBlobSha256(_corpusRoot, "BLL/BLL.csproj"),
-            GitBlobSha256(_corpusRoot, "BLL/TCCIntegration/TCCService.cs"));
-
-        HashesBefore = HashFrozenFiles(_corpusRoot);
-
-        string tmpRoot = NewTempDirectory("work");
-        string configPath = Path.Combine(tmpRoot, "outbound-http-two-root.seqdoc.yaml");
-        await File.WriteAllTextAsync(
-            configPath,
-            "schemaVersion: 1\n"
-            + "selection:\n"
-            + "  roots:\n"
-            + $"    - {PostRootHash}\n"
-            + $"    - {GetRootHash}\n");
-
-        string solution = Path.Combine(_corpusRoot, "FraudManagement.sln");
-
-        try
-        {
-            Run1 = await RunCliAsync(solution, _corpusRoot, configPath, captureIdentity: true);
-            if (!IsSucceeded(Run1))
+            string providedRoot = ExternalCorpusResolver.Current.RequireGroup(ExternalCorpusGroup.Provided).Root;
+            string corpusDir = Path.Combine(providedRoot, "FraudManagement");
+            if (!File.Exists(Path.Combine(corpusDir, "FraudManagement.sln")))
             {
-                SkipReason = $"first CLI run outcome was '{Run1.Outcome}': {Run1.DiagnosticSummary}";
-                Run1 = null;
-                return;
+                throw new XunitException(
+                    $"the Provided corpus is installed but FraudManagement is missing at '{corpusDir}'. "
+                    + "That is a QHTTP-B lane failure, not a skip.");
             }
 
-            Run2 = await RunCliAsync(solution, _corpusRoot, configPath, captureIdentity: false, isRun2: true);
-            if (!IsSucceeded(Run2))
+            var toplevelResult = RunProcess("git", corpusDir, "rev-parse", "--show-toplevel");
+            if (toplevelResult.ExitCode != 0)
             {
-                SkipReason = $"second determinism CLI run outcome was '{Run2.Outcome}'.";
-                Run2 = null;
+                throw new XunitException($"could not resolve the FraudManagement git toplevel: {toplevelResult.StdErr}");
             }
+
+            _corpusGitToplevel = toplevelResult.StdOut.Trim();
+
+            // Identity: the revision must exist in the shared repo.
+            var revCheck = RunProcess("git", _corpusGitToplevel, "cat-file", "-e", $"{CorpusRevision}^{{commit}}");
+            if (revCheck.ExitCode != 0)
+            {
+                throw new XunitException(
+                    $"revision '{CorpusRevision}' is not present in the FraudManagement corpus repository. "
+                    + "QHTTP-B is BLOCKED until the corpus carries the frozen revision; this is not a skip.");
+            }
+
+            SharedWorktreeListBefore = RunProcessOrThrow("git", _corpusGitToplevel, "worktree", "list", "--porcelain");
+            SharedRepoStatusBefore = RunProcessOrThrow("git", _corpusGitToplevel, "status", "--porcelain");
+
+            // Isolated detached worktree, line-ending-normalised BEFORE checkout.
+            string worktreeParent = NewOwnedTempRoot("wt");
+            _worktreePath = Path.Combine(worktreeParent, "fm");
+            RunProcessOrThrow("git", _corpusGitToplevel, "worktree", "add", "--no-checkout", "--detach", _worktreePath, CorpusRevision);
+            RunProcessOrThrow("git", _worktreePath, "config", "core.longpaths", "true");
+            RunProcessOrThrow("git", _worktreePath, "config", "core.autocrlf", "false");
+            RunProcessOrThrow("git", _worktreePath, "config", "core.eol", "lf");
+            RunProcessOrThrow("git", _worktreePath, "sparse-checkout", "set", "--no-cone",
+                "/*", "!obj/", "!bin/", "!packages/", "!.vs/", "!PackageTmp/");
+            RunProcessOrThrow("git", _worktreePath, "checkout");
+
+            CheckoutHead = RunProcessOrThrow("git", _worktreePath, "rev-parse", "HEAD").Trim();
+            if (!string.Equals(CheckoutHead, CorpusRevision, StringComparison.Ordinal))
+            {
+                throw new XunitException(
+                    $"normalised worktree HEAD is '{CheckoutHead}', not the frozen revision '{CorpusRevision}'.");
+            }
+
+            FrozenBlobHashes = new FrozenExternalHashes(
+                GitBlobSha256(_worktreePath, "FraudManagement.sln"),
+                GitBlobSha256(_worktreePath, "BLL/BLL.csproj"),
+                GitBlobSha256(_worktreePath, "BLL/TCCIntegration/TCCService.cs"));
+
+            SensitiveConfigValues = ReadSensitiveConfigValues(_worktreePath);
+
+            var restore = RunProcess("dotnet", _worktreePath, "restore",
+                Path.Combine(_worktreePath, "FraudManagement.sln"));
+            if (restore.ExitCode != 0)
+            {
+                throw new XunitException(
+                    $"`dotnet restore` on the normalised FraudManagement worktree failed (exit {restore.ExitCode}). "
+                    + $"QHTTP-B is BLOCKED; this is not a skip.\n{restore.StdOut}\n{restore.StdErr}");
+            }
+
+            MermaidCliVersion = ReadMermaidCliVersion();
+
+            string configRoot = NewOwnedTempRoot("cfg");
+            string configPath = Path.Combine(configRoot, "outbound-http-two-root.seqdoc.yaml");
+            await File.WriteAllTextAsync(
+                configPath,
+                "schemaVersion: 1\n"
+                + "selection:\n"
+                + "  roots:\n"
+                + $"    - {PostRootHash}\n"
+                + $"    - {GetRootHash}\n");
+
+            string solution = Path.Combine(_worktreePath, "FraudManagement.sln");
+
+            Run1 = await RunCliAsync(solution, _worktreePath, configPath);
+            AssertSucceeded(Run1, "first");
+            Run2 = await RunCliAsync(solution, _worktreePath, configPath);
+            AssertSucceeded(Run2, "second determinism");
         }
         finally
         {
-            HashesAfter = HashFrozenFiles(_corpusRoot);
-            ExternalGitStatusAfter = FrozenScopeStatus(_corpusRoot);
-            ExternalGitStatusUnscopedAfter = UnscopedTrackedStatus(_corpusRoot);
+            await CleanupAsync();
         }
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
-        // The lane writes only under the isolated OS temp root (caches, output, YAML, Mermaid
-        // renders); the external checkout is read-only. Remove the temp root, including on failure.
-        foreach (string directory in _tempDirectories)
+        await CleanupAsync();
+    }
+
+    // The single cleanup owner. Idempotent and re-runnable: called from InitializeAsync's finally (which
+    // also snapshots the shared-repo state the tests assert against) and again from DisposeAsync (which
+    // catches any temp root a test registered after init, e.g. the Mermaid-render dir). The worktree
+    // removal and the shared-state snapshot happen once; the owned-temp-root sweep + verification run
+    // every time.
+    private async Task CleanupAsync()
+    {
+        var failures = new List<string>();
+
+        // The production CLI opens the SQLite cache with connection pooling on, so the pool keeps the
+        // cache-v1.db file handle open past the run. Release every pooled handle (and run finalizers)
+        // before deleting the owned cache roots - otherwise deletion loses a genuine race, not a real
+        // isolation failure.
+        try
         {
-            try
+            Type.GetType("Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite")?
+                .GetMethod("ClearAllPools", BindingFlags.Public | BindingFlags.Static)?
+                .Invoke(null, null);
+        }
+        catch (Exception exception) when (exception is TargetInvocationException or MissingMethodException)
+        {
+            // Best effort; the bounded deletion retry below still guards the real assertion.
+        }
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+
+        // 1. Remove the detached worktree from the shared repo (bounded retry for OneDrive locks).
+        if (!_worktreeCleanedUp && _worktreePath is not null && _corpusGitToplevel is not null)
+        {
+            _worktreeCleanedUp = true;
+            bool removed = false;
+            for (int attempt = 1; attempt <= 2 && !removed; attempt++)
             {
-                if (Directory.Exists(directory))
+                RunProcess("git", _corpusGitToplevel, "worktree", "remove", "--force", _worktreePath);
+                RunProcess("git", _corpusGitToplevel, "worktree", "prune");
+                removed = !Directory.Exists(_worktreePath) && !IsRegisteredWorktree(_corpusGitToplevel, _worktreePath);
+                if (!removed && attempt == 1)
                 {
-                    Directory.Delete(directory, recursive: true);
+                    await Task.Delay(750);
                 }
             }
-            catch (IOException)
+
+            if (!removed)
             {
-            }
-            catch (UnauthorizedAccessException)
-            {
+                failures.Add($"detached worktree '{_worktreePath}' is still present or registered after cleanup.");
             }
         }
 
-        return Task.CompletedTask;
+        // 2. Delete every owned temp root (bounded retry).
+        string[] roots;
+        lock (_ownedTempRootsLock)
+        {
+            roots = _ownedTempRoots.ToArray();
+        }
+
+        foreach (string root in roots)
+        {
+            bool gone = false;
+            for (int attempt = 1; attempt <= 4 && !gone; attempt++)
+            {
+                try
+                {
+                    if (Directory.Exists(root))
+                    {
+                        Directory.Delete(root, recursive: true);
+                    }
+
+                    gone = !Directory.Exists(root);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    if (attempt < 4)
+                    {
+                        await Task.Delay(500 * attempt);
+                    }
+                }
+            }
+
+            if (!gone)
+            {
+                failures.Add($"owned temp root '{root}' could not be deleted.");
+            }
+        }
+
+        // 3. Record the shared repository state after cleanup for the isolation assertions (once).
+        if (!_sharedStateSnapshotTaken && _corpusGitToplevel is not null)
+        {
+            _sharedStateSnapshotTaken = true;
+            SharedWorktreeListAfter = RunProcessOrThrow("git", _corpusGitToplevel, "worktree", "list", "--porcelain");
+            SharedRepoStatusAfter = RunProcessOrThrow("git", _corpusGitToplevel, "status", "--porcelain");
+        }
+
+        if (failures.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "QHTTP-B fixture cleanup did not complete: " + string.Join(" | ", failures));
+        }
     }
 
-    private static bool IsSucceeded(OutboundHttpLaneRun run) =>
-        string.Equals(run.Outcome, "succeeded", StringComparison.OrdinalIgnoreCase);
-
-    private async Task<OutboundHttpLaneRun> RunCliAsync(
-        string solution,
-        string laneRoot,
-        string configPath,
-        bool captureIdentity,
-        bool isRun2 = false)
+    private static void AssertSucceeded(OutboundHttpLaneRun run, string label)
     {
-        string outputDirectory = NewTempDirectory("out");
-        string cacheDirectory = NewTempDirectory("cache");
+        if (!string.Equals(run.Outcome, "succeeded", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new XunitException(
+                $"{label} CLI run outcome was '{run.Outcome}' (expected 'succeeded'). "
+                + $"Diagnostics: {run.DiagnosticSummary}. QHTTP-B is BLOCKED; this is not a skip.");
+        }
+    }
+
+    private async Task<OutboundHttpLaneRun> RunCliAsync(string solution, string laneRoot, string configPath)
+    {
+        string outputDirectory = NewOwnedTempRoot("out");
+        string cacheDirectory = NewOwnedTempRoot("cache");
 
         string[] args =
         [
@@ -1007,17 +1016,33 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
             }
         }
 
-        // Capture the identity path on BOTH runs so the test can assert run1 == run2 (F7).
-        var (observedProfileId, observedIndexFingerprint) = CaptureIdentity(root);
-        if (isRun2)
+        string? toolchainVersion = null;
+        var identitySet = ImmutableArray.CreateBuilder<(string, string)>();
+        if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
         {
-            ObservedProfileIdRun2 = observedProfileId;
-            ObservedIndexFingerprintRun2 = observedIndexFingerprint;
-        }
-        else if (captureIdentity)
-        {
-            ObservedProfileId = observedProfileId;
-            ObservedIndexFingerprint = observedIndexFingerprint;
+            if (data.TryGetProperty("toolchainVersion", out var tv) && tv.ValueKind == JsonValueKind.String)
+            {
+                toolchainVersion = tv.GetString();
+            }
+
+            if (data.TryGetProperty("runs", out var runs) && runs.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var runEntry in runs.EnumerateArray())
+                {
+                    if (runEntry.ValueKind != JsonValueKind.Object)
+                    {
+                        continue;
+                    }
+
+                    string profileId = runEntry.TryGetProperty("profileId", out var pid) && pid.ValueKind == JsonValueKind.String
+                        ? pid.GetString() ?? string.Empty
+                        : string.Empty;
+                    string fingerprint = runEntry.TryGetProperty("indexFingerprint", out var fp) && fp.ValueKind == JsonValueKind.String
+                        ? fp.GetString() ?? string.Empty
+                        : string.Empty;
+                    identitySet.Add((profileId, fingerprint));
+                }
+            }
         }
 
         return new OutboundHttpLaneRun(
@@ -1025,44 +1050,11 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
             codes.ToImmutable(),
             records.ToImmutable(),
             summary.ToString().Trim(),
+            standardError.ToString(),
+            toolchainVersion,
+            identitySet.ToImmutable(),
             ReadMermaidBudget(root),
             ReadGeneratedFiles(outputDirectory));
-    }
-
-    // The production CLI emits analyze identity at the exact path data.runs[].profileId and
-    // data.runs[].indexFingerprint (CliHost.CreateAnalyzeData, serialized with a CamelCase naming
-    // policy). Read that exact path - a shape mismatch must surface as a null observation the hard
-    // assert in the test reports as BLOCKED, never a silent skip.
-    private static (string? ProfileId, string? IndexFingerprint) CaptureIdentity(JsonElement root)
-    {
-        string? profileId = null;
-        string? indexFingerprint = null;
-
-        if (root.TryGetProperty("data", out var data)
-            && data.ValueKind == JsonValueKind.Object
-            && data.TryGetProperty("runs", out var runs)
-            && runs.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var run in runs.EnumerateArray())
-            {
-                if (run.ValueKind != JsonValueKind.Object)
-                {
-                    continue;
-                }
-
-                if (run.TryGetProperty("profileId", out var pid) && pid.ValueKind == JsonValueKind.String)
-                {
-                    profileId ??= pid.GetString();
-                }
-
-                if (run.TryGetProperty("indexFingerprint", out var fp) && fp.ValueKind == JsonValueKind.String)
-                {
-                    indexFingerprint ??= fp.GetString();
-                }
-            }
-        }
-
-        return (profileId, indexFingerprint);
     }
 
     private int ReadMermaidBudget(JsonElement root)
@@ -1100,28 +1092,95 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
         return builder.ToImmutable();
     }
 
-    private static FrozenExternalHashes HashFrozenFiles(string root) => new(
-        Sha256(Path.Combine(root, "FraudManagement.sln")),
-        Sha256(Path.Combine(root, "BLL", "BLL.csproj")),
-        Sha256(Path.Combine(root, "BLL", "TCCIntegration", "TCCService.cs")));
-
-    private static string Sha256(string path) =>
-        Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant();
-
-    private string NewTempDirectory(string label)
+    // Reads the actual non-empty TCC base-address / API-key request literals from the normalised
+    // checkout's config files, in memory only. Values are never persisted or emitted.
+    private static ImmutableArray<SensitiveConfigValue> ReadSensitiveConfigValues(string worktreeRoot)
     {
-        string path = Path.Combine(Path.GetTempPath(), $"seqdoc-qhttpb-{label}-{Guid.NewGuid():N}");
+        var found = new List<SensitiveConfigValue>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        var xmlPattern = new Regex(
+            "<add\\s+key=\"(?<key>TCC[A-Za-z]*)\"\\s+value=\"(?<value>[^\"]*)\"",
+            RegexOptions.IgnoreCase);
+        var jsonPattern = new Regex(
+            "\"(?<key>TCC[A-Za-z]*)\"\\s*:\\s*\"(?<value>[^\"]*)\"",
+            RegexOptions.IgnoreCase);
+
+        foreach (string path in Directory.EnumerateFiles(worktreeRoot, "*", SearchOption.AllDirectories))
+        {
+            string name = Path.GetFileName(path);
+            bool isConfig = name.EndsWith(".config", StringComparison.OrdinalIgnoreCase);
+            bool isAppSettings = name.StartsWith("appsettings", StringComparison.OrdinalIgnoreCase)
+                && name.EndsWith(".json", StringComparison.OrdinalIgnoreCase);
+            bool isWebConfig = name.Equals("web.config", StringComparison.OrdinalIgnoreCase);
+            if (!isConfig && !isAppSettings && !isWebConfig)
+            {
+                continue;
+            }
+
+            string content;
+            try
+            {
+                content = File.ReadAllText(path);
+            }
+            catch (IOException)
+            {
+                continue;
+            }
+
+            foreach (var pattern in new[] { xmlPattern, jsonPattern })
+            {
+                foreach (Match match in pattern.Matches(content))
+                {
+                    string key = match.Groups["key"].Value;
+                    string value = match.Groups["value"].Value;
+                    bool sensitiveKey =
+                        key.Contains("BaseAddress", StringComparison.OrdinalIgnoreCase)
+                        || key.Contains("APIKey", StringComparison.OrdinalIgnoreCase)
+                        || key.Contains("Address", StringComparison.OrdinalIgnoreCase)
+                        || key.Contains("Url", StringComparison.OrdinalIgnoreCase)
+                        || key.Contains("Uri", StringComparison.OrdinalIgnoreCase)
+                        || key.Contains("Key", StringComparison.OrdinalIgnoreCase)
+                        || key.Contains("Secret", StringComparison.OrdinalIgnoreCase)
+                        || key.Contains("Password", StringComparison.OrdinalIgnoreCase);
+                    if (!sensitiveKey || value.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    if (seen.Add($"{key}\u0000{value}"))
+                    {
+                        found.Add(new SensitiveConfigValue(key, value));
+                    }
+
+                    // Also treat the host component of any absolute URI value as sensitive.
+                    if (Uri.TryCreate(value, UriKind.Absolute, out var uri)
+                        && !string.IsNullOrEmpty(uri.Host)
+                        && seen.Add($"{key}.host\u0000{uri.Host}"))
+                    {
+                        found.Add(new SensitiveConfigValue($"{key} (host)", uri.Host));
+                    }
+                }
+            }
+        }
+
+        return found.ToImmutableArray();
+    }
+
+    private string NewOwnedTempRoot(string label)
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"sqhb-{label}-{Guid.NewGuid():N}");
         Directory.CreateDirectory(path);
-        _tempDirectories.Add(path);
+        RegisterOwnedTempRoot(path);
         return path;
     }
 
-    private static string GitBlobSha256(string repositoryRoot, string relativePath)
+    private static string GitBlobSha256(string worktreeRoot, string relativePath)
     {
         var startInfo = new ProcessStartInfo
         {
             FileName = "git",
-            WorkingDirectory = repositoryRoot,
+            WorkingDirectory = worktreeRoot,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -1143,47 +1202,92 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
         return Convert.ToHexString(SHA256.HashData(buffer.ToArray())).ToLowerInvariant();
     }
 
-    // Tracked changes only (`--untracked-files=no`), scoped to the solution and the BLL project the
-    // frozen lane analyses. stderr (e.g. a CRLF warning) is deliberately ignored for the value.
-    private static string FrozenScopeStatus(string corpusRoot)
+    private static string ReadMermaidCliVersion()
     {
-        var result = RunGit(
-            corpusRoot,
-            "status", "--porcelain", "--untracked-files=no", "--", "FraudManagement.sln", "BLL");
+        string? npx = FindOnPathStatic("npx");
+        if (npx is null || FindOnPathStatic("node") is null)
+        {
+            throw new XunitException(
+                "node/npx are not runnable in this environment; the Mermaid CLI 11.16.0 version cannot be "
+                + "confirmed. Issue #53 requires this render; the QHTTP-B lane is BLOCKED, not skipped.");
+        }
+
+        var result = RunProcess(npx, Path.GetTempPath(), "--yes", "@mermaid-js/mermaid-cli@11.16.0", "--version");
         if (result.ExitCode != 0)
         {
             throw new XunitException(
-                $"git status on the FraudManagement checkout failed (exit {result.ExitCode}): {result.StdErr}");
+                $"`npx --yes @mermaid-js/mermaid-cli@11.16.0 --version` failed (exit {result.ExitCode}).\n{result.StdErr}");
+        }
+
+        // mmdc prints just the version number (e.g. "11.16.0").
+        return result.StdOut.Trim();
+    }
+
+    private static string? FindOnPathStatic(string executable)
+    {
+        string[] candidates = OperatingSystem.IsWindows()
+            ? [executable + ".cmd", executable + ".exe", executable]
+            : [executable];
+        foreach (string directory in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            foreach (string candidate in candidates)
+            {
+                string full = Path.Combine(directory.Trim(), candidate);
+                if (File.Exists(full))
+                {
+                    return full;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsRegisteredWorktree(string toplevel, string worktreePath)
+    {
+        string expected = Path.GetFullPath(worktreePath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var result = RunProcess("git", toplevel, "worktree", "list", "--porcelain");
+        foreach (string line in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!line.StartsWith("worktree ", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            string actual = Path.GetFullPath(line["worktree ".Length..].Trim())
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string RunProcessOrThrow(string executable, string workingDirectory, params string[] arguments)
+    {
+        var result = RunProcess(executable, workingDirectory, arguments);
+        if (result.ExitCode != 0)
+        {
+            throw new XunitException(
+                $"`{executable} {string.Join(' ', arguments)}` failed (exit {result.ExitCode}) in '{workingDirectory}'.\n"
+                + $"{result.StdOut}\n{result.StdErr}");
         }
 
         return result.StdOut;
     }
 
-    // Whole-corpus tracked changes (`--untracked-files=no`, no pathspec). Recorded for the issue #53
-    // cleanup matrix only - never gated, so a pre-existing tracked delta from another FraudManagement
-    // lane cannot turn this lane BLOCKED.
-    private static string UnscopedTrackedStatus(string corpusRoot)
-    {
-        var result = RunGit(corpusRoot, "status", "--porcelain", "--untracked-files=no");
-        if (result.ExitCode != 0)
-        {
-            throw new XunitException(
-                $"git status (whole corpus) on the FraudManagement checkout failed (exit {result.ExitCode}): {result.StdErr}");
-        }
-
-        return result.StdOut;
-    }
-
-    // stdout and stderr are kept separate: only stdout carries `status --porcelain` / `rev-parse`
-    // values, so a benign CRLF-conversion warning on stderr can never turn a clean frozen checkout
-    // into a hard BLOCKED failure. stderr is surfaced only in exception text.
-    private static (int ExitCode, string StdOut, string StdErr) RunGit(
+    private static (int ExitCode, string StdOut, string StdErr) RunProcess(
+        string executable,
         string workingDirectory,
         params string[] arguments)
     {
         var startInfo = new ProcessStartInfo
         {
-            FileName = "git",
+            FileName = executable,
             WorkingDirectory = workingDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -1195,7 +1299,7 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
         }
 
         using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Could not start git.");
+            ?? throw new InvalidOperationException($"Could not start '{executable}'.");
         string stdout = process.StandardOutput.ReadToEnd();
         string stderr = process.StandardError.ReadToEnd();
         process.WaitForExit();
