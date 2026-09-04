@@ -1,10 +1,10 @@
 {
-  "activeCheckpointId": "QLOOP1",
-  "activeCheckpointPath": "docs/work/quality/QLOOP1",
+  "activeCheckpointId": "I13",
+  "activeCheckpointPath": "docs/work/persistence/I13",
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Run the declared final 71-test Behavior gate once, then restore I13 selection and close QLOOP1 if green.",
+  "nextAction": "Ahmad must merge the amendment commit, retain only authorized acceptance/evidence paths, and resume I13 from the re-frozen CreditTransfer identity without semantic changes.",
   "schemaVersion": 1,
-  "sourceId": "GH-85"
+  "sourceId": "GH-13"
 }

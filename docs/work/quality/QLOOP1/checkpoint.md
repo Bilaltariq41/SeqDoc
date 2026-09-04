@@ -2,7 +2,7 @@
 
 ## State
 
-`Verifying`
+`Closed`
 
 ## Authority and baseline
 

@@ -17,7 +17,7 @@
   "owner": "ahmad",
   "pr": null,
   "schemaVersion": 1,
-  "selectedForExecution": false,
+  "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/13",
   "statusReason": "The exact six-root CreditTransfer config, profile, fingerprint, and hash are re-frozen under owner disposition 5511399631; I13 resumes acceptance-only after this amendment merges.",
   "title": "[Persistence] Supplied-project persistence acceptance",
