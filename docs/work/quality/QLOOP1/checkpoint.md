@@ -79,6 +79,28 @@ dotnet test tests/SeqDoc.Behavior.Tests/SeqDoc.Behavior.Tests.csproj -c Release 
 
 Expected focused discovery is exactly four tests.
 
+## Repair trace
+
+### Pre-review implementation repair
+
+- Attempt 1 produced a changed candidate with three focused passes and one failure. The remaining
+  `BackEdgeProducesNaturalLoopRegion` case reported `BD2011`. Root cause: the latch predecessor was accidentally added
+  to an unrelated earlier conditional fixture instead of the while-loop header. The candidate also contained avoidable
+  invocation-payload and formatting churn. This is one failed repair round.
+- Attempt 2 reverted the unrelated predecessor change, added predecessor `2` to the actual while-loop header, removed
+  the unnecessary invocation payload and formatting churn, and preserved the compiler-backed evidence and topology in
+  all four fixtures. The exact focused command then discovered four tests and passed 4/4 with zero failures and skips.
+- Applicable failed-round count before independent review: one. The successful second attempt did not trigger the
+  two-failed-round blocking boundary.
+
+### Independent review of `d6fb5c80212704fbd357f0b3a2004271d98fe17d`
+
+- `QLOOP1-F1` — **Fixed**: both changed consumer tests now assert the exact projected `LoopKind`, header block `1`,
+  latch block `[2]`, body block `[2]`, and the single exit node projected from block `3`. The original loop-presence,
+  region, ordering, and body-invocation assertions remain. The exact focused command passed 4/4 after this repair.
+- `QLOOP1-F2` — **Fixed**: this repair trace records the failed attempt, root cause, repair delta, focused 4/4 evidence,
+  affected assertions, and applicable failed-round count.
+
 ## Review boundary
 
 Implementation stops at `ReviewRequired`. The Orchestrator inspects the complete diff and invokes one independent

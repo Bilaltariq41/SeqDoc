@@ -4,7 +4,7 @@
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Run one independent complete-candidate review of PR #86 and resolve every finding before the final Behavior gate.",
+  "nextAction": "Run the independent post-repair review of PR #86 at the new exact head before the final Behavior gate.",
   "schemaVersion": 1,
   "sourceId": "GH-85"
 }

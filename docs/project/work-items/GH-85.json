@@ -10,14 +10,14 @@
   "kind": "github-issue",
   "lifecycle": "ReviewRequired",
   "lifecycleLabel": "review-required",
-  "nextAction": "Run one independent complete-candidate review of PR #86 and resolve every finding before the final Behavior gate.",
+  "nextAction": "Run the independent post-repair review of PR #86 at the new exact head before the final Behavior gate.",
   "number": 85,
   "owner": "bilal",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/86",
   "schemaVersion": 1,
   "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/85",
-  "statusReason": "The four-test focused lane passed 4/4 after bounded repair round 2; the complete candidate is ready for independent review.",
+  "statusReason": "QLOOP1-F1 and QLOOP1-F2 are fixed; the post-repair focused lane passed exactly 4/4.",
   "title": "[Quality] Repair stale compiler-backed loop fixtures",
   "track": "quality"
 }

@@ -192,6 +192,12 @@ public sealed class MethodFlowBuilderTests
         Assert.Contains(result.Snapshot.Nodes, node => node.Kind == FlowNodeKind.Loop);
         Assert.Contains(result.Snapshot.Regions, region => region.Kind == FlowRegionKind.NaturalLoop);
         var loop = Assert.Single(result.Snapshot.Nodes.OfType<LoopNode>());
+        Assert.Equal(ExtractedLoopKind.WhileLoop, loop.LoopKind);
+        Assert.Equal(1, loop.HeaderBlockOrdinal);
+        Assert.Equal([2], loop.LatchBlockOrdinals.ToArray());
+        Assert.Equal([2], loop.BodyBlockOrdinals.ToArray());
+        var exit = Assert.Single(result.Snapshot.Nodes, node => node.Kind == FlowNodeKind.Exit);
+        Assert.Equal([exit.Id], loop.Exits.ToArray());
         var bodyInvocations = result.Snapshot.Nodes
             .OfType<InvocationFlowNode>()
             .Where(node => loop.Body.Contains(node.Id))
@@ -236,6 +242,13 @@ public sealed class MethodFlowBuilderTests
         Assert.Empty(result.Diagnostics);
         Assert.Contains(result.Snapshot.Nodes, node => node.Kind == FlowNodeKind.Loop);
         Assert.Contains(result.Snapshot.Regions, region => region.Kind == FlowRegionKind.NaturalLoop);
+        var loop = Assert.Single(result.Snapshot.Nodes.OfType<LoopNode>());
+        Assert.Equal(ExtractedLoopKind.DoWhileLoop, loop.LoopKind);
+        Assert.Equal(1, loop.HeaderBlockOrdinal);
+        Assert.Equal([2], loop.LatchBlockOrdinals.ToArray());
+        Assert.Equal([2], loop.BodyBlockOrdinals.ToArray());
+        var exit = Assert.Single(result.Snapshot.Nodes, node => node.Kind == FlowNodeKind.Exit);
+        Assert.Equal([exit.Id], loop.Exits.ToArray());
     }
 
     [Fact]
