@@ -780,6 +780,191 @@ match, the ISO-8601 date regex, and the document-wide `Authorization` token) are
 CI account and FraudManagement revision `7aabfef98fa4d47781bd8a98b9061ddcafb88836`; a different CI
 account name or a future corpus revision may require revisiting them. Notes-only, no code change.
 
+## Ninth repair pass — third authoritative GitHub review (F1-F5), 2026-09-04
+
+Bounded repair round, acceptance-only, zero production/semantic change. Edits confined to
+`tests/SeqDoc.AcceptanceTests/OutboundHttpExternalCorpusTests.cs` + this file. Branch already rebased
+onto current `main` (merge-base `8f26c1f`) by the orchestrator before this pass; no rebase performed
+here. The frozen artifact matrix is byte-identical to the eighth pass (POST md 3676 / `20293c9d…`, POST
+mmd 353 / `84621287…`, GET md 2850 / `43f4210f…`, GET mmd 289 / `363e1698…`, index.md 2224 /
+`0de88502…`, manifest 6282 / `b48eb3d7…`, complete-output digest `22045be6…`, diagnostics digest
+`2f62d6e3…`, codes `BE1001, BE2010, BE2010, PRED001`, run identity `(profile:v1:f874be7e…, df23b372…)`).
+
+### F1 (Critical) — linked-worktree `git config` no longer mutates the shared repository
+
+The three persistent `git config core.longpaths/autocrlf/eol` writes against `_worktreePath` are
+**removed entirely**. `core.longpaths=true`, `core.autocrlf=false`, `core.eol=lf` are now applied as
+command-scoped `-c key=value` overrides on the `checkout` invocation only (the sole step that reads
+them):
+```
+git -C <wt> -c core.longpaths=true -c core.autocrlf=false -c core.eol=lf checkout
+```
+This never writes a config file. Direct before/after proof added: `SharedConfigBefore`/`SharedConfigAfter`
+fixture properties capture `git config --list --local` against `_corpusGitToplevel` before any worktree
+operation and again after `CleanupAsync` completes; `FrozenIdentityIsolationAndArtifactValidityHold`
+asserts them exactly equal, alongside the existing `git status`/`git worktree list` equality (which does
+NOT, by itself, detect a shared-config-file mutation — a linked worktree shares the same `.git/config`
+unless `extensions.worktreeConfig=true` is set). The normalised checkout bytes and the amended fingerprint
+`df23b372…` are unaffected (config PERSISTENCE changed, not config VALUE) — confirmed unchanged in the
+focused run.
+
+### F2 (Major) — failed worktree cleanup can now retry
+
+`_worktreeCleanedUp = true` is now set only AFTER the removal loop confirms `removed == true`. If both
+attempts fail, the flag stays `false` (so a later `CleanupAsync` call from `DisposeAsync` re-enters the
+block and retries) while the failure is still added to `failures` so THIS call fails loudly. The loop's
+own retry count/delay is unchanged. Not exercised as a red/green regression here (would require
+simulating a stuck worktree handle); the fix is a direct, small control-flow correction reviewed by
+inspection against the exact defect described.
+
+### F3 (Major) — G3 sensitive corpus completeness (frozen `TCCService.cs` DTO/header fields)
+
+Extended `OutboundHttpSensitiveCorpus.Build`:
+- `header` kind: added `Accept` alongside `Authorization` (`client.DefaultRequestHeaders.Accept` in the
+  frozen source). Verified document-wide clean — no false positive (see table below).
+- New **distinctive** document-wide tokens (kind `payload-identifier`, plain literal, Ordinal, exact
+  casing): `contentType`, `UpdateTypeList`, `TimeFrame`, `ReasonCodes`, `Tcn`, `tcn`.
+- New **generic-English-word** tokens, kept as their own kind `payload-identifier-generic` and scoped
+  (not document-wide) after an observed false positive: `Code`→as `Code`, `description`, `Description`,
+  `reason`, `list`, `status` (plus lowercase `code` — see below, moved to boundary-scoped).
+- Three tokens (`message`, `code`, `Value`) turned out to genuinely appear **inside the accepted POST
+  flow's own Method Flow narration** (see false-positive table) — moved to a third kind,
+  `payload-identifier-boundary`, folded into the existing `boundaryScopedCorpus` set (same treatment as
+  the pre-existing `bcl-token` — never removable document-wide without a forbidden production Method
+  Flow change; the acceptance claim is only that they never become the boundary line / Mermaid message).
+
+**Final complete token table (kind → tokens):**
+
+| Kind | Tokens |
+|---|---|
+| `request-path` | `threeThirty/complaint/addComplaint`, `threeThirty/lookup/updateType/all`, `threeThirty/notification/update`, `threeThirty/callBypass/add`, `threeThirty` |
+| `header` | `Authorization`, `Accept` |
+| `media-type` | `application/json` |
+| `config-key` | `TCCBaseAddress`, `TCCAPIKey`, `_baseAddress`, `_APIKey` |
+| `bcl-token` (boundary-scoped) | `MediaTypeHeaderValue`, `SerializeObject`, `DeserializeObject` |
+| `bcl-response-token` (document-wide) | `ByteArrayContent`, `HttpResponseMessage`, `IsSuccessStatusCode`, `ReadAsStringAsync`, `StringContent`, `HttpClientHandler`, `ServerCertificateCustomValidationCallback`, `MediaTypeWithQualityHeaderValue` |
+| `payload-identifier` (document-wide) | `reporterNumber`, `reportedIdentity`, `typeOfComplaint`, `operatorTcn`, `serviceRating`, `serviceFeedback`, `tccTcn`, `updateType`, `contentType`, `UpdateTypeList`, `TimeFrame`, `ReasonCodes`, `Tcn`, `tcn` |
+| `payload-identifier-generic` (scoped to the two named POST/GET flows only) | `Code`, `description`, `Description`, `reason`, `list`, `status` |
+| `payload-identifier-boundary` (boundary-scoped, folded into `boundaryScopedCorpus`) | `message`, `code`, `Value` |
+| `config-value` | in-memory TCC base-address/API-key values + host + base64 payload |
+
+**Per-generic-word disposition (F3 procedure, each added then focused-lane-run):**
+
+| Token | Outcome | Evidence |
+|---|---|---|
+| `Accept` (header) | document-wide clean | no false positive against the real frozen output; included as a plain document-wide literal check. |
+| `contentType`, `UpdateTypeList`, `TimeFrame`, `ReasonCodes`, `Tcn`, `tcn` | document-wide clean | no false positive; included as plain document-wide literal checks (distinctive, low collision risk, confirmed empirically). |
+| `Code`, `description`, `Description`, `reason` | document-wide-over-all-run1.Files: **red** first attempt (batched with `list`/`status`), scoped to two named flows: clean | see `list`/`status` observed false positive below (batched run); after narrowing scope to the two configured flows, all six generic tokens passed clean. Kept together as `payload-identifier-generic`, scoped to the POST/GET flows only. |
+| `list`, `status` | **red** (genuine false positive, unrelated to any leak) | Document-wide scan (all `run1.Files`) failed: `'.seqdoc/journal.json' leaked forbidden token(s): payload-id:list[...], payload-id:status[...]`. Root cause: `journal.json`'s `NewFiles[].RelativePath` entries are the 17 generated flow file names, several of which are unrelated auto-discovered FraudManagement methods whose names legitimately contain "list"/"status" substrings — not a TCC DTO leak. Narrowing the scan to rendered documents only (`.md`/`.mmd`) still failed: `'index.md' leaked ... payload-id:list, payload-id:status` — `index.md` legitimately links to those same unrelated flow files. **Discriminator applied:** scope the `payload-identifier-generic` scan to exactly the two configured POST/GET flows' Markdown + Mermaid content (`run1.RequireFlow(ExpectedPostFlowFileName)` / `run1.RequireFlow(ExpectedGetFlowFileName)`) — the only files that can possibly carry a genuine TCC DTO field-name leak. Focused lane green after narrowing. |
+| `message`, `code`, `Value` | **red** (genuine appearance, not a leak, but not a false positive either) | Failed even when scoped to the two named POST/GET flows: `'…addcomplaintrequest-f1cc2038.md' leaked forbidden generic-word token(s): payload-id:message, payload-id:code, payload-id:Value`. These are the compiler-observed `AddComplaintRequest`/`AddComplaintResponse`/`UpdateType` field NAMES genuinely narrated as ordinary Method Flow assignment steps (e.g. `assigns: message = …`) in `BLL/TCCIntegration/TCCService.cs` — the same non-removability class as the pre-existing `bcl-token` set (`MediaTypeHeaderValue`/`SerializeObject`/`DeserializeObject`), not a runtime value leak and not removable document-wide without a forbidden production Method Flow change. **Discriminator applied:** moved to a new kind `payload-identifier-boundary`, folded into the existing `boundaryScopedCorpus` (scoped to the boundary line + Mermaid message only, same precedent as `bcl-token`). Focused lane green after the move. |
+
+`SensitiveCorpusCatchesForbiddenTokensButNotStructuralVocabulary` extended: the synthetic leak string now
+also carries `UpdateTypeList`/`TimeFrame`/`ReasonCodes` plus a generic `status list … code` clause;
+new assertions confirm `UpdateTypeList` is a `payload-identifier` corpus entry, a
+`payload-identifier-generic` leak is caught, `code` is a `payload-identifier-boundary` corpus entry, and
+`Accept` is a `header` corpus entry. No secret runtime value is ever printed in any assertion message —
+every new token here is a DTO/header identifier NAME, not a config value.
+
+### F4 (Major) — sensitive-config discovery now fails closed on an unreadable file
+
+`ReadSensitiveConfigValues`'s `catch (IOException) { continue; }` is replaced with a hard
+`XunitException` naming only the path RELATIVE to `worktreeRoot` (`Path.GetRelativePath`) — file
+contents/values are never included. This is a required lane (issue #53 — no skip path); an unreadable
+matching config file can no longer silently drop a real secret out of the forbidden corpus. Not
+exercised as a red/green regression (would require making a real corpus file unreadable mid-run, which
+risks corrupting the shared fixture); reviewed by inspection against the exact defect.
+
+### F5 (Major) — bounded waits; the lane is killable instead of hanging forever
+
+Added named `TimeSpan` timeouts (git subprocess 120s, `dotnet restore` 10 min, CLI `analyze` 10 min,
+Mermaid version check 3 min, per-diagram Mermaid render 3 min):
+- `RunProcess` (shared sync git/dotnet/npx helper) now takes an explicit `TimeSpan timeout` overload;
+  `process.WaitForExit()` → `process.WaitForExit((int)timeout.TotalMilliseconds)`; on timeout, the process
+  tree is killed (`Kill(entireProcessTree: true)`) and an actionable `XunitException` names the
+  executable/arguments/timeout (never a secret value). The zero-arg `RunProcess` overload defaults to the
+  120s git timeout; `dotnet restore` and the Mermaid version check pass their own longer timeouts
+  explicitly.
+- `GitBlobSha256` (a separate, non-`RunProcess` git invocation) gets the same bounded-wait-and-kill
+  treatment for its `process.WaitForExit()`.
+- `RunCliAsync` now creates a `CancellationTokenSource(CliAnalyzeTimeout)` and passes its `Token` to
+  `CliHost.RunAsync` instead of `CancellationToken.None`; an `OperationCanceledException` from the
+  timeout is caught and rethrown as an actionable `XunitException` naming the timeout.
+- The Mermaid-render loop now waits with `await process.WaitForExitAsync(cts.Token)` under a per-diagram
+  `CancellationTokenSource(MermaidRenderTimeout)`; on timeout the process tree is killed and an actionable
+  `XunitException` names the file and the timeout.
+- `CleanupAsync`'s `finally`-based invocation is untouched, so a timeout still runs cleanup.
+- No existing assertion was weakened; this only bounds waits that were previously unbounded. All
+  timeouts comfortably exceed the observed real focused-lane durations (~1.5 min for 7 tests, ~33s for
+  the Mermaid-CLI-render test).
+
+### Judgment calls / deviations
+
+- F3's per-token procedure required TWO rounds of narrowing for the generic-word bucket (document-wide →
+  two-named-flows-only) and a THIRD disposition class (`message`/`code`/`Value` → boundary-scoped like
+  `bcl-token`) that the instructions did not explicitly anticipate (they described only "keep
+  document-wide" or "narrow with a discriminator", not "these three are legitimate accepted content and
+  belong in the existing boundary-scoped bucket"). Applied the closest fitting existing precedent
+  (`bcl-token`) rather than inventing a new scope rule, and recorded the exact false positive + reasoning
+  above.
+- F2 and F4 are control-flow-only corrections with no practical way to reproduce a genuine
+  stuck-worktree-handle or unreadable-config-file condition in this fixture without deliberately
+  corrupting the shared external corpus (out of scope / risky); both were verified by inspection against
+  the exact defect text plus the unchanged focused-lane green run (i.e., the happy path is provably
+  unaffected).
+
+### Tenth-repair-pass focused result (2026-09-04) — IR-1 / IR-2 repair from the independent F5 review
+
+An independent review of the ninth-pass F5 (bounded-timeout) fix found two real defects, both repaired
+inside the same allowlisted test file.
+
+- **IR-1 (Major)** — in all three bounded-wait call sites (`RunProcess`'s `TimeSpan`-taking overload,
+  `GitBlobSha256`, and the Mermaid-render loop), the stdout/stderr reads were fully drained
+  (`ReadToEnd`/`ReadToEndAsync`/`CopyTo`) BEFORE the bounded `WaitForExit`/`WaitForExitAsync` call. That
+  is the classic redirected-stream deadlock: if a child fills one pipe's OS buffer while nobody drains it
+  (because the test is synchronously blocked reading the OTHER stream first), the process hangs and
+  execution never reaches the timeout check the F5 fix exists to provide. Repaired by starting both
+  stdout and stderr reads as tasks first (issuing the async read without blocking), performing the
+  bounded wait, then retrieving the read results afterward — safe because the process has by then either
+  exited (pipes closed, reads complete immediately) or been killed. Applied identically in all three
+  places; no assertion, timeout value, or return shape changed.
+- **IR-2 (Minor)** — `CleanupAsync`'s worktree-removal retry loop called the default `RunProcess`
+  overload, which (after the IR-1 fix) now correctly throws `XunitException` on a timeout instead of
+  hanging. But an uncaught timeout there would abort `CleanupAsync` before it reaches the temp-root sweep
+  and the shared-state "after" snapshot (`SharedWorktreeListAfter`/`SharedRepoStatusAfter`/
+  `SharedConfigAfter`), silently skipping the F1 isolation proof — exactly the slow-OneDrive-lock
+  scenario the loop's own comment anticipates. Repaired by wrapping the two mutating `RunProcess` calls
+  and the `IsRegisteredWorktree`-based removed-check in a local `try/catch (XunitException)` that treats
+  a timeout as a failed attempt (letting the loop's existing `removed` check decide retry vs. fall-through
+  to the pre-existing loud `failures.Add(...)` path), so `CleanupAsync` always reaches the temp-root sweep
+  and the "after" snapshot regardless of a transient timeout in this one retry step.
+
+Focused command:
+`powershell.exe -NoProfile -Command "$env:SEQDOC_TEST_PROJECTS_ROOT = (Resolve-Path '../SeqDoc-TestProjects').Path; dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter 'FullyQualifiedName~OutboundHttpExternalCorpusTests' --logger 'console;verbosity=detailed'"`
+→ **GREEN — Passed: 7, Failed: 0, Skipped: 0** (~1.65 min). All `[QHTTP-B matrix]` console lines
+byte-identical to the ninth pass (POST md 3676 / `20293c9d…`, POST mmd 353 / `84621287…`, GET md 2850 /
+`43f4210f…`, GET mmd 289 / `363e1698…`, index.md 2224 / `0de88502…`, manifest 6282 / `b48eb3d7…`,
+complete-output digest `22045be6…`, diagnostics digest `2f62d6e3…`, codes
+`BE1001, BE2010, BE2010, PRED001`); shared repo `git status` + `git worktree list` +
+`git config --list --local` all equal before/after; `HEAD = 7aabfef9…`. No production/semantic change;
+test/fixture-only repair. Final gate not run by this pass, per the bounded-repair-batch instruction to
+stop after the focused lane is green.
+
+### Ninth-repair-pass focused result
+
+`powershell.exe -NoProfile -Command "$env:SEQDOC_TEST_PROJECTS_ROOT = (Resolve-Path '../SeqDoc-TestProjects').Path; dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter 'FullyQualifiedName~OutboundHttpExternalCorpusTests' --logger 'console;verbosity=detailed'"`
+→ **GREEN — Passed: 7, Failed: 0, Skipped: 0** (~1.5 min; `FrozenIdentityIsolationAndArtifactValidityHold`
+~33s incl. the Mermaid CLI 11.16.0 render). All `[QHTTP-B matrix]` console lines byte-identical to the
+eighth pass (POST md 3676 / `20293c9d…`, POST mmd 353 / `84621287…`, GET md 2850 / `43f4210f…`, GET mmd
+289 / `363e1698…`, index.md 2224 / `0de88502…`, manifest 6282 / `b48eb3d7…`, complete-output digest
+`22045be6…`, diagnostics digest `2f62d6e3…`, codes `BE1001, BE2010, BE2010, PRED001`); shared repo
+`git status` + `git worktree list` + `git config --list --local` all equal before/after; `HEAD =
+7aabfef9…`. Distinct claims added/consolidated: 5 (F1 shared-config non-mutation proof; F2 retryable
+cleanup — reviewed, not separately regression-tested; F3 complete sensitive-corpus coverage incl. the
+`Accept` header and three new token-scope classes; F4 fail-closed config read — reviewed, not separately
+regression-tested; F5 bounded/killable waits across git/dotnet/CLI/Mermaid). Within the routine 5-12
+budget (no exception needed). Final gate not run by this pass, per the bounded-repair-batch instruction
+to stop after the focused lane is green.
+
 ### Eighth-repair-pass focused result
 
 `$env:SEQDOC_TEST_PROJECTS_ROOT = (Resolve-Path '../SeqDoc-TestProjects').Path; dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~OutboundHttpExternalCorpusTests" --logger "console;verbosity=detailed"`

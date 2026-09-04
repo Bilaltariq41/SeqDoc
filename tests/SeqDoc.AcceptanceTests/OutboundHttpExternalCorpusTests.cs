@@ -68,6 +68,9 @@ public sealed class OutboundHttpExternalCorpusTests
     private const string UnsupportedDiagnosticCode = "SEQHTTP001";
     private const string EvidenceSourcePath = "BLL/TCCIntegration/TCCService.cs";
 
+    // F5: bounded per-diagram Mermaid render wait, comfortably above observed real durations.
+    private static readonly TimeSpan MermaidRenderTimeout = TimeSpan.FromMinutes(3);
+
     // Unchanged ordered CLI --json diagnostic-code baseline for this two-root lane. The two supported
     // HTTP calls add no model diagnostic, so this sequence must be byte-for-byte the pre-#54 baseline.
     private static readonly string[] ExpectedDiagnosticCodeBaseline =
@@ -250,7 +253,8 @@ public sealed class OutboundHttpExternalCorpusTests
 
         var leaks = OutboundHttpSensitiveCorpus.FindLeaks(
             "payload has reporterNumber, path threeThirty/complaint/addComplaint, host pre-internal-api.tcc-ltd.sa, "
-            + "reads HttpResponseMessage.IsSuccessStatusCode, calls JsonConvert.SerializeObject",
+            + "reads HttpResponseMessage.IsSuccessStatusCode, calls JsonConvert.SerializeObject, "
+            + "sees UpdateTypeList and TimeFrame and ReasonCodes, and a status list with a code",
             corpus);
         Assert.Contains(leaks, l => l.Kind == "payload-identifier");
         Assert.Contains(leaks, l => l.Kind == "request-path");
@@ -261,6 +265,15 @@ public sealed class OutboundHttpExternalCorpusTests
         Assert.Contains(leaks, l => l.Kind == "bcl-token");
         Assert.Contains(corpus, e => e.Kind == "bcl-response-token" && e.Token == "StringContent");
         Assert.DoesNotContain(corpus, e => e.Kind == "bcl-token" && e.Token == "HttpResponseMessage");
+        // F3: distinctive document-wide identifiers (UpdateTypeList/TimeFrame/ReasonCodes) and the
+        // generic-English-word field names (list/status/code) are both caught by FindLeaks - they only
+        // differ in WHERE the acceptance test scopes the scan, not in whether the pure scanner catches
+        // them.
+        Assert.Contains(corpus, e => e.Kind == "payload-identifier" && e.Token == "UpdateTypeList");
+        Assert.Contains(leaks, l => l.Kind == "payload-identifier-generic");
+        Assert.Contains(corpus, e => e.Kind == "payload-identifier-boundary" && e.Token == "code");
+        // F3: the Accept header is now covered alongside Authorization.
+        Assert.Contains(corpus, e => e.Kind == "header" && e.Token == "Accept");
 
         Assert.Empty(OutboundHttpSensitiveCorpus.FindLeaks(
             "The method calls HttpClient.PostAsync at an outbound HTTP POST request boundary. "
@@ -339,8 +352,14 @@ public sealed class OutboundHttpExternalCorpusTests
         // as unrelated Method Flow step names (MediaTypeHeaderValue, SerializeObject, DeserializeObject
         // - Kind "bcl-token") are scoped to the boundary line + Mermaid message below, since removing
         // them document-wide would require a forbidden production Method Flow change.
-        var docWideCorpus = forbiddenCorpus.Where(e => e.Kind != "bcl-token").ToArray();
-        var boundaryScopedCorpus = forbiddenCorpus.Where(e => e.Kind == "bcl-token").ToArray();
+        var docWideCorpus = forbiddenCorpus
+            .Where(e => e.Kind != "bcl-token"
+                && e.Kind != "payload-identifier-generic"
+                && e.Kind != "payload-identifier-boundary")
+            .ToArray();
+        var boundaryScopedCorpus = forbiddenCorpus
+            .Where(e => e.Kind is "bcl-token" or "payload-identifier-boundary")
+            .ToArray();
         foreach (var file in run1.Files)
         {
             string text = Encoding.UTF8.GetString(file.Content);
@@ -358,6 +377,26 @@ public sealed class OutboundHttpExternalCorpusTests
                 Assert.Equal(Count(text, PostBehaviorPhrase), Count(text, "HttpClient.PostAsync"));
                 Assert.Equal(Count(text, GetBehaviorPhrase), Count(text, "HttpClient.GetAsync"));
             }
+        }
+
+        // F3: generic-English-word DTO field names (see the corpus-build comment above) are a real
+        // false-positive risk document-wide - observed matching "list"/"status" inside UNRELATED
+        // auto-discovered-flow file names/links (e.g. index.md legitimately links to another analysed
+        // method whose name happens to contain "list"/"status"), which is not a genuine leak. The only
+        // files that can possibly carry a real TCC DTO field-name leak are the two configured POST/GET
+        // flows themselves, so the check is scoped to exactly those two flows' Markdown + Mermaid.
+        var genericWordCorpus = forbiddenCorpus.Where(e => e.Kind == "payload-identifier-generic").ToArray();
+        foreach (var flow in new[]
+                 {
+                     run1.RequireFlow(ExpectedPostFlowFileName),
+                     run1.RequireFlow(ExpectedGetFlowFileName),
+                 })
+        {
+            var genericLeaks = OutboundHttpSensitiveCorpus.FindLeaks(flow.Markdown + "\n" + flow.Mermaid, genericWordCorpus);
+            Assert.True(
+                genericLeaks.Count == 0,
+                $"'{flow.FileName}' leaked forbidden generic-word token(s): "
+                + string.Join(", ", genericLeaks.Select(l => $"{l.Label}[{l.Kind}]").Distinct()));
         }
 
         // Structural vocabulary that must NOT be treated as a leak and must stay in the output.
@@ -521,6 +560,11 @@ public sealed class OutboundHttpExternalCorpusTests
         // git worktree list recorded before and after the whole lane, asserted exactly equal.
         Assert.Equal(_lane.SharedRepoStatusBefore, _lane.SharedRepoStatusAfter);
         Assert.Equal(_lane.SharedWorktreeListBefore, _lane.SharedWorktreeListAfter);
+        // F1: a linked worktree shares the SAME .git/config as the main repository unless
+        // extensions.worktreeConfig=true is set, so `git status`/`git worktree list` equality alone does
+        // NOT detect a shared-config-file mutation. Direct before/after proof over the shared
+        // repository's local config (plain git local config for a checkout, not a secret).
+        Assert.Equal(_lane.SharedConfigBefore, _lane.SharedConfigAfter);
 
         // ---- Profile / Program Index identity from data.runs[] (amended normalised-checkout values).
         AssertRunIdentitySet(run1, run2);
@@ -777,9 +821,36 @@ public sealed class OutboundHttpExternalCorpusTests
 
             using var process = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Could not launch npx for mermaid-cli.");
-            string stdout = await process.StandardOutput.ReadToEndAsync();
-            string stderr = await process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
+            // IR-1 repair: start (never await) both stream reads BEFORE the bounded wait - see the
+            // RunProcess repair note above for the deadlock this avoids.
+            Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync();
+            Task<string> stderrTask = process.StandardError.ReadToEndAsync();
+
+            // F5: bounded per-diagram wait. A hung mermaid-cli render must be killed and reported, never
+            // hang the lane forever.
+            using var renderTimeoutCts = new CancellationTokenSource(MermaidRenderTimeout);
+            try
+            {
+                await process.WaitForExitAsync(renderTimeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (renderTimeoutCts.IsCancellationRequested)
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch (InvalidOperationException)
+                {
+                    // Process already exited between the timeout and Kill(); nothing further to do.
+                }
+
+                throw new XunitException(
+                    $"mermaid-cli 11.16.0 did not render '{file.RelativePath}' within "
+                    + $"{MermaidRenderTimeout.TotalMinutes} minute(s) and was killed. QHTTP-B is BLOCKED, not hung.");
+            }
+
+            string stdout = await stdoutTask;
+            string stderr = await stderrTask;
 
             Assert.True(
                 process.ExitCode == 0,
@@ -992,6 +1063,14 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
     private const string GetRootHash =
         "method:v1:b7a44d4b1128669b35cda87326e73098991a24dbd0b975b9986c9050b8b45504";
 
+    // F5: bounded waits so the lane is cancellable/killable instead of hanging forever. Each timeout
+    // comfortably exceeds observed real durations (the full lane today is a few minutes cold) without
+    // making the lane flaky.
+    private static readonly TimeSpan GitProcessTimeout = TimeSpan.FromSeconds(120);
+    private static readonly TimeSpan DotnetRestoreTimeout = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan CliAnalyzeTimeout = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan MermaidVersionCheckTimeout = TimeSpan.FromMinutes(3);
+
     private readonly List<string> _ownedTempRoots = [];
     private readonly object _ownedTempRootsLock = new();
     private string? _corpusGitToplevel;
@@ -1014,6 +1093,10 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
     public string SharedWorktreeListBefore { get; private set; } = string.Empty;
 
     public string SharedWorktreeListAfter { get; private set; } = string.Empty;
+
+    public string SharedConfigBefore { get; private set; } = string.Empty;
+
+    public string SharedConfigAfter { get; private set; } = string.Empty;
 
     public ImmutableArray<SensitiveConfigValue> SensitiveConfigValues { get; private set; } = [];
 
@@ -1094,17 +1177,24 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
 
             SharedWorktreeListBefore = RunProcessOrThrow("git", _corpusGitToplevel, "worktree", "list", "--porcelain");
             SharedRepoStatusBefore = RunProcessOrThrow("git", _corpusGitToplevel, "status", "--porcelain");
+            // F1: direct proof the shared repository's LOCAL git config file is never mutated. A linked
+            // worktree shares the same .git/config as the main repository unless
+            // extensions.worktreeConfig=true is set, so a persistent `git config` write against the
+            // worktree path would silently land here. Captured before any worktree operation.
+            SharedConfigBefore = RunProcessOrThrow("git", _corpusGitToplevel, "config", "--list", "--local");
 
-            // Isolated detached worktree, line-ending-normalised BEFORE checkout.
+            // Isolated detached worktree, line-ending-normalised. core.longpaths/autocrlf/eol are applied
+            // as command-scoped `-c` overrides on the checkout invocation only (the sole step that reads
+            // them) so no config file - shared or otherwise - is ever written to disk.
             string worktreeParent = NewOwnedTempRoot("wt");
             _worktreePath = Path.Combine(worktreeParent, "fm");
             RunProcessOrThrow("git", _corpusGitToplevel, "worktree", "add", "--no-checkout", "--detach", _worktreePath, CorpusRevision);
-            RunProcessOrThrow("git", _worktreePath, "config", "core.longpaths", "true");
-            RunProcessOrThrow("git", _worktreePath, "config", "core.autocrlf", "false");
-            RunProcessOrThrow("git", _worktreePath, "config", "core.eol", "lf");
             RunProcessOrThrow("git", _worktreePath, "sparse-checkout", "set", "--no-cone",
                 "/*", "!obj/", "!bin/", "!packages/", "!.vs/", "!PackageTmp/");
-            RunProcessOrThrow("git", _worktreePath, "checkout");
+            RunProcessOrThrow(
+                "git", _worktreePath,
+                "-c", "core.longpaths=true", "-c", "core.autocrlf=false", "-c", "core.eol=lf",
+                "checkout");
 
             CheckoutHead = RunProcessOrThrow("git", _worktreePath, "rev-parse", "HEAD").Trim();
             if (!string.Equals(CheckoutHead, CorpusRevision, StringComparison.Ordinal))
@@ -1120,7 +1210,8 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
 
             SensitiveConfigValues = ReadSensitiveConfigValues(_worktreePath);
 
-            var restore = RunProcess("dotnet", _worktreePath, "restore",
+            var restore = RunProcess(
+                "dotnet", _worktreePath, DotnetRestoreTimeout, "restore",
                 Path.Combine(_worktreePath, "FraudManagement.sln"));
             if (restore.ExitCode != 0)
             {
@@ -1189,20 +1280,49 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
         // 1. Remove the detached worktree from the shared repo (bounded retry for OneDrive locks).
         if (!_worktreeCleanedUp && _worktreePath is not null && _corpusGitToplevel is not null)
         {
-            _worktreeCleanedUp = true;
             bool removed = false;
             for (int attempt = 1; attempt <= 2 && !removed; attempt++)
             {
-                RunProcess("git", _corpusGitToplevel, "worktree", "remove", "--force", _worktreePath);
-                RunProcess("git", _corpusGitToplevel, "worktree", "prune");
-                removed = !Directory.Exists(_worktreePath) && !IsRegisteredWorktree(_corpusGitToplevel, _worktreePath);
+                // IR-2 repair: a slow OneDrive-lock condition can legitimately exceed the default
+                // RunProcess timeout, and that now throws (fixed by the IR-1 repair) instead of hanging.
+                // Treat a timeout here as a failed attempt only - swallow it and fall through to the
+                // existing removed-check/retry logic, so CleanupAsync still always reaches the temp-root
+                // sweep and the shared-state "after" snapshot below.
+                try
+                {
+                    RunProcess("git", _corpusGitToplevel, "worktree", "remove", "--force", _worktreePath);
+                    RunProcess("git", _corpusGitToplevel, "worktree", "prune");
+                }
+                catch (XunitException)
+                {
+                    // Treated as a failed attempt; the removed-check below decides whether to retry.
+                }
+
+                try
+                {
+                    removed = !Directory.Exists(_worktreePath) && !IsRegisteredWorktree(_corpusGitToplevel, _worktreePath);
+                }
+                catch (XunitException)
+                {
+                    // IsRegisteredWorktree's own RunProcess call also uses the default bounded timeout;
+                    // treat that timeout the same way - a failed attempt, not an aborted CleanupAsync.
+                    removed = false;
+                }
+
                 if (!removed && attempt == 1)
                 {
                     await Task.Delay(750);
                 }
             }
 
-            if (!removed)
+            // F2: only mark cleanup complete once removal is CONFIRMED. If both attempts fail, leave the
+            // flag false so a later CleanupAsync call (from DisposeAsync) re-enters this block and
+            // retries, while THIS call still fails loudly below.
+            if (removed)
+            {
+                _worktreeCleanedUp = true;
+            }
+            else
             {
                 failures.Add($"detached worktree '{_worktreePath}' is still present or registered after cleanup.");
             }
@@ -1250,6 +1370,7 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
             _sharedStateSnapshotTaken = true;
             SharedWorktreeListAfter = RunProcessOrThrow("git", _corpusGitToplevel, "worktree", "list", "--porcelain");
             SharedRepoStatusAfter = RunProcessOrThrow("git", _corpusGitToplevel, "status", "--porcelain");
+            SharedConfigAfter = RunProcessOrThrow("git", _corpusGitToplevel, "config", "--list", "--local");
         }
 
         if (failures.Count > 0)
@@ -1288,7 +1409,18 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
 
         var standardOutput = new StringWriter();
         var standardError = new StringWriter();
-        await CliHost.RunAsync(args, standardOutput, standardError, CancellationToken.None);
+        // F5: bounded wait - the CLI analyze run must be cancellable/killable instead of running forever.
+        using var cliTimeoutCts = new CancellationTokenSource(CliAnalyzeTimeout);
+        try
+        {
+            await CliHost.RunAsync(args, standardOutput, standardError, cliTimeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (cliTimeoutCts.IsCancellationRequested)
+        {
+            throw new XunitException(
+                $"CLI `analyze` did not complete within {CliAnalyzeTimeout.TotalMinutes} minute(s). "
+                + "QHTTP-B is BLOCKED, not hung.");
+        }
 
         using var document = JsonDocument.Parse(standardOutput.ToString());
         var root = document.RootElement;
@@ -1422,7 +1554,12 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
             }
             catch (IOException)
             {
-                continue;
+                // F4: this is a REQUIRED lane (issue #53 - no skip path). Silently skipping an unreadable
+                // matching config file would let a real secret in that file escape the forbidden corpus
+                // while the lane still passed. Fail loud, naming only the RELATIVE path - never contents.
+                throw new XunitException(
+                    $"could not read sensitive-config candidate '{Path.GetRelativePath(worktreeRoot, path)}' "
+                    + "for the forbidden-value corpus; QHTTP-B is BLOCKED, not best-effort.");
             }
 
             foreach (var pattern in new[] { xmlPattern, jsonPattern })
@@ -1488,9 +1625,29 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Could not start git.");
         using var buffer = new MemoryStream();
-        process.StandardOutput.BaseStream.CopyTo(buffer);
-        string error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        // IR-1 repair: start (never block on) both the stdout copy and the stderr read BEFORE the bounded
+        // wait - see the RunProcess repair note above for the deadlock this avoids.
+        Task copyTask = process.StandardOutput.BaseStream.CopyToAsync(buffer);
+        Task<string> stderrTask = process.StandardError.ReadToEndAsync();
+        // F5: bounded wait - a hung `git show` must be killed and reported, never hang the lane forever.
+        if (!process.WaitForExit((int)GitProcessTimeout.TotalMilliseconds))
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+                // Process already exited between the timeout check and Kill(); nothing further to do.
+            }
+
+            throw new XunitException(
+                $"`git show {CorpusRevision}:{relativePath}` did not exit within "
+                + $"{GitProcessTimeout.TotalSeconds}s and was killed. QHTTP-B is BLOCKED, not hung.");
+        }
+
+        copyTask.GetAwaiter().GetResult();
+        string error = stderrTask.GetAwaiter().GetResult();
         if (process.ExitCode != 0)
         {
             throw new XunitException($"git show {CorpusRevision}:{relativePath} failed: {error}");
@@ -1509,7 +1666,9 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
                 + "confirmed. Issue #53 requires this render; the QHTTP-B lane is BLOCKED, not skipped.");
         }
 
-        var result = RunProcess(npx, Path.GetTempPath(), "--yes", "@mermaid-js/mermaid-cli@11.16.0", "--version");
+        var result = RunProcess(
+            npx, Path.GetTempPath(), MermaidVersionCheckTimeout,
+            "--yes", "@mermaid-js/mermaid-cli@11.16.0", "--version");
         if (result.ExitCode != 0)
         {
             throw new XunitException(
@@ -1580,6 +1739,15 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
     private static (int ExitCode, string StdOut, string StdErr) RunProcess(
         string executable,
         string workingDirectory,
+        params string[] arguments) => RunProcess(executable, workingDirectory, GitProcessTimeout, arguments);
+
+    // F5: bounded wait instead of an unbounded `process.WaitForExit()`. A timed-out process is killed
+    // (entire tree) and reported as an actionable failure naming the executable/arguments/timeout - never
+    // a secret value.
+    private static (int ExitCode, string StdOut, string StdErr) RunProcess(
+        string executable,
+        string workingDirectory,
+        TimeSpan timeout,
         params string[] arguments)
     {
         var startInfo = new ProcessStartInfo
@@ -1597,10 +1765,31 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
 
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException($"Could not start '{executable}'.");
-        string stdout = process.StandardOutput.ReadToEnd();
-        string stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return (process.ExitCode, stdout.Trim(), stderr.Trim());
+        // IR-1 repair: start (never block on) both stream reads BEFORE the bounded wait, so a child that
+        // fills one pipe's OS buffer while we would otherwise be synchronously blocked reading the OTHER
+        // stream first cannot deadlock the process before the timeout check is ever reached.
+        Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync();
+        Task<string> stderrTask = process.StandardError.ReadToEndAsync();
+        bool exited = process.WaitForExit((int)timeout.TotalMilliseconds);
+        if (!exited)
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+                // Process already exited between the timeout check and Kill(); nothing further to do.
+            }
+
+            throw new XunitException(
+                $"`{executable} {string.Join(' ', arguments)}` in '{workingDirectory}' did not exit within "
+                + $"{timeout.TotalSeconds}s and was killed. QHTTP-B is BLOCKED, not hung.");
+        }
+
+        string stdout = stdoutTask.GetAwaiter().GetResult().Trim();
+        string stderr = stderrTask.GetAwaiter().GetResult().Trim();
+        return (process.ExitCode, stdout, stderr);
     }
 }
 
@@ -1719,6 +1908,7 @@ internal static class OutboundHttpSensitiveCorpus
         }
 
         Add("header-name:Authorization", "header", "Authorization");
+        Add("header-name:Accept", "header", "Accept");
         Add("media-type:application/json", "media-type", "application/json");
 
         foreach (string key in new[] { "TCCBaseAddress", "TCCAPIKey", "_baseAddress", "_APIKey" })
@@ -1755,6 +1945,39 @@ internal static class OutboundHttpSensitiveCorpus
                  })
         {
             Add($"payload-id:{token}", "payload-identifier", token);
+        }
+
+        // F3: distinctive DTO/model identifiers from the frozen source, unlikely to collide with
+        // legitimate Method Flow / Markdown prose - checked document-wide with a plain literal scan
+        // (Ordinal, exact casing). See test-writer-notes.md for the per-token false-positive check.
+        foreach (string token in new[]
+                 {
+                     "contentType", "UpdateTypeList", "TimeFrame", "ReasonCodes", "Tcn", "tcn",
+                 })
+        {
+            Add($"payload-id:{token}", "payload-identifier", token);
+        }
+
+        // F3: generic-English-word DTO/model field names from the frozen source. A document-wide plain
+        // scan over these is a real false-positive risk against unrelated legitimate content (observed:
+        // "list"/"status" matched inside unrelated auto-discovered-flow file paths recorded in
+        // .seqdoc/journal.json - see test-writer-notes.md). Kept as their own kind so the scan below can
+        // scope them to rendered documents only (.md/.mmd), the only place a genuine DTO field-name leak
+        // could actually manifest; the manifest/journal never carry arbitrary source identifiers.
+        foreach (string token in new[] { "Code", "description", "Description", "reason", "list", "status" })
+        {
+            Add($"payload-id:{token}", "payload-identifier-generic", token);
+        }
+
+        // F3: "message" / "code" / "Value" genuinely appear document-wide in the accepted POST flow
+        // itself - they are the compiler-observed AddComplaintRequest/-Response/UpdateType field NAMES
+        // narrated as ordinary Method Flow assignment steps (e.g. "assigns: message = ...") in
+        // BLL/TCCIntegration/TCCService.cs, not a runtime value leak. Same non-removability precedent as
+        // "bcl-token": removing them document-wide would need a forbidden production Method Flow change.
+        // Scoped (like bcl-token) to never become the outbound-HTTP BOUNDARY vocabulary.
+        foreach (string token in new[] { "message", "code", "Value" })
+        {
+            Add($"payload-id:{token}", "payload-identifier-boundary", token);
         }
 
         foreach (var value in configValues)
