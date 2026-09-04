@@ -1,0 +1,23 @@
+{
+  "baseline": "e6dfc038f304f8265f6228052ebb326d882c5157",
+  "branch": "fix/issue-85-loop-fixtures",
+  "checkpointId": "QLOOP1",
+  "checkpointPath": "docs/work/quality/QLOOP1",
+  "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/85",
+  "dependencies": [],
+  "expectedGithubState": "OPEN",
+  "id": "GH-85",
+  "kind": "github-issue",
+  "lifecycle": "Active",
+  "lifecycleLabel": "active",
+  "nextAction": "Delegate the four fixture repairs, run the focused four-test command, and stop at ReviewRequired.",
+  "number": 85,
+  "owner": "bilal",
+  "pr": null,
+  "schemaVersion": 1,
+  "selectedForExecution": true,
+  "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/85",
+  "statusReason": "Owner activated the dedicated test-only repair after reproducing exactly four stale compiler-backed loop fixture failures.",
+  "title": "[Quality] Repair stale compiler-backed loop fixtures",
+  "track": "quality"
+}

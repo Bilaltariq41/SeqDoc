@@ -1,10 +1,10 @@
 {
-  "activeCheckpointId": "I13",
-  "activeCheckpointPath": "docs/work/persistence/I13",
+  "activeCheckpointId": "QLOOP1",
+  "activeCheckpointPath": "docs/work/quality/QLOOP1",
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Ahmad must merge the amendment commit, retain only authorized acceptance/evidence paths, and resume I13 from the re-frozen CreditTransfer identity without semantic changes.",
+  "nextAction": "Delegate the four fixture repairs, run the focused four-test command, and stop at ReviewRequired.",
   "schemaVersion": 1,
-  "sourceId": "GH-13"
+  "sourceId": "GH-85"
 }

@@ -141,19 +141,41 @@ public sealed class MutationGateTests
 
     private static ExtractedMethodBody CreateLoopBody(OperationId condition, bool includeBackEdge)
     {
+        var evidence = new EvidenceRef(new EvidenceId("evidence:v1:mutation-loop"), EvidenceKind.Source, "loop-fixture.cs", null, "loop", "test", CertaintyLevel.Exact);
+        var loopAnchor = new OperationId("behavior-operation:v1:mutation-loop-anchor");
         var body = new ExtractedMethodBody(
             Method,
             "body",
             [],
             [],
-            ImmutableArray.Create(Operation(condition, ExtractedOperationKind.Binary, "System.Boolean")),
+            ImmutableArray.Create(Operation(condition, ExtractedOperationKind.Binary, "System.Boolean") with { Evidence = [evidence] }),
             ImmutableArray.Create(
                 Block(0, [], 1, None),
-                Block(1, [], 2, Conditional, condition, includeBackEdge ? [3] : [3], [0]),
+                Block(1, [], 2, Conditional, condition, [3], includeBackEdge ? [0, 2] : [0]),
                 Block(2, [], includeBackEdge ? 1 : 3, None, null, [], [1]),
-                Block(3, [], null, Exit, null, [], [1])),
+                Block(3, [], null, Exit, null, [], includeBackEdge ? [1] : [1, 2])),
             RootRegion(3),
-            []);
+            [evidence],
+            includeBackEdge
+                ? [new ExtractedNaturalLoop(loopAnchor, ExtractedLoopKind.WhileLoop, 1, [2], [2], [3],
+                    [new ExtractedOrdinaryBranch(2, 1, [], [], [evidence], CertaintyLevel.Exact)], [evidence], CertaintyLevel.Exact)]
+                : [],
+            includeBackEdge
+                ? [new ExtractedLoopAnchor(loopAnchor, ExtractedLoopKind.WhileLoop, [evidence], CertaintyLevel.Exact)]
+                : [],
+            includeBackEdge
+                ? [
+                    new ExtractedOrdinaryBranch(0, 1, [], [], [evidence], CertaintyLevel.Exact),
+                    new ExtractedOrdinaryBranch(1, 2, [], [], [evidence], CertaintyLevel.Exact),
+                    new ExtractedOrdinaryBranch(1, 3, [], [], [evidence], CertaintyLevel.Exact),
+                    new ExtractedOrdinaryBranch(2, 1, [], [], [evidence], CertaintyLevel.Exact),
+                ]
+                : [
+                    new ExtractedOrdinaryBranch(0, 1, [], [], [evidence], CertaintyLevel.Exact),
+                    new ExtractedOrdinaryBranch(1, 2, [], [], [evidence], CertaintyLevel.Exact),
+                    new ExtractedOrdinaryBranch(1, 3, [], [], [evidence], CertaintyLevel.Exact),
+                    new ExtractedOrdinaryBranch(2, 3, [], [], [evidence], CertaintyLevel.Exact),
+                ]);
         return body;
     }
 
