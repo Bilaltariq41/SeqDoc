@@ -2,7 +2,7 @@
 
 ## State
 
-`ReviewRequired`
+`Verifying`
 
 ## Authority and baseline
 
@@ -119,6 +119,13 @@ Expected focused discovery is exactly four tests.
 - **PASS**: canonical work-state validation and `git diff --check` succeed. The focused test candidate is unchanged from
   the post-repair 4/4 pass. A new independent post-amendment complete-candidate review is still required before the final
   Behavior gate.
+
+### Post-amendment review
+
+- **PASS — no findings** at exact SHA `7d7b459f223d47f89ec7723cb61e176ce4f13873`.
+- The reviewer confirmed `QLOOP1-F1`, `QLOOP1-F2`, and `QLOOP1-F3` are resolved; all changed paths are allowlisted; the
+  amended GH-13 delta is selection-only; and the test candidate is unchanged from focused 4/4 evidence.
+- Residual obligations are the final 71-test Behavior gate and restoration of I13 selection when QLOOP1 closes.
 
 ## Review boundary
 

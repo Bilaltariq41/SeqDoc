@@ -4,7 +4,7 @@
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Run independent post-amendment review of the unchanged green test candidate before the final Behavior gate.",
+  "nextAction": "Run the declared final 71-test Behavior gate once, then restore I13 selection and close QLOOP1 if green.",
   "schemaVersion": 1,
   "sourceId": "GH-85"
 }
