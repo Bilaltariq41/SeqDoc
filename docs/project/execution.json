@@ -4,7 +4,7 @@
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Delegate the four fixture repairs, run the focused four-test command, and stop at ReviewRequired.",
+  "nextAction": "Run one independent complete-candidate review of PR #86 and resolve every finding before the final Behavior gate.",
   "schemaVersion": 1,
   "sourceId": "GH-85"
 }
