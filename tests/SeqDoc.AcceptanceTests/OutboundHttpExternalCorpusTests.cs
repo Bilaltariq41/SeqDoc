@@ -135,6 +135,139 @@ public sealed class OutboundHttpExternalCorpusTests
         Assert.Equal(1, Count(markdown, "SC-DIRECT-BODY-UNAVAILABLE"));
     }
 
+    // --- G1 regression: the pure run-identity parser fails closed on every malformed-identity class
+    // and returns the ordered tuple list for a well-formed input. Pure/synthetic - no fixture.
+    [Fact]
+    public void MalformedRunIdentityFailsClosed()
+    {
+        static IReadOnlyList<OutboundHttpRunIdentity> Parse(string json)
+        {
+            using var document = JsonDocument.Parse(json);
+            return OutboundHttpRunIdentity.ParseRuns(document.RootElement);
+        }
+
+        // F9: a top-level object with no 'data', and a 'data' object with no 'runs', both fail closed
+        // with the actionable "data.runs' is absent" message - RunCliAsync now calls ParseRuns
+        // unconditionally (passing 'root' when 'data' is missing / not an object), so the lane raises
+        // this named failure instead of a later bare Assert.NotEmpty.
+        static IReadOnlyList<OutboundHttpRunIdentity> ParseData(string json)
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            bool hasData = root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object;
+            return OutboundHttpRunIdentity.ParseRuns(hasData ? data : root);
+        }
+
+        Assert.Contains(
+            "'data.runs' is absent",
+            Assert.Throws<XunitException>(() => ParseData("{\"outcome\":\"succeeded\"}")).Message,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "'data.runs' is absent",
+            Assert.Throws<XunitException>(() => ParseData("{\"data\":{\"toolchainVersion\":\"10.0.0\"}}")).Message,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "'data.runs' is absent",
+            Assert.Throws<XunitException>(() => ParseData("{\"data\":\"not-an-object\"}")).Message,
+            StringComparison.Ordinal);
+
+        Assert.Contains("data.runs", Assert.Throws<XunitException>(() => Parse("{}")).Message, StringComparison.Ordinal);
+        Assert.Contains("not a JSON array", Assert.Throws<XunitException>(() => Parse("{\"runs\":{}}")).Message, StringComparison.Ordinal);
+        Assert.Contains("empty array", Assert.Throws<XunitException>(() => Parse("{\"runs\":[]}")).Message, StringComparison.Ordinal);
+        Assert.Contains("not a run-identity object", Assert.Throws<XunitException>(() => Parse("{\"runs\":[1]}")).Message, StringComparison.Ordinal);
+        Assert.Contains(
+            "data.runs[0].profileId' is missing",
+            Assert.Throws<XunitException>(() => Parse("{\"runs\":[{\"runId\":\"r\",\"indexFingerprint\":\"f\"}]}")).Message,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "data.runs[0].profileId' is Number, not a string",
+            Assert.Throws<XunitException>(() => Parse("{\"runs\":[{\"profileId\":5,\"runId\":\"r\",\"indexFingerprint\":\"f\"}]}")).Message,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "data.runs[0].runId' is empty or whitespace",
+            Assert.Throws<XunitException>(() => Parse("{\"runs\":[{\"profileId\":\"p\",\"runId\":\"  \",\"indexFingerprint\":\"f\"}]}")).Message,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "data.runs[0].indexFingerprint' is missing",
+            Assert.Throws<XunitException>(() => Parse("{\"runs\":[{\"profileId\":\"p\",\"runId\":\"r\"}]}")).Message,
+            StringComparison.Ordinal);
+
+        var parsed = Parse(
+            "{\"runs\":["
+            + "{\"profileId\":\"p1\",\"runId\":\"r1\",\"indexFingerprint\":\"f1\"},"
+            + "{\"profileId\":\"p2\",\"runId\":\"r2\",\"indexFingerprint\":\"f2\"}]}");
+        Assert.Equal(
+            new[]
+            {
+                new OutboundHttpRunIdentity("p1", "r1", "f1"),
+                new OutboundHttpRunIdentity("p2", "r2", "f2"),
+            },
+            parsed);
+    }
+
+    // --- G2 regression: the pure artifact-hygiene scanner catches each leak class and is clean on
+    // legitimate boundary text. Pure/synthetic - no fixture.
+    [Fact]
+    public void ArtifactHygieneScannerCatchesInjectedVolatileMarkers()
+    {
+        string[] forbidden = [@"C:\Users\ci\AppData\Local\Temp\sqhb-out-abcdef", "/var/tmp/sqhb-cache-123456"];
+
+        Assert.Contains(
+            OutboundHttpArtifactHygiene.FindVolatileMarkers(
+                @"link: C:\Users\ci\AppData\Local\Temp\sqhb-out-abcdef\index.md", forbidden),
+            m => m.Kind.Contains("path", StringComparison.Ordinal));
+        Assert.Contains(
+            OutboundHttpArtifactHygiene.FindVolatileMarkers(
+                "link: C:/Users/ci/AppData/Local/Temp/sqhb-out-abcdef/index.md", forbidden),
+            m => m.Kind.Contains("path", StringComparison.Ordinal));
+        Assert.Contains(
+            OutboundHttpArtifactHygiene.FindVolatileMarkers("generated 2026-09-04T12:30:00", forbidden),
+            m => m.Kind.Contains("timestamp", StringComparison.Ordinal));
+        Assert.Contains(
+            OutboundHttpArtifactHygiene.FindVolatileMarkers("built 03:14:00 GMT on host", forbidden),
+            m => m.Kind.Contains("clock", StringComparison.Ordinal));
+        Assert.Contains(
+            OutboundHttpArtifactHygiene.FindVolatileMarkers($"ran on {Environment.MachineName} today", forbidden),
+            m => m.Kind == "machine-name");
+        Assert.Empty(
+            OutboundHttpArtifactHygiene.FindVolatileMarkers(
+                "The method calls HttpClient.PostAsync at an outbound HTTP POST request boundary.", forbidden));
+    }
+
+    // --- G3 regression: the forbidden-corpus builder + scanner catches forbidden tokens and never
+    // flags structural HTTP vocabulary or the accepted behavior phrase. Pure/synthetic - no fixture.
+    [Fact]
+    public void SensitiveCorpusCatchesForbiddenTokensButNotStructuralVocabulary()
+    {
+        var corpus = OutboundHttpSensitiveCorpus.Build(
+        [
+            new SensitiveConfigValue("TCCBaseAddress", "https://pre-internal-api.tcc-ltd.sa/"),
+            new SensitiveConfigValue("TCCAPIKey", "Basic QUJDMTIzOnNlY3JldFZhbHVl"),
+        ]);
+        Assert.NotEmpty(corpus);
+        Assert.Contains(corpus, e => e.Kind == "config-value" && e.Label.Contains("BaseAddress", StringComparison.Ordinal));
+        Assert.Contains(corpus, e => e.Kind == "config-value" && e.Label.Contains("APIKey", StringComparison.Ordinal));
+
+        var leaks = OutboundHttpSensitiveCorpus.FindLeaks(
+            "payload has reporterNumber, path threeThirty/complaint/addComplaint, host pre-internal-api.tcc-ltd.sa, "
+            + "reads HttpResponseMessage.IsSuccessStatusCode, calls JsonConvert.SerializeObject",
+            corpus);
+        Assert.Contains(leaks, l => l.Kind == "payload-identifier");
+        Assert.Contains(leaks, l => l.Kind == "request-path");
+        Assert.Contains(leaks, l => l.Kind == "config-value");
+        // Document-wide response/content BCL type names are their own kind and always a leak.
+        Assert.Contains(leaks, l => l.Kind == "bcl-response-token");
+        // The three step-name BCL tokens are a distinct kind (boundary-scoped at the call site).
+        Assert.Contains(leaks, l => l.Kind == "bcl-token");
+        Assert.Contains(corpus, e => e.Kind == "bcl-response-token" && e.Token == "StringContent");
+        Assert.DoesNotContain(corpus, e => e.Kind == "bcl-token" && e.Token == "HttpResponseMessage");
+
+        Assert.Empty(OutboundHttpSensitiveCorpus.FindLeaks(
+            "The method calls HttpClient.PostAsync at an outbound HTTP POST request boundary. "
+            + "An outbound HTTP GET request crosses the HTTP boundary.",
+            corpus));
+    }
+
     // The typed HTTP boundary is the only visible representation of the HttpClient call site: no generic
     // HttpClient participant, no PostAsync/GetAsync Mermaid message, no generic ".PostAsync("/".GetAsync("
     // call-syntax message in the flow diagram.
@@ -188,17 +321,64 @@ public sealed class OutboundHttpExternalCorpusTests
             }
         }
 
-        // ---- Hard-coded request-path / config-key / BCL-response leak tokens.
-        string[] globalLeakTokens =
-        [
-            "TCCBaseAddress", "TCCAPIKey", "_baseAddress", "_APIKey",
-            "threeThirty/", "updateType/all", "complaint/addComplaint",
-            "IsSuccessStatusCode", "HttpResponseMessage", "ReadAsStringAsync",
-            "Authorization", "StringContent", "ByteArrayContent",
-        ];
-        foreach (string token in globalLeakTokens)
+        // ---- G3: explicit documented forbidden corpus (frozen TCC request/config/BCL facts + the
+        // in-memory config values), scanned across EVERY generated artifact (all of run1.Files:
+        // Markdown, Mermaid, technical-fallback sections, index.md, manifest, and .seqdoc/**).
+        // Structural HTTP vocabulary is kept separate and asserted to remain.
+        var forbiddenCorpus = OutboundHttpSensitiveCorpus.Build(_lane.SensitiveConfigValues);
+        Assert.NotEmpty(forbiddenCorpus);
+        Assert.Contains(forbiddenCorpus, e => e.Kind == "config-value" && e.Label.Contains("BaseAddress", StringComparison.Ordinal));
+        Assert.Contains(forbiddenCorpus, e => e.Kind == "config-value" && e.Label.Contains("APIKey", StringComparison.Ordinal));
+
+        // Request specifics and secrets (paths, header names/values, config keys, in-memory config
+        // values, distinctive payload identifiers) plus the response/handler/content BCL type names
+        // (ByteArrayContent, HttpResponseMessage, IsSuccessStatusCode, ReadAsStringAsync,
+        // StringContent, HttpClientHandler, ServerCertificateCustomValidationCallback,
+        // MediaTypeWithQualityHeaderValue - Kind "bcl-response-token") must be absent from EVERY
+        // generated artifact. Only the three BCL type/method names that genuinely appear document-wide
+        // as unrelated Method Flow step names (MediaTypeHeaderValue, SerializeObject, DeserializeObject
+        // - Kind "bcl-token") are scoped to the boundary line + Mermaid message below, since removing
+        // them document-wide would require a forbidden production Method Flow change.
+        var docWideCorpus = forbiddenCorpus.Where(e => e.Kind != "bcl-token").ToArray();
+        var boundaryScopedCorpus = forbiddenCorpus.Where(e => e.Kind == "bcl-token").ToArray();
+        foreach (var file in run1.Files)
         {
-            Assert.DoesNotContain(token, run1.AllText, StringComparison.Ordinal);
+            string text = Encoding.UTF8.GetString(file.Content);
+            var leaks = OutboundHttpSensitiveCorpus.FindLeaks(text, docWideCorpus);
+            Assert.True(
+                leaks.Count == 0,
+                $"'{file.RelativePath}' leaked forbidden token(s): "
+                + string.Join(", ", leaks.Select(l => $"{l.Label}[{l.Kind}]").Distinct()));
+
+            // CAUTION: HttpClient.PostAsync / HttpClient.GetAsync legitimately appear inside the
+            // accepted Markdown behavior phrase. Assert their count never exceeds the number of
+            // accepted behavior phrases in this file (no generic HttpClient call-syntax leak).
+            if (file.RelativePath.EndsWith(".md", StringComparison.Ordinal))
+            {
+                Assert.Equal(Count(text, PostBehaviorPhrase), Count(text, "HttpClient.PostAsync"));
+                Assert.Equal(Count(text, GetBehaviorPhrase), Count(text, "HttpClient.GetAsync"));
+            }
+        }
+
+        // Structural vocabulary that must NOT be treated as a leak and must stay in the output.
+        Assert.Equal(1, Count(run1.RequireFlow(ExpectedPostFlowFileName).Markdown, PostBehaviorPhrase));
+        Assert.Equal(1, Count(run1.RequireFlow(ExpectedGetFlowFileName).Markdown, GetBehaviorPhrase));
+        Assert.Equal(1, Count(run1.RequireFlow(ExpectedPostFlowFileName).Mermaid, ExternalParticipantLabel));
+        Assert.Equal(1, Count(run1.RequireFlow(ExpectedGetFlowFileName).Mermaid, ExternalParticipantLabel));
+
+        // ---- G2: direct checkout-path + timestamp hygiene over EVERY generated run-1 file. No
+        // fixture-owned absolute path (OS or slash form) and no timestamp-shaped / volatile-runtime
+        // marker may appear. Failure names the file and the marker KIND only, never a value.
+        var ownedPathMarkers = _lane.OwnedPathMarkers;
+        Assert.NotEmpty(ownedPathMarkers);
+        foreach (var file in run1.Files)
+        {
+            string text = Encoding.UTF8.GetString(file.Content);
+            var markers = OutboundHttpArtifactHygiene.FindVolatileMarkers(text, ownedPathMarkers);
+            Assert.True(
+                markers.Count == 0,
+                $"'{file.RelativePath}' carries volatile/environment marker kind(s): "
+                + string.Join(", ", markers.Select(m => m.Kind).Distinct()));
         }
 
         // ---- Gate 3/5: the outbound-HTTP boundary claim asserts ONLY the compiler-proven request
@@ -235,6 +415,12 @@ public sealed class OutboundHttpExternalCorpusTests
             foreach (string word in boundaryForbiddenWords)
             {
                 Assert.DoesNotContain(word, scoped, StringComparison.OrdinalIgnoreCase);
+            }
+
+            // G3: no BCL request/response type token is the boundary vocabulary.
+            foreach (var entry in boundaryScopedCorpus)
+            {
+                Assert.DoesNotContain(entry.Token, scoped, StringComparison.Ordinal);
             }
         }
 
@@ -300,21 +486,7 @@ public sealed class OutboundHttpExternalCorpusTests
 
         // ---- Complete ordered data.runs[] identity set: run1 == run2, and the amended
         // (profileId, indexFingerprint) pair is present exactly once. Never silently take run[0].
-        _output.WriteLine($"[QHTTP-B matrix] run1 identity set: {FormatIdentitySet(run1.IdentitySet)}");
-        _output.WriteLine($"[QHTTP-B matrix] run2 identity set: {FormatIdentitySet(run2.IdentitySet)}");
-        Assert.NotEmpty(run1.IdentitySet);
-        Assert.True(
-            run1.IdentitySet.SequenceEqual(run2.IdentitySet),
-            $"data.runs[] identity set differs between runs: run1={FormatIdentitySet(run1.IdentitySet)} run2={FormatIdentitySet(run2.IdentitySet)}");
-        var amendedPair = (
-            OutboundHttpExternalCorpusFixture.ProfileId,
-            OutboundHttpExternalCorpusFixture.ProgramIndexFingerprint);
-        Assert.True(
-            run1.IdentitySet.Count(pair => pair == amendedPair) == 1,
-            $"amended (profileId, indexFingerprint) pair not present exactly once; set={FormatIdentitySet(run1.IdentitySet)}");
-        // AGENTS gate 4 (isolation): the normalised two-root lane emits exactly one run identity; more than one entry means an unexpected extra root/profile reached the pipeline.
-        Assert.Single(run1.IdentitySet);
-        Assert.Equal(amendedPair, run1.IdentitySet[0]);
+        AssertRunIdentitySet(run1, run2);
 
         // ---- CLI stderr: captured for both runs, compared deterministically, required empty (no
         // approved non-empty baseline string is pinned for this lane).
@@ -351,21 +523,14 @@ public sealed class OutboundHttpExternalCorpusTests
         Assert.Equal(_lane.SharedWorktreeListBefore, _lane.SharedWorktreeListAfter);
 
         // ---- Profile / Program Index identity from data.runs[] (amended normalised-checkout values).
-        _output.WriteLine($"[QHTTP-B matrix] run1 identity set: {FormatIdentitySet(run1.IdentitySet)}");
-        _output.WriteLine($"[QHTTP-B matrix] run2 identity set: {FormatIdentitySet(run2.IdentitySet)}");
-        Assert.NotEmpty(run1.IdentitySet);
+        AssertRunIdentitySet(run1, run2);
+
+        // ---- G1: framework identity for this lane is pinned by the explicit --framework net9.0 CLI
+        // arg plus the frozen constants; additionally assert the CLI reports net9.0 as available.
+        Assert.Contains("net9.0", run1.AvailableTargetFrameworks);
         Assert.True(
-            run1.IdentitySet.SequenceEqual(run2.IdentitySet),
-            $"data.runs[] identity set differs between runs: run1={FormatIdentitySet(run1.IdentitySet)} run2={FormatIdentitySet(run2.IdentitySet)}");
-        var amendedPair = (
-            OutboundHttpExternalCorpusFixture.ProfileId,
-            OutboundHttpExternalCorpusFixture.ProgramIndexFingerprint);
-        Assert.True(
-            run1.IdentitySet.Count(pair => pair == amendedPair) == 1,
-            $"amended (profileId, indexFingerprint) pair not present exactly once; set={FormatIdentitySet(run1.IdentitySet)}");
-        // AGENTS gate 4 (isolation): the normalised two-root lane emits exactly one run identity; more than one entry means an unexpected extra root/profile reached the pipeline.
-        Assert.Single(run1.IdentitySet);
-        Assert.Equal(amendedPair, run1.IdentitySet[0]);
+            run1.AvailableTargetFrameworks.SequenceEqual(run2.AvailableTargetFrameworks),
+            "data.availableTargetFrameworks differs between runs.");
 
         // ---- SDK / toolchain version from the CLI --json data (authoritative; not `dotnet --version`).
         Assert.False(
@@ -538,6 +703,32 @@ public sealed class OutboundHttpExternalCorpusTests
         await RenderEveryDiagramWithMermaidCliAsync(run1, _lane.RegisterOwnedTempRoot);
     }
 
+    // Complete ordered data.runs[] identity: run1 == run2 (all three fields), the amended
+    // (profileId, indexFingerprint) pair present exactly once, exactly one entry, and a non-empty
+    // runId on that entry (G1). Never silently takes run[0].
+    private void AssertRunIdentitySet(OutboundHttpLaneRun run1, OutboundHttpLaneRun run2)
+    {
+        _output.WriteLine($"[QHTTP-B matrix] run1 identity set: {FormatIdentitySet(run1.IdentityPairs)}");
+        _output.WriteLine($"[QHTTP-B matrix] run2 identity set: {FormatIdentitySet(run2.IdentityPairs)}");
+        Assert.NotEmpty(run1.IdentitySet);
+        Assert.True(
+            run1.IdentitySet.SequenceEqual(run2.IdentitySet),
+            $"data.runs[] identity set differs between runs: run1={FormatIdentitySet(run1.IdentityPairs)} run2={FormatIdentitySet(run2.IdentityPairs)}");
+        var amendedPair = (
+            OutboundHttpExternalCorpusFixture.ProfileId,
+            OutboundHttpExternalCorpusFixture.ProgramIndexFingerprint);
+        Assert.True(
+            run1.IdentityPairs.Count(pair => pair == amendedPair) == 1,
+            $"amended (profileId, indexFingerprint) pair not present exactly once; set={FormatIdentitySet(run1.IdentityPairs)}");
+        // AGENTS gate 4 (isolation): the normalised two-root lane emits exactly one run identity; more than one entry means an unexpected extra root/profile reached the pipeline.
+        Assert.Single(run1.IdentitySet);
+        Assert.Equal(amendedPair, run1.IdentityPairs[0]);
+        Assert.False(
+            string.IsNullOrWhiteSpace(run1.IdentitySet[0].RunId),
+            "data.runs[0].runId is absent/empty; the run identity is not fully captured.");
+        Assert.Equal(run1.IdentitySet[0].RunId, run2.IdentitySet[0].RunId);
+    }
+
     private static string FormatIdentitySet(ImmutableArray<(string ProfileId, string IndexFingerprint)> set) =>
         "[" + string.Join(" ; ", set.Select(p => $"({p.ProfileId}, {p.IndexFingerprint})")) + "]";
 
@@ -651,6 +842,82 @@ public sealed record OutboundHttpFlowArtifact(string FileName, string Markdown, 
 
 public sealed record SensitiveConfigValue(string Label, string Value);
 
+/// <summary>
+/// One <c>data.runs[]</c> identity, fully captured (G1): every entry carries a non-empty
+/// <c>profileId</c>, <c>runId</c>, and <c>indexFingerprint</c> or parsing fails closed.
+/// </summary>
+public sealed record OutboundHttpRunIdentity(string ProfileId, string RunId, string IndexFingerprint)
+{
+    /// <summary>
+    /// Pure fail-closed parser for the CLI <c>--json</c> <c>data.runs[]</c> identity array. Throws
+    /// <see cref="XunitException"/> with an actionable message naming the exact defect when the array
+    /// is absent, not an array, empty, carries a non-object entry, or any entry is missing / non-string
+    /// / empty for <c>profileId</c>, <c>runId</c>, or <c>indexFingerprint</c>.
+    /// </summary>
+    internal static IReadOnlyList<OutboundHttpRunIdentity> ParseRuns(JsonElement data)
+    {
+        if (data.ValueKind != JsonValueKind.Object || !data.TryGetProperty("runs", out var runs))
+        {
+            throw new XunitException(
+                "CLI --json 'data.runs' is absent; run identity cannot be verified fail-closed.");
+        }
+
+        if (runs.ValueKind != JsonValueKind.Array)
+        {
+            throw new XunitException(
+                $"CLI --json 'data.runs' is {runs.ValueKind}, not a JSON array.");
+        }
+
+        var result = new List<OutboundHttpRunIdentity>();
+        int index = 0;
+        foreach (var entry in runs.EnumerateArray())
+        {
+            if (entry.ValueKind != JsonValueKind.Object)
+            {
+                throw new XunitException(
+                    $"CLI --json 'data.runs[{index}]' is {entry.ValueKind}, not a run-identity object.");
+            }
+
+            result.Add(new OutboundHttpRunIdentity(
+                RequireString(entry, "profileId", index),
+                RequireString(entry, "runId", index),
+                RequireString(entry, "indexFingerprint", index)));
+            index++;
+        }
+
+        if (result.Count == 0)
+        {
+            throw new XunitException(
+                "CLI --json 'data.runs' is an empty array; no run identity was emitted.");
+        }
+
+        return result;
+    }
+
+    private static string RequireString(JsonElement entry, string property, int index)
+    {
+        if (!entry.TryGetProperty(property, out var value))
+        {
+            throw new XunitException($"CLI --json 'data.runs[{index}].{property}' is missing.");
+        }
+
+        if (value.ValueKind != JsonValueKind.String)
+        {
+            throw new XunitException(
+                $"CLI --json 'data.runs[{index}].{property}' is {value.ValueKind}, not a string.");
+        }
+
+        string text = value.GetString() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            throw new XunitException(
+                $"CLI --json 'data.runs[{index}].{property}' is empty or whitespace.");
+        }
+
+        return text;
+    }
+}
+
 public sealed record OutboundHttpLaneRun(
     string Outcome,
     ImmutableArray<string> DiagnosticCodes,
@@ -658,10 +925,15 @@ public sealed record OutboundHttpLaneRun(
     string DiagnosticSummary,
     string Stderr,
     string? ToolchainVersion,
-    ImmutableArray<(string ProfileId, string IndexFingerprint)> IdentitySet,
+    ImmutableArray<string> AvailableTargetFrameworks,
+    ImmutableArray<OutboundHttpRunIdentity> IdentitySet,
     int MaxMermaidCharacters,
     ImmutableArray<OutboundHttpRenderedFile> Files)
 {
+    // Amended frozen pair stays (ProfileId, ProgramIndexFingerprint); runId is carried separately.
+    public ImmutableArray<(string ProfileId, string IndexFingerprint)> IdentityPairs =>
+        [.. IdentitySet.Select(i => (i.ProfileId, i.IndexFingerprint))];
+
     public string AllText => string.Join(
         "\n",
         Files
@@ -762,6 +1034,31 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
         lock (_ownedTempRootsLock)
         {
             _ownedTempRoots.Add(path);
+        }
+    }
+
+    /// <summary>
+    /// G2: every fixture-owned absolute path root (worktree parent + both CLI out roots + both CLI
+    /// cache roots + the YAML cfg root + the Mermaid-render root) plus the isolated worktree path.
+    /// None of these may appear - in OS or forward-slash form - in any generated artifact.
+    /// </summary>
+    public IReadOnlyList<string> OwnedPathMarkers
+    {
+        get
+        {
+            lock (_ownedTempRootsLock)
+            {
+                var markers = new List<string>(_ownedTempRoots);
+                if (_worktreePath is not null)
+                {
+                    markers.Add(_worktreePath);
+                }
+
+                return markers
+                    .Where(p => !string.IsNullOrEmpty(p))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
         }
     }
 
@@ -1017,33 +1314,32 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
         }
 
         string? toolchainVersion = null;
-        var identitySet = ImmutableArray.CreateBuilder<(string, string)>();
-        if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
+        var availableTfms = ImmutableArray.CreateBuilder<string>();
+        bool hasData = root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object;
+        if (hasData)
         {
             if (data.TryGetProperty("toolchainVersion", out var tv) && tv.ValueKind == JsonValueKind.String)
             {
                 toolchainVersion = tv.GetString();
             }
 
-            if (data.TryGetProperty("runs", out var runs) && runs.ValueKind == JsonValueKind.Array)
+            if (data.TryGetProperty("availableTargetFrameworks", out var tfms)
+                && tfms.ValueKind == JsonValueKind.Array)
             {
-                foreach (var runEntry in runs.EnumerateArray())
+                foreach (var tfm in tfms.EnumerateArray())
                 {
-                    if (runEntry.ValueKind != JsonValueKind.Object)
+                    if (tfm.ValueKind == JsonValueKind.String)
                     {
-                        continue;
+                        availableTfms.Add(tfm.GetString() ?? string.Empty);
                     }
-
-                    string profileId = runEntry.TryGetProperty("profileId", out var pid) && pid.ValueKind == JsonValueKind.String
-                        ? pid.GetString() ?? string.Empty
-                        : string.Empty;
-                    string fingerprint = runEntry.TryGetProperty("indexFingerprint", out var fp) && fp.ValueKind == JsonValueKind.String
-                        ? fp.GetString() ?? string.Empty
-                        : string.Empty;
-                    identitySet.Add((profileId, fingerprint));
                 }
             }
         }
+
+        // G1 / F9: fail closed on malformed run identity ALWAYS - a missing/non-object 'data' must
+        // raise the named actionable XunitException here, never fall through to a bare Assert.NotEmpty.
+        ImmutableArray<OutboundHttpRunIdentity> identitySet =
+            [.. OutboundHttpRunIdentity.ParseRuns(hasData ? data : root)];
 
         return new OutboundHttpLaneRun(
             outcome,
@@ -1052,7 +1348,8 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
             summary.ToString().Trim(),
             standardError.ToString(),
             toolchainVersion,
-            identitySet.ToImmutable(),
+            availableTfms.ToImmutable(),
+            identitySet,
             ReadMermaidBudget(root),
             ReadGeneratedFiles(outputDirectory));
     }
@@ -1304,5 +1601,203 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
         string stderr = process.StandardError.ReadToEnd();
         process.WaitForExit();
         return (process.ExitCode, stdout.Trim(), stderr.Trim());
+    }
+}
+
+/// <summary>
+/// G2: pure scanner for checkout-path and timestamp/volatile-runtime hygiene. Returns every offending
+/// match as <c>(Marker, Kind)</c> where <c>Marker</c> is safe to log for path/timestamp classes and is
+/// the KIND label (never the value) for environment identity classes.
+/// </summary>
+internal static class OutboundHttpArtifactHygiene
+{
+    // ISO-8601 date or date-time. Bare 4-digit years and dotted version tokens (net9.0, 9.0.11) are
+    // deliberately NOT matched - the literal "-NN-NN" shape is required.
+    private static readonly Regex IsoTimestamp = new(
+        @"\b\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?)?\b", RegexOptions.Compiled);
+
+    // Clock string with a GMT/UTC zone suffix.
+    private static readonly Regex ZonedClock = new(
+        @"\b\d{1,2}:\d{2}(:\d{2})?\s*(GMT|UTC)\b", RegexOptions.Compiled);
+
+    internal static IReadOnlyList<(string Marker, string Kind)> FindVolatileMarkers(
+        string text, IEnumerable<string> forbiddenPaths)
+    {
+        var hits = new List<(string, string)>();
+
+        foreach (string path in forbiddenPaths)
+        {
+            if (string.IsNullOrEmpty(path))
+            {
+                continue;
+            }
+
+            if (text.Contains(path, StringComparison.OrdinalIgnoreCase))
+            {
+                hits.Add((path, "fixture-owned-path"));
+            }
+
+            string slash = path.Replace('\\', '/');
+            if (!string.Equals(slash, path, StringComparison.Ordinal)
+                && text.Contains(slash, StringComparison.OrdinalIgnoreCase))
+            {
+                hits.Add((slash, "fixture-owned-path-slash"));
+            }
+        }
+
+        foreach (Match match in IsoTimestamp.Matches(text))
+        {
+            hits.Add((match.Value, "iso-8601-timestamp"));
+        }
+
+        foreach (Match match in ZonedClock.Matches(text))
+        {
+            hits.Add((match.Value, "zoned-clock"));
+        }
+
+        foreach (var (token, kind) in new[]
+                 {
+                     (Environment.MachineName, "machine-name"),
+                     (Environment.UserName, "user-name"),
+                     (Environment.UserDomainName, "user-domain"),
+                 })
+        {
+            if (!string.IsNullOrWhiteSpace(token)
+                && token.Length >= 4
+                && text.Contains(token, StringComparison.OrdinalIgnoreCase))
+            {
+                hits.Add((kind, kind));
+            }
+        }
+
+        return hits;
+    }
+}
+
+/// <summary>G3: one frozen forbidden-corpus entry. <c>Token</c> is scanned literally.</summary>
+internal sealed record OutboundHttpCorpusEntry(string Label, string Kind, string Token);
+
+/// <summary>
+/// G3: builds the explicit documented forbidden corpus (frozen TCC request-path / header / config-key /
+/// BCL / payload-identifier facts plus the in-memory configuration values) and scans text for it.
+/// Structural HTTP vocabulary is deliberately excluded (see <see cref="StructuralVocabulary"/>).
+/// </summary>
+internal static class OutboundHttpSensitiveCorpus
+{
+    // Legitimate structural vocabulary - never a leak.
+    internal static readonly string[] StructuralVocabulary =
+    [
+        "HTTP boundary", "HTTP POST request", "HTTP GET request",
+        "HTTP", "POST", "GET", "request", "boundary", "outbound",
+        "The method calls HttpClient.PostAsync at an outbound HTTP POST request boundary.",
+        "The method calls HttpClient.GetAsync at an outbound HTTP GET request boundary.",
+    ];
+
+    internal static IReadOnlyList<OutboundHttpCorpusEntry> Build(
+        IEnumerable<SensitiveConfigValue> configValues)
+    {
+        var entries = new List<OutboundHttpCorpusEntry>();
+
+        void Add(string label, string kind, string token)
+        {
+            if (!string.IsNullOrWhiteSpace(token))
+            {
+                entries.Add(new OutboundHttpCorpusEntry(label, kind, token));
+            }
+        }
+
+        foreach (string path in new[]
+                 {
+                     "threeThirty/complaint/addComplaint",
+                     "threeThirty/lookup/updateType/all",
+                     "threeThirty/notification/update",
+                     "threeThirty/callBypass/add",
+                     "threeThirty",
+                 })
+        {
+            Add($"request-path:{path}", "request-path", path);
+        }
+
+        Add("header-name:Authorization", "header", "Authorization");
+        Add("media-type:application/json", "media-type", "application/json");
+
+        foreach (string key in new[] { "TCCBaseAddress", "TCCAPIKey", "_baseAddress", "_APIKey" })
+        {
+            Add($"config-key:{key}", "config-key", key);
+        }
+
+        // Boundary-scoped: these three BCL type/method names genuinely appear document-wide as
+        // Method Flow step names of JsonConvert.SerializeObject(request) / new MediaTypeHeaderValue(...)
+        // / JsonConvert.DeserializeObject<...> in BLL/TCCIntegration/TCCService.cs. They are not
+        // removable without a forbidden production Method Flow change, so the acceptance claim is only
+        // that they never become the outbound-HTTP BOUNDARY vocabulary (boundary line + Mermaid message).
+        foreach (string token in new[] { "MediaTypeHeaderValue", "SerializeObject", "DeserializeObject" })
+        {
+            Add($"bcl-token:{token}", "bcl-token", token);
+        }
+
+        // Document-wide: response/handler/content BCL type names that must never appear in ANY generated
+        // artifact (checkpoint Risk 4 / non-goal: no status/success/response claims).
+        foreach (string token in new[]
+                 {
+                     "ByteArrayContent", "HttpResponseMessage", "IsSuccessStatusCode", "ReadAsStringAsync",
+                     "StringContent", "HttpClientHandler", "ServerCertificateCustomValidationCallback",
+                     "MediaTypeWithQualityHeaderValue",
+                 })
+        {
+            Add($"bcl-response-token:{token}", "bcl-response-token", token);
+        }
+
+        foreach (string token in new[]
+                 {
+                     "reporterNumber", "reportedIdentity", "typeOfComplaint", "operatorTcn",
+                     "serviceRating", "serviceFeedback", "tccTcn", "updateType",
+                 })
+        {
+            Add($"payload-id:{token}", "payload-identifier", token);
+        }
+
+        foreach (var value in configValues)
+        {
+            // Only distinctive (>= 8 char) config values enter the generic scan; the existing exact
+            // sensitive-config scan covers the rest. Field LABEL only ever reaches a failure message.
+            if (value.Value.Length >= 8)
+            {
+                Add($"config-value:{value.Label}", "config-value", value.Value);
+            }
+
+            if (value.Value.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+            {
+                string payload = value.Value["Basic ".Length..].Trim();
+                if (payload.Length >= 8)
+                {
+                    Add($"config-value:{value.Label} (payload)", "config-value", payload);
+                }
+            }
+
+            if (Uri.TryCreate(value.Value, UriKind.Absolute, out var uri)
+                && !string.IsNullOrEmpty(uri.Host)
+                && uri.Host.Length >= 8)
+            {
+                Add($"config-value:{value.Label} (host)", "config-value", uri.Host);
+            }
+        }
+
+        return entries;
+    }
+
+    internal static IReadOnlyList<(string Label, string Kind)> FindLeaks(
+        string text, IEnumerable<OutboundHttpCorpusEntry> corpus)
+    {
+        var hits = new List<(string, string)>();
+        foreach (var entry in corpus)
+        {
+            if (text.Contains(entry.Token, StringComparison.Ordinal))
+            {
+                hits.Add((entry.Label, entry.Kind));
+            }
+        }
+
+        return hits;
     }
 }

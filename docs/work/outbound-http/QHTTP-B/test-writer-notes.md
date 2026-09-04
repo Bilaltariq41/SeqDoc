@@ -384,6 +384,122 @@ Matrix values unchanged from the third pass: profileId `profile:v1:f874be7e…`,
 (resolved from `--json`), frozen-scope and whole-corpus `git status` empty before and after,
 `HEAD = 7aabfef98fa4d47781bd8a98b9061ddcafb88836`.
 
+## Seventh repair pass — second authoritative GitHub review (G1-G3), 2026-09-04
+
+Acceptance-only, no production/semantic change. Edits confined to
+`tests/SeqDoc.AcceptanceTests/OutboundHttpExternalCorpusTests.cs` + this file. The frozen artifact
+matrix is byte-identical to the sixth pass (POST md 3676 B / `20293c9d…`, POST mmd 353 B / `84621287…`,
+GET md 2850 B / `43f4210f…`, GET mmd 289 B / `363e1698…`, `index.md` 2224 B / `0de88502…`,
+`seqdoc.manifest.json` 6282 B / `b48eb3d7…`, complete-output digest `22045be6…`, diagnostics
+ordered-record digest `2f62d6e3…`, ordered codes `BE1001, BE2010, BE2010, PRED001`, no `SEQHTTP001`).
+The three items add assertions over the same generated output; no new analysis input.
+
+### G1 — fail closed on malformed run identity
+
+- New pure helper `OutboundHttpRunIdentity.ParseRuns(JsonElement data)` (static method on the new
+  `OutboundHttpRunIdentity` record `(ProfileId, RunId, IndexFingerprint)`). Throws `XunitException`
+  with an actionable, defect-naming message when: `data` has no `runs`; `runs` is not a JSON array;
+  `runs` is empty; any entry is not a JSON object; any of `profileId` / `runId` / `indexFingerprint`
+  is missing, non-string, or empty/whitespace. `RunCliAsync` now calls it instead of the old
+  `if (entry.ValueKind != Object) continue;` skip + `string.Empty` fallback.
+- `OutboundHttpLaneRun.IdentitySet` is now `ImmutableArray<OutboundHttpRunIdentity>` (carries `runId`,
+  previously dropped). A computed `IdentityPairs` projects `(ProfileId, IndexFingerprint)` so every
+  existing identity assertion is preserved unchanged (`SequenceEqual` run1==run2, amended pair present
+  exactly once, `Assert.Single`, `IdentityPairs[0] == amendedPair`). New: `runId` on the single entry
+  asserted non-empty and equal across runs. The amended frozen pair stays
+  `(ProfileId, ProgramIndexFingerprint)`. The two duplicated identity blocks are folded into one
+  `AssertRunIdentitySet` helper.
+- New `[Fact] MalformedRunIdentityFailsClosed` — synthetic `JsonDocument` inputs for each malformed
+  class above (message substring asserted per defect) plus one well-formed two-entry input that
+  returns the ordered tuple list.
+- `RunCliAsync` also captures `data.availableTargetFrameworks`; Claim 4 asserts it contains `net9.0`
+  and is equal across runs. No per-run project/config/TFM field was invented — the CLI emits only
+  `{ profileId, runId, indexFingerprint }` per run (confirmed `src/SeqDoc.Cli/CliHost.cs:344-363`).
+
+### G2 — checkout-path and timestamp hygiene, asserted directly
+
+- New pure helper `OutboundHttpArtifactHygiene.FindVolatileMarkers(text, forbiddenPaths)` returning
+  `(Marker, Kind)` hits: fixture-owned absolute path in OS form and forward-slash form
+  (`OrdinalIgnoreCase`); ISO-8601 date / date-time (`\b\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?)?\b`);
+  `GMT`/`UTC`-suffixed clock; `Environment.MachineName` / `UserName` / `UserDomainName` (length >= 4,
+  reported as KIND only, never the value).
+- Fixture exposes `OwnedPathMarkers` (the `_ownedTempRoots` list + `_worktreePath`: worktree parent,
+  both CLI `out` roots, both CLI `cache` roots, the YAML `cfg` root, and the Mermaid-render root).
+- Claim 3 scans EVERY run-1 file (`run1.Files` — all `.md`, `.mmd`, `index.md`,
+  `seqdoc.manifest.json`, `.seqdoc/**`); asserts zero markers, message names the file + marker KIND.
+  Observed clean — the journal/manifest are timestamp-free and path-free by design
+  (`OutputSetActivator` doc comment) and run1==run2 byte-equality already proves no wall-clock content.
+- Deliberately-excluded patterns (documented): a bare 4-digit year and dotted version tokens
+  (`net9.0`, `9.0.11`, `seqdoc.system-net-http.outbound:1.0.0`) are NOT matched — the literal
+  `-NN-NN` shape is required, so package/reference version strings and 64-hex SHA digests do not
+  false-positive.
+- New `[Fact] ArtifactHygieneScannerCatchesInjectedVolatileMarkers` — synthetic strings each carrying
+  one leak class (OS temp path; its slash form; ISO timestamp; `GMT` clock; machine-name token) plus
+  a clean boundary-phrase string that yields no hits.
+
+### G3 — full sensitive fixture corpus
+
+- New helpers `OutboundHttpSensitiveCorpus.Build(configValues)` / `.FindLeaks(text, corpus)` over
+  `OutboundHttpCorpusEntry(Label, Kind, Token)`. `StructuralVocabulary` is a separate, explicit list.
+- Forbidden corpus (token names only):
+  - `request-path`: `threeThirty/complaint/addComplaint`, `threeThirty/lookup/updateType/all`,
+    `threeThirty/notification/update`, `threeThirty/callBypass/add`, `threeThirty`.
+  - `header` / `media-type`: `Authorization`, `application/json`.
+  - `config-key`: `TCCBaseAddress`, `TCCAPIKey`, `_baseAddress`, `_APIKey`.
+  - `bcl-token`: `ByteArrayContent`, `HttpResponseMessage`, `IsSuccessStatusCode`, `ReadAsStringAsync`,
+    `HttpClientHandler`, `ServerCertificateCustomValidationCallback`, `MediaTypeHeaderValue`,
+    `MediaTypeWithQualityHeaderValue`, `SerializeObject`, `DeserializeObject`.
+  - `payload-identifier`: `reporterNumber`, `reportedIdentity`, `typeOfComplaint`, `operatorTcn`,
+    `serviceRating`, `serviceFeedback`, `tccTcn`, `updateType`.
+  - `config-value` (in-memory only, from the existing `ReadSensitiveConfigValues`, length >= 8; base64
+    payload after `Basic ` and the absolute-URI host also added): the TCC base-address URLs, the URI
+    host, the API-key value and its base64 payload. Failure messages carry the field LABEL only —
+    never the value, hash, or snapshot.
+- Excluded (documented false-positive risks, NOT in the corpus): generic English words
+  `message`, `code`, `description`, `reason`, `contentType`, `list`, `value`, `status`, `tcn`; and
+  `PostAsync` / `GetAsync` / `HttpClient` / the behavior phrases (structural).
+- Structural-vs-forbidden split rationale: the accepted behavior phrases literally contain
+  `HttpClient.PostAsync` / `HttpClient.GetAsync`, and `HTTP boundary` / `HTTP POST request` /
+  `HTTP GET request` / `HTTP` / `POST` / `GET` / `request` / `boundary` / `outbound` are the
+  intended conservative vocabulary — putting any of these in the forbidden set would contradict the
+  accepted output and `AssertNoGenericHttpClientPresentation` (kept, Mermaid side).
+- Scope split (judgment call, see below): `request-path` / `header` / `media-type` / `config-key` /
+  `config-value` / `payload-identifier` are scanned document-wide over every `run1.Files` entry.
+  `bcl-token` is scanned scoped to the boundary line + Mermaid message only.
+- Per-`.md` check: `Count("HttpClient.PostAsync")` == `Count(PostBehaviorPhrase)` and likewise for
+  GET — the BCL call token never appears beyond the accepted phrase.
+- New `[Fact] SensitiveCorpusCatchesForbiddenTokensButNotStructuralVocabulary` — corpus is non-empty,
+  has a base-address entry and an API-key entry, catches a synthetic doc with a payload id + request
+  path + config host, and does NOT flag a doc containing only structural vocabulary + the accepted
+  behavior phrases.
+
+### Judgment call — `bcl-token` scope (G3)
+
+The first focused run flagged `MediaTypeHeaderValue`, `SerializeObject`, `DeserializeObject` in the
+POST flow `*.md`. These are unrelated Method Flow steps of `TCCService.AddComplaint`
+(`request.Content.Headers.ContentType = new MediaTypeHeaderValue(...)`,
+`JsonConvert.SerializeObject/DeserializeObject`) that the typed pipeline renders as ordinary call
+steps — not the HTTP boundary presentation and not a secret. Removing them document-wide would need a
+production Method Flow change, which this checkpoint forbids, and would drift the frozen matrix. The
+maintainer's G3 wording is "must not surface as the boundary vocabulary", so `bcl-token` entries are
+asserted absent from the boundary line + Mermaid message (same scoping precedent as
+`boundaryForbiddenWords` and `ServiceClientExternalCorpusTests`). All genuinely secret / request-
+specific classes remain document-wide. If the maintainer intends document-wide BCL-token exclusion,
+that is a production Method Flow scope decision outside this allowlist.
+
+### Seventh-repair-pass focused result
+
+`$env:SEQDOC_TEST_PROJECTS_ROOT = (Resolve-Path '../SeqDoc-TestProjects').Path; dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~OutboundHttpExternalCorpusTests" --logger "console;verbosity=detailed"`
+→ **GREEN — Passed: 7, Failed: 0, Skipped: 0** (~1 min). New tests: `MalformedRunIdentityFailsClosed`,
+`ArtifactHygieneScannerCatchesInjectedVolatileMarkers`,
+`SensitiveCorpusCatchesForbiddenTokensButNotStructuralVocabulary` (3 pure/synthetic, no fixture).
+Matrix `[QHTTP-B matrix]` console lines byte-identical to the sixth pass (see values above); shared
+repo `git status` + `git worktree list` equal before/after; `HEAD = 7aabfef9…`. Distinct new claims:
+malformed run-identity fail-closed + runId capture (G1); direct fixture-path / timestamp hygiene over
+all artifacts (G2); explicit forbidden-corpus leak scan with structural split (G3). Final gate
+(complete AcceptanceTests Release suite) not run by this pass — left for the orchestrator after one
+independent review.
+
 ## Known boundary for the PR
 
 The frozen `indexFingerprint` `f9a36fd5662f01eead94779eb243f489d5bc1c6e1b7333d2f987b76e30d8146c` and
@@ -594,3 +710,86 @@ other test / build / `.github/**` / `docs/project/**` / `checkpoint.md` change.
 Focused lane re-run (`--filter FullyQualifiedName~OutboundHttpExternalCorpusTests`, Release):
 **Passed: 4, Failed: 0, Skipped: 0** (37 s). Distinct claims added: 2 (manifest completeness/size;
 single-entry identity set). Still 4 tests, one expensive fixture.
+
+## Eighth repair pass — independent review of the seventh-pass G1/G2/G3 hardening (F8-F10), 2026-09-04
+
+Bounded repair round, acceptance-only, zero production/semantic change. Edits confined to
+`tests/SeqDoc.AcceptanceTests/OutboundHttpExternalCorpusTests.cs` + this file. The frozen artifact
+matrix is byte-identical to the seventh pass (POST md 3676 / `20293c9d…`, POST mmd 353 / `84621287…`,
+GET md 2850 / `43f4210f…`, GET mmd 289 / `363e1698…`, index.md 2224 / `0de88502…`, manifest 6282 /
+`b48eb3d7…`, complete-output digest `22045be6…`, diagnostics digest `2f62d6e3…`, ordered codes
+`BE1001, BE2010, BE2010, PRED001`, no `SEQHTTP001`). No new analysis input.
+
+### F8 (Major) — document-wide BCL-token coverage restored
+
+The seventh pass narrowed all ten BCL tokens to boundary-scope and dropped `StringContent`
+altogether. Independent review found only three of them genuinely appear document-wide:
+`MediaTypeHeaderValue`, `SerializeObject`, `DeserializeObject` — rendered as Method Flow step names of
+`new MediaTypeHeaderValue("application/json")`, `JsonConvert.SerializeObject(request)`,
+`JsonConvert.DeserializeObject<…>` in `BLL/TCCIntegration/TCCService.cs` (`AddComplaint` / `Lookups`
+step list). The other seven, plus `StringContent`, were green document-wide in every prior pass;
+narrowing them was an unjustified weakening against checkpoint Risk 4 / the non-goal of no
+status/success/response claims.
+
+Applied:
+- `StringContent` was briefly dropped from the corpus in the seventh pass and is now **restored**.
+- `OutboundHttpSensitiveCorpus.Build` now emits two kinds:
+  - `Kind == "bcl-token"` (boundary-scoped, 3 tokens): `MediaTypeHeaderValue`, `SerializeObject`,
+    `DeserializeObject`.
+  - `Kind == "bcl-response-token"` (document-wide, 8 tokens): `ByteArrayContent`,
+    `HttpResponseMessage`, `IsSuccessStatusCode`, `ReadAsStringAsync`, `StringContent`,
+    `HttpClientHandler`, `ServerCertificateCustomValidationCallback`, `MediaTypeWithQualityHeaderValue`.
+- `OutputIsEvidenceBoundedValueSafeAndDeterministic`: `docWideCorpus =
+  forbiddenCorpus.Where(e => e.Kind != "bcl-token")` now covers `bcl-response-token` too;
+  `boundaryScopedCorpus` stays `Kind == "bcl-token"` (the 3). All 8 document-wide BCL response tokens
+  are expected absent from every generated artifact — focused lane stays green.
+- `SensitiveCorpusCatchesForbiddenTokensButNotStructuralVocabulary` updated: the synthetic leak string
+  now also carries `HttpResponseMessage.IsSuccessStatusCode` + `JsonConvert.SerializeObject`, and the
+  test asserts both `bcl-response-token` and `bcl-token` kinds are caught, that `StringContent` is a
+  `bcl-response-token` corpus entry, and that `HttpResponseMessage` is not a `bcl-token`.
+
+Evidence / non-removability: the three boundary-scoped tokens are BCL **type/method names in the
+Method Flow step list** of `TCCService.AddComplaint` / `Lookups` — not URI/credential/status/success/
+outcome claims, and not the outbound-HTTP boundary vocabulary. They are not removable document-wide
+without a forbidden production Method Flow change (and that would drift the frozen artifact matrix).
+The acceptance claim for them is only that they never become the boundary line / Mermaid message
+vocabulary (same scoping precedent as `boundaryForbiddenWords` and `ServiceClientExternalCorpusTests`).
+
+Escalation for the maintainer: the Method Flow step list for `TCCService.AddComplaint` / `Lookups`
+surfaces those BCL type/method names in the same generated document as the HTTP boundary presentation.
+If document-wide BCL-token exclusion is intended, that is a production Method Flow scope decision
+outside this acceptance allowlist.
+
+### F9 (Minor) — fail closed with the actionable message when `data` is absent
+
+Seventh-pass `RunCliAsync` only called `OutboundHttpRunIdentity.ParseRuns` inside
+`if (root.TryGetProperty("data", …) && data.ValueKind == Object)`, so a response with a missing or
+non-object `data` left `identitySet` empty and the lane failed later on a bare `Assert.NotEmpty`
+instead of the named `XunitException`. Fixed: `ParseRuns` now runs **unconditionally** —
+`ParseRuns(hasData ? data : root)` — so a missing/non-object `data` (root object has no `runs`) throws
+`"CLI --json 'data.runs' is absent; run identity cannot be verified fail-closed."`. The
+`availableTargetFrameworks` / `toolchainVersion` reads keep their own `hasData` guard.
+`MalformedRunIdentityFailsClosed` gains a local `ParseData` helper mirroring the fixture path and three
+cases: top-level object with no `data`; `data` object with no `runs`; `data` that is not an object —
+each asserted to carry `'data.runs' is absent`.
+
+### F10 (Observation) — hygiene-detector CI/revision coupling recorded
+
+The artifact-hygiene detectors (`Environment.UserName` / `MachineName` / `UserDomainName` substring
+match, the ISO-8601 date regex, and the document-wide `Authorization` token) are tuned to the current
+CI account and FraudManagement revision `7aabfef98fa4d47781bd8a98b9061ddcafb88836`; a different CI
+account name or a future corpus revision may require revisiting them. Notes-only, no code change.
+
+### Eighth-repair-pass focused result
+
+`$env:SEQDOC_TEST_PROJECTS_ROOT = (Resolve-Path '../SeqDoc-TestProjects').Path; dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~OutboundHttpExternalCorpusTests" --logger "console;verbosity=detailed"`
+→ **GREEN — Passed: 7, Failed: 0, Skipped: 0** (1.60 min;
+`FrozenIdentityIsolationAndArtifactValidityHold` ~35 s incl. the Mermaid CLI 11.16.0 render). All
+`[QHTTP-B matrix]` console lines byte-identical to the seventh pass (POST md 3676 / `20293c9d…`,
+POST mmd 353 / `84621287…`, GET md 2850 / `43f4210f…`, GET mmd 289 / `363e1698…`, index.md 2224 /
+`0de88502…`, manifest 6282 / `b48eb3d7…`, complete-output digest `22045be6…`, diagnostics digest
+`2f62d6e3…`, codes `BE1001, BE2010, BE2010, PRED001`); shared repo `git status` + `git worktree list`
+equal before/after; `HEAD = 7aabfef9…`. Distinct claims added/consolidated: 2 (document-wide
+`bcl-response-token` absence incl. restored `StringContent`; unconditional fail-closed run-identity
+parse with the named message). Final gate not run by this pass — left for the orchestrator after one
+independent review.
