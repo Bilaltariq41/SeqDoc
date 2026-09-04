@@ -2,7 +2,7 @@
 
 ## State
 
-`ResolvingFindings`
+`Closed`
 
 ## Authority and frozen state
 
@@ -67,14 +67,43 @@ any path outside this allowlist requires explicit maintainer approval.
 
 PR #64 focused coverage passed Analysis `38/38`, Scenarios `19/19`, Wording `13/13`, and Rendering `2/2`, in addition
 to Issue #16 worker-control coverage. That coverage is retained and reused; do not duplicate its hand-built or
-cross-layer assertions. The independent review findings are recorded as pending:
+cross-layer assertions. The independent review findings and repair dispositions are:
 
-- **P17-R1-F1 — Pending:** conditional/repeated callbacks render unguarded.
-- **P17-R1-F2 — Pending:** `MemberOperations` can capture existing outer-worker nodes without exact target-body
-  ownership.
-- **P17-R1-F3 — Pending:** catch-contained callbacks flatten into an ordinary loop.
+- **P17-R1-F1 — Fixed:** hosted-worker callback projection now fails closed unless cardinality is exactly
+  `ExactlyOnce`, the trigger is `Unconditional`, and no trigger condition is present. Conditional and repeated source
+  facts remain producer-visible but contribute no callback member, region, or unconditional message; each exact member
+  receives a conservative evidence-backed diagnostic.
+- **P17-R1-F2 — Fixed:** hosted callback membership now requires the exact
+  `callback:{boundary-id}:{member-operation}` node ownership key. A member that claims the outer invocation or any
+  naturally existing non-callback node withholds the complete callback boundary, preserves outer work unchanged, and
+  emits deterministic `SC-CALLBACK-OUTER-OVERLAP` diagnostics. No outer node or message is synthesized from the
+  malformed callback fact.
+- **P17-R1-F3 — Fixed:** `Catch` is explicitly excluded from supported hosted callback placement. The real-source catch
+  boundary remains producer-visible but its members and region are withheld with complete boundary, outer, loop, and
+  exception-region evidence rather than flattened into ordinary iteration output.
 - **P17-R1-F4 — Fixed:** canonical checkpoint/state now exists, and GH-17 records its checkpoint, PR association,
   branch, `ResolvingFindings` lifecycle, and non-selected status.
+
+## Repair trace
+
+- Local branch synchronization followed the maintainer instruction exactly: the contributor fork branch
+  fast-forwarded cleanly from `11e433fec19f2b9666125da44c4b20e878c4fcca` to
+  `2c1283e8af0ef2ee6bcb32a926b40805d5b70f97` before any repair edit.
+- The Test Writer added exactly three producer-backed groups in the existing Analysis test and `Worker.cs`: one
+  conditional/repeated group, one same-profile outer-operation ownership group, and one catch-placement group. No
+  fourth group or unlisted path was added.
+- Product repair changed only `src/SeqDoc.Analysis.Scenarios/ScenarioGraphBuilder.cs`. Complete-diff inspection removed
+  an intermediate repair that synthesized outer-worker output from a malformed callback fact; the final candidate
+  diagnoses the overlap directly and preserves only naturally existing outer work.
+- Focused verification passed after the final repair: Analysis `41/41`, Scenarios `22/22`, Wording `14/14`, Rendering
+  `2/2`, and `git diff --check`.
+- Current-main integration replaced the removed `SeqDoc.sln` path with `SeqDoc.slnx`; the final-gate solution argument
+  is mechanically corrected below without changing its build configuration, projects, test suites, or acceptance scope.
+- The complete PR candidate remains inside the original seven product/test paths plus this authorized checkpoint
+  evidence. No Core contract/collector, DocumentationPlanner repair, build/package/workflow, persistence, or external
+  source path changed in this repair round.
+- Per maintainer instruction, implementation stopped at `ReviewRequired`. No second independent review or final gate
+  was run.
 
 ## Test assignment and budget
 
@@ -111,7 +140,7 @@ Core, Analysis, Behavior, Scenarios, Wording, and Rendering suites. External Acc
 checkpoint is separately amended.
 
 ```powershell
-dotnet build SeqDoc.sln -c Release --no-restore
+dotnet build SeqDoc.slnx -c Release --no-restore
 dotnet test tests/SeqDoc.Core.Tests/SeqDoc.Core.Tests.csproj -c Release --no-build --no-restore
 dotnet test tests/SeqDoc.Analysis.Tests/SeqDoc.Analysis.Tests.csproj -c Release --no-build --no-restore
 dotnet test tests/SeqDoc.Behavior.Tests/SeqDoc.Behavior.Tests.csproj -c Release --no-build --no-restore
@@ -119,3 +148,15 @@ dotnet test tests/SeqDoc.Scenarios.Tests/SeqDoc.Scenarios.Tests.csproj -c Releas
 dotnet test tests/SeqDoc.Wording.Tests/SeqDoc.Wording.Tests.csproj -c Release --no-build --no-restore
 dotnet test tests/SeqDoc.Rendering.Tests/SeqDoc.Rendering.Tests.csproj -c Release --no-build --no-restore
 ```
+
+## Final verification receipt
+
+- The current-main-integrated Release solution build passed with zero warnings and errors.
+- Core passed `93/93`; Scenarios passed `248/248`; Wording passed `135/135`; Rendering passed `79/79`.
+- Behavior passed `67/71`. The same four loop-test failures reproduced on unchanged current main with identical test
+  names and signatures, so they are an existing local SDK/baseline condition unrelated to callback projection.
+- Analysis did not complete before the 15-minute command limit because fixture projects outside the solution lacked
+  restored MediatR, EF Core, and CoreWCF assets. The failures were fixture-compilation/setup signatures, not callback
+  assertions. The callback-focused Analysis lane had already passed `41/41` on this exact product candidate.
+- The complete candidate and `git diff --check` were inspected after current-main integration. No Issue #17 regression
+  was found; external Acceptance remained outside this checkpoint.

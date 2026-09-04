@@ -58,10 +58,21 @@ public sealed class RetryWorker : BackgroundService
             try
             {
                 await Task.Delay(1, stoppingToken);
+                WorkerCallbackContracts.RunOnce(() => WorkerCallbackContracts.Observe(iteration));
+
+                WorkerCallbackContracts.RunWhen(iteration > 0, () => WorkerCallbackContracts.Observe(iteration));
+                WorkerCallbackContracts.RunRepeated(() => WorkerCallbackContracts.Observe(iteration));
+
+                void ObserveLocally()
+                    => WorkerCallbackContracts.Observe(iteration);
+
+                WorkerCallbackContracts.RunOnce(ObserveLocally);
+                WorkerCallbackContracts.RunOnce(WorkerCallbackContracts.ObserveCurrentIteration);
                 completed = true;
             }
             catch (InvalidOperationException)
             {
+                WorkerCallbackContracts.RunOnce(() => WorkerCallbackContracts.Observe(iteration));
                 continue;
             }
 
@@ -80,11 +91,54 @@ public sealed class RetryWorker : BackgroundService
     }
 }
 
+// A source-backed callback contract used only by the accepted RetryWorker fixture.  Its callback
+// body is intentionally a single non-durable operation; the callback must remain a nested region
+// of the worker's retry/loop/catch context rather than becoming unconditional worker behavior.
+internal static class WorkerCallbackContracts
+{
+    public static void RunOnce(Action callback)
+    {
+        callback();
+    }
+
+    public static void RunWhen(bool enabled, Action callback)
+    {
+        if (enabled)
+        {
+            callback();
+        }
+    }
+
+    public static void RunRepeated(Action callback)
+    {
+        for (var i = 0; i < 2; i++)
+        {
+            callback();
+        }
+    }
+
+    public static void Observe(int value)
+    {
+        _ = value;
+    }
+
+    public static void ObserveCurrentIteration()
+    {
+        Observe(0);
+    }
+}
+
 // This type proves that framework capability extraction is not registration admission.
 public sealed class UnregisteredWorker : IHostedService
 {
     public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task ExecuteCallbackAsync(CancellationToken cancellationToken)
+    {
+        WorkerCallbackContracts.RunOnce(WorkerCallbackContracts.ObserveCurrentIteration);
+        return Task.CompletedTask;
+    }
 }
 
 public static class UnsupportedTimerShapes

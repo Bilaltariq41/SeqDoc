@@ -194,7 +194,7 @@ public static class DocumentationPlanner
             filter.HiddenNodes.UnionWith(hostedTopology.HiddenNodes);
         }
 
-        var phrases = BuildPhrases(graph, filter);
+        var phrases = BuildPhrases(graph, filter, hostedTopology);
         var diagram = BuildDiagram(graph, filter, diagramBudget, hostedTopology);
 
         var wording = new WordingDocument(
@@ -211,10 +211,12 @@ public static class DocumentationPlanner
         return new DocumentationPlan(wording, diagram);
     }
 
-    private static ImmutableArray<WordingPhrase> BuildPhrases(ScenarioGraph graph, PresentationFilter filter)
+    private static ImmutableArray<WordingPhrase> BuildPhrases(
+        ScenarioGraph graph, PresentationFilter filter, HostedTopologyValidation? hostedTopology)
     {
         var phrases = new List<WordingPhrase>();
         var phraseOrdinals = new Dictionary<string, int>(StringComparer.Ordinal);
+        var callbackMemberNodes = graph.CallbackRegions.SelectMany(region => region.MemberNodes).ToHashSet();
         // The planner owns semantic phrase order: entry, action, service call, then the unified
         // source-ordered facts (query/assignment/mutation/save by compiler ordinal), then
         // observations, then failure result/outcome before success result/outcome. Within one rank
@@ -275,7 +277,9 @@ public static class DocumentationPlanner
                         phrases,
                         WordingPhraseKind.Statement,
                         ServiceCallPhraseKey,
-                        BuildServiceCallText(node),
+                         callbackMemberNodes.Contains(node.Id)
+                             ? "The source callback operation is documented from the callback body."
+                             : BuildServiceCallText(node),
                         node.Evidence,
                         node.Certainty);
                     break;
@@ -326,7 +330,9 @@ public static class DocumentationPlanner
                         phrases,
                         WordingPhraseKind.Statement,
                         MethodCallPhraseKey,
-                        BuildMethodCallText(graph, node),
+                         callbackMemberNodes.Contains(node.Id)
+                             ? "The source callback operation is documented from the callback body."
+                             : BuildMethodCallText(graph, node),
                         node.Evidence,
                         node.Certainty);
                     break;
@@ -531,7 +537,9 @@ public static class DocumentationPlanner
 
         foreach (var region in graph.CallbackRegions
                      .Where(region => region.FrameworkCondition != FrameworkCallbackConditionKind.CacheMiss
-                          && RegionHasVisibleMember(graph, region, filter))
+                           && RegionHasVisibleMember(graph, region, filter)
+                           && !(hostedTopology?.IsValid == true
+                               && HostedCallbackRegionIsRepresented(graph, region, filter, hostedTopology)))
                      .OrderBy(region => region.Id.Value, StringComparer.Ordinal))
         {
             CreatePhrase(
@@ -554,6 +562,31 @@ public static class DocumentationPlanner
         }
 
         return phrases.ToImmutableArray();
+    }
+
+    private static bool HostedCallbackRegionIsRepresented(
+        ScenarioGraph graph,
+        ScenarioCallbackRegion region,
+        PresentationFilter filter,
+        HostedTopologyValidation hostedTopology)
+    {
+        var placements = graph.Topology.FlowPlacements;
+        var containers = graph.Topology.FlowContainers;
+        return region.MemberNodes.All(member =>
+        {
+            var node = graph.Nodes.FirstOrDefault(candidate => candidate.Id == member);
+            if (node is null || filter.HiddenNodes.Contains(member) || hostedTopology.HiddenNodes.Contains(member))
+            {
+                return false;
+            }
+
+            var owned = placements.Where(placement => placement.ScenarioNode == member).ToArray();
+            return owned.Length == 1
+                && owned[0].Method == graph.RootMethod
+                && owned[0].Containers.Length > 0
+                && owned[0].Containers.All(container => containers.Count(candidate =>
+                    candidate.Region == container && candidate.Method == graph.RootMethod) == 1);
+        });
     }
 
     /// <summary>
@@ -1144,7 +1177,8 @@ public static class DocumentationPlanner
                 messages.RemoveAll(message => withheldRefs.Contains(message.Id));
             }
         }
-        else if (graph.DirectCallExpansion.Steps.Length > 0)
+        else if (graph.DirectCallExpansion.Steps.Length > 0
+            && (!hostedWorkerRoot || graph.CallbackRegions.IsEmpty))
         {
             sequence = new DiagramSequence(orderedMessageRefs
                 .Select(item => DiagramSequenceElement.MessageRef(item.Ref)).ToImmutableArray());
@@ -2148,7 +2182,11 @@ public static class DocumentationPlanner
         var regionOwners = containers.GroupBy(container => container.Region)
             .ToDictionary(group => group.Key, group => group.Select(item => item.Method).Distinct().ToArray());
         var regions = regionOwners.Keys.ToHashSet();
-        var controlNodes = graph.Nodes.Where(node => node.Presentation?.HostedWorkerControlKind is not null).ToArray();
+        var callbackMembers = graph.CallbackRegions.SelectMany(region => region.MemberNodes).ToHashSet();
+        var controlNodes = graph.Nodes
+            .Where(node => node.Presentation?.HostedWorkerControlKind is not null)
+            .Where(node => !callbackMembers.Contains(node.Id))
+            .ToArray();
         var byRegion = containers.GroupBy(container => container.Region).ToDictionary(group => group.Key, group => group.ToArray());
         var invalidContainers = containers.Where(container => !Enum.IsDefined(container.Kind)
             || string.IsNullOrWhiteSpace(container.Region.Value)
@@ -2178,7 +2216,8 @@ public static class DocumentationPlanner
         var controlPlacementCounts = placements.GroupBy(placement => placement.ScenarioNode)
             .ToDictionary(group => group.Key, group => group.ToArray());
         var invalid = duplicateNodeIds || invalidContainers.Count > 0
-            || placements.Any(placement => !controlNodes.Any(node => node.Id == placement.ScenarioNode))
+            || placements.Any(placement => !callbackMembers.Contains(placement.ScenarioNode)
+                && !controlNodes.Any(node => node.Id == placement.ScenarioNode))
             || controlNodes.Any(node => !controlPlacementCounts.TryGetValue(node.Id, out var owned) || owned.Length != 1)
             || controlNodes.Any(node => controlPlacementCounts.TryGetValue(node.Id, out var owned) && owned.Length == 1
                 && !PlacementIsValid(node, owned[0]))
@@ -2327,9 +2366,12 @@ public static class DocumentationPlanner
             var evidence = loop.Evidence;
             return new DiagramFragment(
                 new DiagramPlanElementId($"diagram-fragment:v1:worker-loop:{loop.Region.Value}"),
-                $"worker-loop:{loop.Region.Value}", "each iteration", DiagramFragmentKind.Loop,
-                [], refs, nestedFragments, evidence,
-                new[] { loop.Certainty, evidence.Max(item => item.Certainty) }.Max());
+                 $"worker-loop:{loop.Region.Value}", graph.Nodes.Any(node =>
+                     node.Presentation?.HostedWorkerControlKind == HostedWorkerControlKind.CatchLoopContinuation
+                     && node.Presentation.HostedWorkerFlowRegion == loop.Region)
+                     ? "Retry" : "each iteration", DiagramFragmentKind.Loop,
+                 [], refs, nestedFragments, evidence,
+                 new[] { loop.Certainty, evidence.Max(item => item.Certainty) }.Max());
         }
     }
 

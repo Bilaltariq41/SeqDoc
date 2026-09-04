@@ -7,19 +7,19 @@
   "dependencies": [
     "GH-16"
   ],
-  "expectedGithubState": "OPEN",
+  "expectedGithubState": "CLOSED",
   "id": "GH-17",
   "kind": "github-issue",
-  "lifecycle": "ResolvingFindings",
-  "lifecycleLabel": "resolving-findings",
-  "nextAction": "Abood must merge current main 24899f9, repair P17-R1-F1 through F3 with three focused producer-backed regressions, run the focused command, and stop at ReviewRequired.",
+  "lifecycle": "Closed",
+  "lifecycleLabel": null,
+  "nextAction": "Issue #18 may proceed from current main under a separately frozen Ready contract; no additional Issue #17 implementation remains.",
   "number": 17,
   "owner": "abood",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/64",
   "schemaVersion": 1,
   "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/17",
-  "statusReason": "The one independent review found P17-R1-F1 through F4; F4 is fixed by this canonical checkpoint and F1-F3 require one bounded contributor repair after current-main integration.",
+  "statusReason": "PR #64 was accepted at head 111adafcbb329c951edd69e2441c3f832a46d559 after current-main integration, resolved F1-F4, focused verification (41 Analysis, 22 Scenario, 14 Wording, 2 Rendering), a zero-warning Release build, and broad no-regression evidence. Broad failures matched current-main local-SDK or missing standalone-fixture-restore signatures and did not involve Issue #17 behavior.",
   "title": "[Workers] Recovery state and callback boundaries",
   "track": "workers"
 }
