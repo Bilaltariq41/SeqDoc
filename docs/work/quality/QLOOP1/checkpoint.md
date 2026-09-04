@@ -38,6 +38,8 @@ Implementation and tests:
 Checkpoint and canonical execution evidence:
 
 - `docs/work/quality/QLOOP1/**`
+- `docs/project/work-items/GH-13.json` only for `selectedForExecution: true` to `false` while QLOOP1 is selected; restore
+  I13 selection when QLOOP1 closes. No other GH-13 field may change.
 - `docs/project/work-items/GH-85.json`
 - `docs/project/execution.json`
 
@@ -100,6 +102,23 @@ Expected focused discovery is exactly four tests.
   region, ordering, and body-invocation assertions remain. The exact focused command passed 4/4 after this repair.
 - `QLOOP1-F2` — **Fixed**: this repair trace records the failed attempt, root cause, repair delta, focused 4/4 evidence,
   affected assertions, and applicable failed-round count.
+- `QLOOP1-F3` — **Fixed by bounded amendment**: the original capsule omitted the mechanically required GH-13
+  selection-only record from the allowlist. The independent peer issued `PEER-AMENDMENT v1` at
+  https://github.com/Bilaltariq41/SeqDoc/issues/85#issuecomment-5541770163. The amended allowlist permits only
+  `selectedForExecution: true` to `false` while QLOOP1 is selected, requires restoration when QLOOP1 closes, and leaves
+  every I13 contract, lifecycle, ownership, branch, next action, acceptance boundary, and implementation path unchanged.
+
+### Post-amendment readiness re-audit
+
+- **PASS**: Issue #85 is open, assigned to Bilaltariq41, and its latest comment is the authenticated, non-conflicting
+  `PEER-AMENDMENT v1` receipt above.
+- **PASS**: baseline, branch, objective, exact three-test implementation allowlist, four-test regression signature,
+  non-goals, risks, existing coverage, soft budget, focused command, review boundary, and final gate remain frozen.
+- **PASS**: the complete candidate changes only the three test files and four governance paths declared by this amended
+  capsule. `GH-13.json` changes only `selectedForExecution: true` to `false`.
+- **PASS**: canonical work-state validation and `git diff --check` succeed. The focused test candidate is unchanged from
+  the post-repair 4/4 pass. A new independent post-amendment complete-candidate review is still required before the final
+  Behavior gate.
 
 ## Review boundary
 
