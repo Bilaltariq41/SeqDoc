@@ -142,3 +142,9 @@ dotnet test tests/SeqDoc.Behavior.Tests/SeqDoc.Behavior.Tests.csproj -c Release 
 
 Expected discovery is 71 tests with zero failures and zero skips. Also run `git diff --check` and verify that every
 changed path is in the checkpoint allowlist.
+
+Final gate result at exact SHA `7f7ba6404a5bb84e45d080709ba530fe56c82532`: **PASS** — 71 passed, 0 failed,
+0 skipped, 71 total; exit code 0 and nonzero discovery. The worktree was clean before and after the gate.
+
+PR #86 may leave draft state. QLOOP1 remains `Verifying` until authorized merge/closure; closure must restore I13 as
+the selected root-Orchestrator work item as required by `PEER-AMENDMENT v1`.
