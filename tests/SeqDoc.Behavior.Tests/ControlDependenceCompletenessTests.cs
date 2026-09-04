@@ -190,19 +190,30 @@ public sealed class ControlDependenceCompletenessTests
 
     private static ExtractedMethodBody CreateLoopBody(OperationId condition)
     {
+        var evidence = new EvidenceRef(new EvidenceId("evidence:v1:control-loop"), EvidenceKind.Source, "loop-fixture.cs", null, "loop", "test", CertaintyLevel.Exact);
+        var loopAnchor = new OperationId("behavior-operation:v1:control-loop-anchor");
         var body = new ExtractedMethodBody(
             Method,
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             [],
             [],
-            ImmutableArray.Create(Operation(condition, ExtractedOperationKind.Binary, "System.Boolean", null, null, null)),
+            ImmutableArray.Create(Operation(condition, ExtractedOperationKind.Binary, "System.Boolean", null, null, null) with { Evidence = [evidence] }),
             ImmutableArray.Create(
                 Block(0, [], 1, None),
-                Block(1, [], 2, Conditional, condition, [3], [0]),
+                Block(1, [], 2, Conditional, condition, [3], [0, 2]),
                 Block(2, [], 1, None, null, [], [1]),
                 Block(3, [], null, Exit, null, [], [1])),
             RootRegion(3),
-            []);
+            [evidence],
+            [new ExtractedNaturalLoop(loopAnchor, ExtractedLoopKind.WhileLoop, 1, [2], [2], [3],
+                [new ExtractedOrdinaryBranch(2, 1, [], [], [evidence], CertaintyLevel.Exact)], [evidence], CertaintyLevel.Exact)],
+            [new ExtractedLoopAnchor(loopAnchor, ExtractedLoopKind.WhileLoop, [evidence], CertaintyLevel.Exact)],
+            [
+                new ExtractedOrdinaryBranch(0, 1, [], [], [evidence], CertaintyLevel.Exact),
+                new ExtractedOrdinaryBranch(1, 2, [], [], [evidence], CertaintyLevel.Exact),
+                new ExtractedOrdinaryBranch(1, 3, [], [], [evidence], CertaintyLevel.Exact),
+                new ExtractedOrdinaryBranch(2, 1, [], [], [evidence], CertaintyLevel.Exact),
+            ]);
         return body;
     }
 

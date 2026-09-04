@@ -159,17 +159,32 @@ public sealed class MethodFlowBuilderTests
     {
         var condition = new OperationId("behavior-operation:v1:loop-condition");
         var loopInvocation = new OperationId("behavior-operation:v1:loop-invocation");
+        var loopAnchor = new OperationId("behavior-operation:v1:loop-anchor");
+        var evidence = LoopEvidence("while-loop");
         var body = CreateBody(
             operations: ImmutableArray.Create(
-                Operation(condition, ExtractedOperationKind.Binary, "System.Boolean"),
-                Operation(loopInvocation, ExtractedOperationKind.Invocation, "System.Void")),
+                Operation(condition, ExtractedOperationKind.Binary, "System.Boolean") with { Evidence = [evidence] },
+                Operation(loopInvocation, ExtractedOperationKind.Invocation, "System.Void") with { Evidence = [evidence] }),
             blocks:
             [
                 Block(0, [], fallThrough: 1, terminal: None),
-                Block(1, [], branchCondition: condition, fallThrough: 2, conditionals: [3], terminal: Conditional, predecessors: [0]),
-                Block(2, [loopInvocation], fallThrough: 1, terminal: None, predecessors: [1]),
+                Block(1, [], branchCondition: condition, fallThrough: 2, conditionals: [3], terminal: Conditional, predecessors: [0, 2]),
+                Block(2, [loopInvocation], fallThrough: 1, terminal: None, predecessors: [1]) with { Evidence = [evidence] },
                 Block(3, [], fallThrough: null, terminal: Exit, predecessors: [1]),
-            ]);
+            ]) with
+        {
+            Evidence = [evidence],
+            NaturalLoops = [new ExtractedNaturalLoop(loopAnchor, ExtractedLoopKind.WhileLoop, 1, [2], [2], [3],
+                [new ExtractedOrdinaryBranch(2, 1, [], [], [evidence], CertaintyLevel.Exact)], [evidence], CertaintyLevel.Exact)],
+            LoopAnchors = [new ExtractedLoopAnchor(loopAnchor, ExtractedLoopKind.WhileLoop, [evidence], CertaintyLevel.Exact)],
+            OrdinaryBranches =
+            [
+                new ExtractedOrdinaryBranch(0, 1, [], [], [evidence], CertaintyLevel.Exact),
+                new ExtractedOrdinaryBranch(1, 2, [], [], [evidence], CertaintyLevel.Exact),
+                new ExtractedOrdinaryBranch(1, 3, [], [], [evidence], CertaintyLevel.Exact),
+                new ExtractedOrdinaryBranch(2, 1, [], [], [evidence], CertaintyLevel.Exact),
+            ]
+        };
 
         var result = MethodFlowBuilder.Build(body);
 
@@ -177,6 +192,12 @@ public sealed class MethodFlowBuilderTests
         Assert.Contains(result.Snapshot.Nodes, node => node.Kind == FlowNodeKind.Loop);
         Assert.Contains(result.Snapshot.Regions, region => region.Kind == FlowRegionKind.NaturalLoop);
         var loop = Assert.Single(result.Snapshot.Nodes.OfType<LoopNode>());
+        Assert.Equal(ExtractedLoopKind.WhileLoop, loop.LoopKind);
+        Assert.Equal(1, loop.HeaderBlockOrdinal);
+        Assert.Equal([2], loop.LatchBlockOrdinals.ToArray());
+        Assert.Equal([2], loop.BodyBlockOrdinals.ToArray());
+        var exit = Assert.Single(result.Snapshot.Nodes, node => node.Kind == FlowNodeKind.Exit);
+        Assert.Equal([exit.Id], loop.Exits.ToArray());
         var bodyInvocations = result.Snapshot.Nodes
             .OfType<InvocationFlowNode>()
             .Where(node => loop.Body.Contains(node.Id))
@@ -191,21 +212,43 @@ public sealed class MethodFlowBuilderTests
     public void ConditionalBackEdgeProducesDoWhileNaturalLoop()
     {
         var condition = new OperationId("behavior-operation:v1:loop-condition");
+        var loopAnchor = new OperationId("behavior-operation:v1:loop-anchor");
+        var evidence = LoopEvidence("do-while-loop");
         var body = CreateBody(
-            operations: ImmutableArray.Create(Operation(condition, ExtractedOperationKind.Binary, "System.Boolean")),
+            operations: ImmutableArray.Create(Operation(condition, ExtractedOperationKind.Binary, "System.Boolean") with { Evidence = [evidence] }),
             blocks:
             [
                 Block(0, [], fallThrough: 1, terminal: None),
-                Block(1, [], fallThrough: 2, terminal: None, predecessors: [0]),
+                Block(1, [], fallThrough: 2, terminal: None, predecessors: [0, 2]),
                 Block(2, [], branchCondition: condition, fallThrough: 3, conditionals: [1], terminal: Conditional, predecessors: [1]),
                 Block(3, [], fallThrough: null, terminal: Exit, predecessors: [2]),
-            ]);
+            ]) with
+        {
+            Evidence = [evidence],
+            NaturalLoops = [new ExtractedNaturalLoop(loopAnchor, ExtractedLoopKind.DoWhileLoop, 1, [2], [2], [3],
+                [new ExtractedOrdinaryBranch(2, 1, [], [], [evidence], CertaintyLevel.Exact)], [evidence], CertaintyLevel.Exact)],
+            LoopAnchors = [new ExtractedLoopAnchor(loopAnchor, ExtractedLoopKind.DoWhileLoop, [evidence], CertaintyLevel.Exact)],
+            OrdinaryBranches =
+            [
+                new ExtractedOrdinaryBranch(0, 1, [], [], [evidence], CertaintyLevel.Exact),
+                new ExtractedOrdinaryBranch(1, 2, [], [], [evidence], CertaintyLevel.Exact),
+                new ExtractedOrdinaryBranch(2, 3, [], [], [evidence], CertaintyLevel.Exact),
+                new ExtractedOrdinaryBranch(2, 1, [], [], [evidence], CertaintyLevel.Exact),
+            ]
+        };
 
         var result = MethodFlowBuilder.Build(body);
 
         Assert.Empty(result.Diagnostics);
         Assert.Contains(result.Snapshot.Nodes, node => node.Kind == FlowNodeKind.Loop);
         Assert.Contains(result.Snapshot.Regions, region => region.Kind == FlowRegionKind.NaturalLoop);
+        var loop = Assert.Single(result.Snapshot.Nodes.OfType<LoopNode>());
+        Assert.Equal(ExtractedLoopKind.DoWhileLoop, loop.LoopKind);
+        Assert.Equal(1, loop.HeaderBlockOrdinal);
+        Assert.Equal([2], loop.LatchBlockOrdinals.ToArray());
+        Assert.Equal([2], loop.BodyBlockOrdinals.ToArray());
+        var exit = Assert.Single(result.Snapshot.Nodes, node => node.Kind == FlowNodeKind.Exit);
+        Assert.Equal([exit.Id], loop.Exits.ToArray());
     }
 
     [Fact]
@@ -597,4 +640,7 @@ public sealed class MethodFlowBuilderTests
             type, value, false, true, [], [], [], null, null, null, null, null, null,
             LocalName: null, ParameterOrdinal: parameterOrdinal, Evidence: [], Certainty: CertaintyLevel.Exact,
             HasConstantValue: hasConstantValue || value is not null);
+
+    private static EvidenceRef LoopEvidence(string name) =>
+        new(new EvidenceId($"evidence:v1:{name}"), EvidenceKind.Source, "loop-fixture.cs", null, name, "test", CertaintyLevel.Exact);
 }

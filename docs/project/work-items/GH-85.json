@@ -1,0 +1,23 @@
+{
+  "baseline": "e6dfc038f304f8265f6228052ebb326d882c5157",
+  "branch": "fix/issue-85-loop-fixtures",
+  "checkpointId": "QLOOP1",
+  "checkpointPath": "docs/work/quality/QLOOP1",
+  "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/85#issuecomment-5541770163",
+  "dependencies": [],
+  "expectedGithubState": "CLOSED",
+  "id": "GH-85",
+  "kind": "github-issue",
+  "lifecycle": "Closed",
+  "lifecycleLabel": null,
+  "nextAction": "Merge PR #86 with the explicitly authorized owner admin bypass, then synchronize main and leave I13 selected for Ahmad.",
+  "number": 85,
+  "owner": "bilal",
+  "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/86",
+  "schemaVersion": 1,
+  "selectedForExecution": false,
+  "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/85",
+  "statusReason": "PR #86 passed independent review and the final Behavior gate 71/71; Issue #85 is closed and I13 selection is restored per PEER-AMENDMENT v1.",
+  "title": "[Quality] Repair stale compiler-backed loop fixtures",
+  "track": "quality"
+}
