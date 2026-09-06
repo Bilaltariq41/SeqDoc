@@ -1,0 +1,23 @@
+{
+  "baseline": "8f26c1fe21deec75c9bfd83ecb16cbd676ffc0d3",
+  "branch": "fix/issue-87-bd2020",
+  "checkpointId": "W87",
+  "checkpointPath": "docs/work/workers/W87",
+  "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/87",
+  "dependencies": [],
+  "expectedGithubState": "OPEN",
+  "id": "GH-87",
+  "kind": "github-issue",
+  "lifecycle": "Blocked",
+  "lifecycleLabel": "blocked",
+  "nextAction": "Abood and Qais must approve the frozen Issue #87 T3 scope before readiness is repeated.",
+  "number": 87,
+  "owner": "bilal",
+  "pr": null,
+  "schemaVersion": 1,
+  "selectedForExecution": false,
+  "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/87",
+  "statusReason": "Readiness review requires producer evidence/certainty propagation and the exact external command; the frozen T3 scope awaits two non-author peer decisions.",
+  "title": "[Workers] Keep BD2020 catch-continuation withholding non-blocking",
+  "track": "workers"
+}

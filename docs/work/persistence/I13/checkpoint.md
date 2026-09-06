@@ -2,7 +2,7 @@
 
 ## State
 
-`Building`
+`Blocked`
 
 Owner activation was granted on 2026-09-02 at
 https://github.com/Bilaltariq41/SeqDoc/issues/13#issuecomment-5507318372. Start from `origin/main` at
