@@ -2,7 +2,7 @@
 
 ## State
 
-`Blocked`
+`NotStarted`
 
 ## Authority and frozen state
 
@@ -62,6 +62,7 @@ Dispatch the Test Writer because this repair changes activation behavior, eviden
 Add 2–4 distinct claims in `tests/SeqDoc.Behavior.Tests/BehaviorAnalyzerTests.cs`:
 
 - A producer-shaped extracted body makes `MethodFlowBuilder` emit `BD2020`; do not inject the diagnostic directly as the only proof.
+- The ambiguous mapping emits no `CatchContinuations` entry; retaining `BD2020` must never admit or invent placement.
 - The warning carries deterministic contributing evidence and the least-confident contributing certainty.
 - `BehaviorAnalyzer` succeeds, retains the method flow and warning, and computes a deterministic fingerprint.
 - Existing unknown and structural diagnostics remain blocking.
