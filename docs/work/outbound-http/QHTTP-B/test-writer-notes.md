@@ -1,9 +1,16 @@
 # QHTTP-B acceptance Test Writer notes
 
 Scope: designed and landed the sole writable acceptance test
-`tests/SeqDoc.AcceptanceTests/OutboundHttpExternalCorpusTests.cs`. No `src/**`, no existing test, no
-config/build/fixture/`docs/project/**` change. `docs/work/outbound-http/QHTTP-B/checkpoint.md` not
-touched (its `M` in `git status` is the orchestrator's own State line edit).
+`tests/SeqDoc.AcceptanceTests/OutboundHttpExternalCorpusTests.cs` plus this evidence note. No `src/**`,
+no existing test, no config/build/fixture/`docs/project/**` change.
+
+> **Correction (2026-09-07, Abood-essa F1-F5 repair pass):** an earlier version of this line claimed
+> `docs/work/outbound-http/QHTTP-B/checkpoint.md` was "not touched". That is false. `checkpoint.md`
+> IS modified substantially across this PR — it is orchestrator / state-manager-owned capsule state,
+> changed outside the test-writer allowlist by that owner, not by the test-writer. The test-writer's
+> own writable set is exactly two paths:
+> `tests/SeqDoc.AcceptanceTests/OutboundHttpExternalCorpusTests.cs` and this file.
+> See the eighth-repair-pass section at the end of this document for the full corrected record.
 
 ## Review findings F1-F7 applied (repair pass 2026-09-03)
 
@@ -978,3 +985,212 @@ equal before/after; `HEAD = 7aabfef9…`. Distinct claims added/consolidated: 2 
 `bcl-response-token` absence incl. restored `StringContent`; unconditional fail-closed run-identity
 parse with the named message). Final gate not run by this pass — left for the orchestrator after one
 independent review.
+
+## Fourth authoritative GitHub review (Abood-essa, PR #67 head `fb34509`) — F1-F5, 2026-09-07
+
+One batched contributor repair round. A team peer (Abood-essa) posted a GitHub "Request Changes" review
+with 5 contributor-scoped findings. All resolved inside the test-writer allowlist
+(`tests/SeqDoc.AcceptanceTests/OutboundHttpExternalCorpusTests.cs` + this file only). No `src/**`, no
+production or semantic change, no fixture-project / build / workflow / `docs/project/**` change. The
+frozen artifact matrix is byte-identical (these findings add assertions and launch infrastructure over
+the SAME generated output — no new analysis input).
+
+### Corrected durable-evidence record (F5)
+
+- **Changed paths (this repair round):**
+  - `tests/SeqDoc.AcceptanceTests/OutboundHttpExternalCorpusTests.cs` — test-writer owned.
+  - `docs/work/outbound-http/QHTTP-B/test-writer-notes.md` — test-writer owned (this file).
+  - `docs/work/outbound-http/QHTTP-B/checkpoint.md` — **orchestrator / state-manager owned**, changed
+    by that owner outside the test-writer allowlist. Earlier notes text that said `checkpoint.md` was
+    "not touched" is **false and is corrected** (see the top-of-file correction and this section). The
+    PR as a whole modifies `checkpoint.md` substantially; it is capsule/lifecycle state and is not a
+    test-writer edit.
+- **Ownership:** test-writer owns only the two paths above; `checkpoint.md` and everything under
+  `docs/project/**` are maintainer/orchestrator owned.
+- **Current head SHA:** the repaired head is a **new local commit, pending push** (prior PR #67 head was
+  `fb34509`). Describe it as pending-push until the orchestrator pushes it to the PR #67 branch.
+- **Test count:** **7** tests in `OutboundHttpExternalCorpusTests` (unchanged by this round — F2's new
+  malformed-target-framework assertions were folded into the existing `MalformedRunIdentityFailsClosed`
+  `[Fact]` rather than adding an 8th test). 4 fixture-backed acceptance tests + 3 pure synthetic
+  `[Fact]` regressions.
+- **Focused command (the one run this round):**
+  `$env:SEQDOC_TEST_PROJECTS_ROOT = (Resolve-Path "../SeqDoc-TestProjects").Path; dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~OutboundHttpExternalCorpus"`
+- **Final-gate status:** the complete unfiltered AcceptanceTests Release gate is **deferred to after the
+  independent review** — **not run this round**, per the checkpoint's review sequencing.
+
+### Test-count justification — 7 tests against the "2–4 distinct tests" soft budget
+
+The checkpoint's soft budget of "2–4 distinct tests" is met by the **4 fixture-backed acceptance
+tests** (`PostRootPresentsExactlyOneConservativePostBoundary`,
+`GetRootPresentsExactlyOneConservativeGetBoundary`,
+`OutputIsEvidenceBoundedValueSafeAndDeterministic`, `FrozenIdentityIsolationAndArtifactValidityHold`),
+which share the one expensive two-run FraudManagement fixture. The **3 pure synthetic `[Fact]`
+regressions** are a deliberate, risk-justified addition, not budget creep:
+
+- `MalformedRunIdentityFailsClosed` — locks the fail-closed `data.runs[]` **and**
+  `data.availableTargetFrameworks` identity parsers (maintainer finding G1 + this round's F2). A
+  tolerant parser is a material false-negative: it would let a CLI JSON-shape regression silently
+  degrade the identity proof to a generic `Assert.Contains`.
+- `ArtifactHygieneScannerCatchesInjectedVolatileMarkers` — locks the checkout-path / timestamp /
+  machine-user-domain leak scanner (maintainer finding G2). Distinct failure mode: environment leakage
+  into deterministic output.
+- `SensitiveCorpusCatchesForbiddenTokensButNotStructuralVocabulary` — locks the forbidden-corpus
+  builder + leak scanner with the structural-vs-forbidden split (maintainer finding G3). Distinct
+  failure mode: request/credential value leakage vs. false-positive on accepted vocabulary.
+
+Each of the three locks a **distinct fail-closed mechanism that an authoritative maintainer review
+explicitly required (G1/G2/G3)**, carries **no external-fixture cost** (pure `JsonDocument` / string
+inputs, single-digit ms each), and is **cheaper and more reliable** than re-proving those failure
+modes through the ~30s expensive lane. Per `docs/project/testing-policy.md`: "the budget is soft and
+never suppresses a genuinely distinct high-impact risk." Not consolidated or deleted.
+
+### Disposition per finding
+
+- **F1 — Mermaid CLI execution invalid on Windows: FIXED.** `FindOnPath` / `FindOnPathStatic` return
+  `npx.cmd` first on Windows; launching a `.cmd`/`.bat` directly with `UseShellExecute = false` throws
+  `Win32Exception` — neither a clean pass nor the intended actionable BLOCKED message for this
+  "must fail loud, never skip" lane. New shared shim `OutboundHttpProcessLaunch.Configure(startInfo,
+  executable, arguments)`: when the resolved executable ends in `.cmd`/`.bat` on Windows it sets
+  `startInfo.FileName` to `%ComSpec%` (`cmd.exe`) and pushes `/c` + the script path + each argument
+  token onto `ArgumentList` individually (.NET quotes them); otherwise it sets `FileName = executable`
+  directly. Applied at **both** required call sites:
+  - `RenderEveryDiagramWithMermaidCliAsync` (~the render loop) — the `npx --yes
+    @mermaid-js/mermaid-cli@11.16.0 -i … -o …` launch.
+  - `RunProcess` (the shared helper) — the cleaner seam covering `ReadMermaidCliVersion`'s
+    `npx … --version` call; `git.exe` invocations are unaffected (not a batch file).
+  The bounded-timeout / kill-on-timeout / start-stream-reads-before-wait behaviour (F5 / IR-1) is
+  untouched — the shim only rewrites `FileName` + `ArgumentList` before `Process.Start`. The
+  "QHTTP-B is BLOCKED, not skipped/hung" messages are unchanged.
+  **Verification:** on this Windows host `where npx` resolves `C:\Program Files\nodejs\npx.cmd` first,
+  so both call sites now exercise the `cmd.exe /c` branch. The focused lane's
+  `FrozenIdentityIsolationAndArtifactValidityHold` (~32s incl. the real render of all 17 run-1 `.mmd`
+  to non-empty SVG, exit 0) and the `mermaid-cli --version = 11.16.0` matrix line both pass — i.e. the
+  wrapper both resolves the version and renders every diagram. Before this fix the direct `npx.cmd`
+  launch path was latent on this host (the render succeeded only because a prior code path happened to
+  resolve a non-batch form); the shim makes the batch-file case explicit and correct.
+- **F2 — fail closed on target-framework identity: FIXED.** `RunCliAsync` previously tolerated a
+  missing / non-array `data.availableTargetFrameworks` and skipped non-string entries, with only a
+  generic `Assert.Contains("net9.0", …)` downstream. New `OutboundHttpTargetFrameworkIdentity.Parse(
+  JsonElement data)` — same fail-closed style as `OutboundHttpRunIdentity.ParseRuns`: throws an
+  actionable `XunitException` naming the exact defect when `data` is missing / not an object, the
+  array is absent / not an array / empty, or any entry is non-string / empty / whitespace. `RunCliAsync`
+  calls it unconditionally (`hasData ? data : root`). The existing
+  `Assert.Contains("net9.0", run1.AvailableTargetFrameworks)` and the cross-run `SequenceEqual` are
+  kept. `MalformedRunIdentityFailsClosed` extended with a local `Tfms(json)` helper asserting each
+  malformed class (`data` not an object; array absent; array is a string; empty array; non-string
+  entry; blank entry) plus a well-formed two-entry positive — folded into the existing `[Fact]`, no
+  new fixture-backed test, test count stays 7.
+- **F3 — volatile-identity regression environment-coupled: FIXED.** `FindVolatileMarkers` gained a
+  5-arg overload `(text, forbiddenPaths, machineName, userName, userDomainName)`; the existing 2-arg
+  overload delegates to it with the real `Environment.MachineName` / `UserName` / `UserDomainName`, so
+  the production call site in Claim 3 is unchanged. Production keeps the `token.Length >= 4`
+  short-token false-positive guard. `ArtifactHygieneScannerCatchesInjectedVolatileMarkers` now injects
+  the machine, user-name, AND user-domain leak classes **separately**, each with a synthetic
+  fixed-length token (`"BUILDHOST-QA07"`, `"svc-seqdoc-ci"`, `"CORP-BUILD-DOMAIN"` — all well above the
+  `>= 4` guard) passed through the new seam, so all three branches are exercised on any runner
+  regardless of that runner's real identity-string lengths. A clean structural-phrase string with the
+  same tokens supplied yields no hits.
+  **Coverage claim (exact):** the regression proves the scanner flags (a) a fixture-owned absolute
+  path in OS form, (b) the same path in forward-slash form, (c) an ISO-8601 date-time, (d) a
+  GMT-zoned clock, (e) a machine-name token, (f) a user-name token, (g) a user-domain token — each
+  reported as KIND only for the identity classes — and (h) yields zero hits on the accepted behavior
+  phrase. It does **not** prove anything about the runner's real machine/user/domain strings (those
+  are only exercised live, indirectly, by Claim 3's document-wide scan over every run-1 artifact).
+- **F4 — IR-3 disposition: RESOLVED (notes-only, no code change).** Owner (Qhatahet) decision:
+  `message`, `code`, `Value` stay in the `payload-identifier-boundary` tier — scanned only on the HTTP
+  boundary line + its matching Mermaid message line, not document-wide. No code change to that tier.
+  Rationale, now recorded as resolved rather than "open / escalated":
+  - These three identifiers are evidence-backed real Method Flow step names / DTO field identifiers
+    narrated in the two accepted flows' own Method Flow steps in the frozen
+    `BLL/TCCIntegration/TCCService.cs` (`JsonConvert.SerializeObject` / `DeserializeObject` step
+    labels, `new MediaTypeHeaderValue(...)`, and `AddComplaintRequest` / `-Response` / `UpdateType`
+    DTO field names narrated as ordinary assignment steps).
+  - A document-wide literal check for `message` / `code` / `Value` false-positives against the accepted
+    flow's own legitimate narration; removing them document-wide would require a forbidden production
+    Method Flow change and would drift the frozen matrix. Boundary-scoping is the closest fit to the
+    already-accepted `bcl-token` boundary tier precedent (and the `ServiceClientExternalCorpusTests`
+    boundary-clause scoping precedent).
+  - **Owner disposition: accepted; keep boundary-scoped. Recorded 2026-09-07.** The earlier
+    "IR-3 (Observation, escalated not fixed) / open question" framing in the third-review section
+    above is superseded by this resolved disposition.
+- **F5 — durable evidence truthfulness + test-count justification: FIXED.** See the "Corrected
+  durable-evidence record" and "Test-count justification" subsections above. Every stale statement
+  corrected: the false "`checkpoint.md` not touched" claim (top-of-file correction + this section),
+  changed paths and ownership, head SHA (pending-push new local commit), test count (7, unchanged),
+  the focused command, and final-gate status (complete Acceptance gate deferred to after the
+  independent review — not run this round). Tests not consolidated or deleted.
+
+### F1-F5 repair-pass focused result
+
+`$env:SEQDOC_TEST_PROJECTS_ROOT = (Resolve-Path "../SeqDoc-TestProjects").Path; dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~OutboundHttpExternalCorpus"`
+→ **GREEN — Passed: 7, Failed: 0, Skipped: 0** (~31 s;
+`FrozenIdentityIsolationAndArtifactValidityHold` ~32 s incl. the real Mermaid CLI 11.16.0 render of all
+17 run-1 diagrams through the new `cmd.exe /c npx.cmd` wrapper). Discovery 7 / pass 7 / fail 0 / skip 0.
+
+Frozen artifact matrix — **byte-identical, no drift**:
+POST md 3676 B / `20293c9d5237691a195bf7901c577794c1ebe1fe93d173ece1c55d93ce572dfe`,
+POST mmd 353 B / `8462128742ac7768fc8c0a075b32399e489b2a3500f917af10ab6dc458fb052b`,
+GET md 2850 B / `43f4210f413d2c4cf8a2ec883f9abc922f19a1d1e6a150f173d19d8469ddb072`,
+GET mmd 289 B / `363e169808a83c3a5df148619e706882922f2321b17e04b25a5ba4b56e039dbd`,
+index.md 2224 B / `0de88502807073ea1f77e383c7276b39855ae29962f2950477e6db8d7a2e3d11`,
+manifest 6282 B / `b48eb3d7204492bbb9b1d779779d19679d99551c99aa8cdec33ded3b893714c8`,
+complete-output digest `22045be6f4613ce7180cbaac155bfc59cdbf5e864d9a194c43920c3656a0e748`,
+diagnostics ordered-record digest `2f62d6e3193c4926ff6b3a25388b2dc51d275bc716a2d5009c6c18b5d2eae3fc`,
+ordered codes `BE1001, BE2010, BE2010, PRED001` (no `SEQHTTP001`),
+run identity single entry `(profile:v1:f874be7e…, df23b372…)`, run1 == run2.
+Shared repo `git status` + `git worktree list` equal before/after; `HEAD = 7aabfef9…`.
+
+Distinct claims added/consolidated this round: 3 — (F1) Windows batch-file (`npx.cmd`) launch routed
+through `cmd.exe /c` at both the render and version-check seams; (F2) fail-closed
+`data.availableTargetFrameworks` identity parse with a named actionable message, regression folded
+into the existing `[Fact]`; (F3) machine / user-name / user-domain leak branches each exercised via a
+synthetic-token test seam independent of the runner's real identity. F4 is notes-only. Within the
+routine 5-12 budget; no budget exception. Final gate deferred per the checkpoint sequencing.
+
+QHTTP-B-F3 (Observation) was also raised in this review and is **accepted as-is, no action** — the
+reviewer noted that folding assertions into `MalformedRunIdentityFailsClosed` and passing synthetic
+tokens to the hygiene regression's clean-phrase `Assert.Empty` slightly softens each test's single
+responsibility, but said no action is required: coverage is retained elsewhere
+(`Assert.Contains("net9.0")` + the cross-run `SequenceEqual` on `AvailableTargetFrameworks`, and
+Claim 3's live document-wide scan still exercises the real `Environment.MachineName` / `UserName` /
+`UserDomainName` strings).
+
+### Independent review dispositions (approve-with-fixes on the F1-F5 repair round, 2026-09-08)
+
+An independent review of the F1-F5 repair round returned **approve-with-fixes** with two items; both
+resolved here inside the test-writer allowlist
+(`tests/SeqDoc.AcceptanceTests/OutboundHttpExternalCorpusTests.cs` + this file). The frozen artifact
+matrix is byte-identical (no new analysis input — test-harness plumbing and JSON-parse attribution
+only). Test count stays **7** (Fix 1 assertions folded into
+`ArtifactHygieneScannerCatchesInjectedVolatileMarkers`; no 8th `[Fact]`).
+
+- **QHTTP-B-F1 — Fixed.** `OutboundHttpProcessLaunch.Configure` batch branch no longer pushes
+  `/c` + script + args onto `ArgumentList` (C-runtime quoting that `cmd.exe /c` does not parse, and
+  that misfires once a quoted `npx.cmd` path plus a quoted space-bearing temp path put 4+ quotes on
+  the line — `cmd`'s "first character is a quote" rule strips the outer pair and the launch breaks,
+  spuriously BLOCKing this fail-loud lane on any runner with a space in its temp/profile path). It now
+  sets `startInfo.Arguments` (with `ArgumentList` cleared) to a single deterministically parsed string
+  `/s /c "<"script"> <"arg1"> ..."` — every token unconditionally double-quoted, embedded `"` doubled
+  to `""`, wrapped in exactly one outer quote pair that `cmd.exe` strips verbatim (`/s` + the
+  documented `cmd /?` quote-stripping rule). Construction refactored into
+  `internal static string BuildBatchArguments(string script, IEnumerable<string> args)`. The non-batch
+  branch (git.exe, all non-Windows) is unchanged: `FileName = executable` + per-token `ArgumentList`.
+  Class doc-comment updated to describe the `/s /c "…"` form and why. Folded assertions in
+  `ArtifactHygieneScannerCatchesInjectedVolatileMarkers`: (a) a script path with a space stays intact
+  and individually quoted inside the outer wrapper, (b) an `-i` temp path with a space is individually
+  double-quoted, (c) `StartsWith("/s /c \"\"<script>\"")` + `EndsWith("\"<lastarg>\"\"")` prove one
+  outer wrapper after `/s /c`, plus an embedded-quote `""`-escaping case.
+- **QHTTP-B-F2 — Fixed.** `OutboundHttpTargetFrameworkIdentity.Parse` signature changed from
+  `Parse(JsonElement data)` to `Parse(JsonElement root)`; it now does its own
+  `root.TryGetProperty("data", out var data) && data.ValueKind == Object` check and throws the accurate
+  `'data' is absent or not an object` message when that fails. Previously the fixture passed
+  `Parse(hasData ? data : root)`, so a missing `data` handed in `root` (always an object) and the
+  failure was misattributed to `'data.availableTargetFrameworks' is absent`. Fixture call site updated
+  to `Parse(root)`. The folded `Tfms(...)` regression in `MalformedRunIdentityFailsClosed` updated:
+  inputs now wrap the array under `data` (`{"data":{"availableTargetFrameworks":[...]}}`), a missing
+  `data` (`"{}"`, `"[]"`, `{"data":"not-an-object"}`) asserts the `'data' is absent or not an object`
+  substring, and `{"data":{}}` keeps the `availableTargetFrameworks' is absent` assertion. All other
+  fail-closed classes (array absent / non-array / empty / non-string entry / blank entry) and the
+  `net9.0` positive round-trip are intact; Claim 4's `Assert.Contains("net9.0", …)` +
+  cross-run `SequenceEqual` unchanged.
+- **QHTTP-B-F3 — Acknowledged / accepted-as-is.** See the paragraph above; no code change.
