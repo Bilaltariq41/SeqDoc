@@ -12,6 +12,9 @@
 - **Owner**: Bilal.
 - **Blocked consumer**: Issue #18. Issue #13 remains blocked by its separately frozen dependency set.
 - **Decision boundary**: This evidence/certainty and activation change requires two non-author peer decisions before `Ready`.
+- **Frozen scope**: https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5558523794.
+- **Abood receipt**: https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5558609657.
+- **Qais receipt**: https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5575040102.
 
 ## Objective and contract
 
@@ -76,13 +79,58 @@ dotnet test tests/SeqDoc.Behavior.Tests/SeqDoc.Behavior.Tests.csproj -c Release 
 After focused tests pass and before `ReviewRequired`, run exactly:
 
 ```powershell
-$root = <clean checkout of SMSGateway revision 7ca797356b1856eb815922ca977e9d85a569cb84>
-dotnet restore "$root/Source/LP.SMSGateway.Manager/LP.SMSGateway.Manager.csproj"
-dotnet build "$root/Source/LP.SMSGateway.Manager/LP.SMSGateway.Manager.csproj" -c Release -f net9.0 --no-restore
-dotnet src/SeqDoc.Cli/bin/Release/net10.0/SeqDoc.Cli.dll analyze "$root/Source/LP.SMSGateway.Manager/LP.SMSGateway.Manager.csproj" --repository-root "$root" --configuration Release --framework net9.0 --cache "$env:TEMP/seqdoc-bd2020.db" --output "$env:TEMP/seqdoc-bd2020-output" --json
+$ErrorActionPreference = "Stop"
+$seqdocRoot = (Resolve-Path ".").Path
+$corpusRoot = if ($env:SEQDOC_TEST_PROJECTS_ROOT) {
+    (Resolve-Path $env:SEQDOC_TEST_PROJECTS_ROOT).Path
+} else {
+    (Resolve-Path (Join-Path $seqdocRoot "..\SeqDoc-TestProjects")).Path
+}
+$sourceRepository = Join-Path $corpusRoot "Provided\SMSGateway-om"
+$runRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("seqdoc-gh87-" + [guid]::NewGuid().ToString("N"))
+$worktree = Join-Path $runRoot "source"
+$cache = Join-Path $runRoot "cache.db"
+$output = Join-Path $runRoot "output"
+$project = Join-Path $worktree "Source\LP.SMSGateway.Manager\LP.SMSGateway.Manager.csproj"
+$cli = Join-Path $seqdocRoot "src\SeqDoc.Cli\bin\Release\net10.0\SeqDoc.Cli.dll"
+
+New-Item -ItemType Directory -Path $runRoot | Out-Null
+try {
+    git -C $sourceRepository worktree add --detach $worktree 7ca797356b1856eb815922ca977e9d85a569cb84
+    if ($LASTEXITCODE -ne 0) { throw "Failed to create the pinned SMSGateway worktree." }
+    if ((git -C $worktree rev-parse HEAD).Trim() -ne "7ca797356b1856eb815922ca977e9d85a569cb84") {
+        throw "The SMSGateway revision is not pinned."
+    }
+
+    dotnet build (Join-Path $seqdocRoot "src\SeqDoc.Cli\SeqDoc.Cli.csproj") -c Release
+    if ($LASTEXITCODE -ne 0) { throw "SeqDoc CLI build failed." }
+    dotnet restore $project
+    if ($LASTEXITCODE -ne 0) { throw "SMSGateway restore failed." }
+    dotnet build $project -c Release -f net9.0 --no-restore
+    if ($LASTEXITCODE -ne 0) { throw "SMSGateway build failed." }
+
+    $json = (& dotnet $cli analyze $project --repository-root $worktree --configuration Release --framework net9.0 --cache $cache --output $output --json) -join "`n"
+    if ($LASTEXITCODE -ne 0) { throw "SeqDoc analysis failed: $json" }
+    $result = $json | ConvertFrom-Json
+    if ($result.outcome -ne "Succeeded") { throw "Expected Succeeded, got $($result.outcome)." }
+    if (@($result.data.runs).Count -ne 1) { throw "Expected one active profile." }
+    if ([string]::IsNullOrWhiteSpace($result.data.runs[0].profileId)) { throw "Missing active profile ID." }
+    if ($result.data.runs[0].indexFingerprint.Length -ne 64) { throw "Missing Program Index fingerprint." }
+    $bd2020 = @($result.diagnostics | Where-Object { $_.code -eq "BD2020" })
+    if ($bd2020.Count -lt 1) { throw "The retained BD2020 warning is missing." }
+    if (@($bd2020 | Where-Object { $_.severity -ne "Warning" -or $_.stage -ne "BaselineIndex" }).Count -ne 0) {
+        throw "BD2020 severity or stage changed."
+    }
+} finally {
+    if (Test-Path -LiteralPath $worktree) {
+        git -C $sourceRepository worktree remove --force $worktree
+        git -C $sourceRepository worktree prune --expire now
+    }
+    if (Test-Path -LiteralPath $runRoot) { Remove-Item -LiteralPath $runRoot -Recurse -Force }
+}
 ```
 
-Use a clean cache and output directory. Require `Succeeded`, a retained evidence-backed `BD2020` warning, a non-null active profile, and no catch-continuation claim for the ambiguous mapping. This is external evidence, not permission to edit or commit supplied source.
+The unique run root provides a clean cache and output directory. The producer-shaped focused test proves retained evidence, least-confident certainty, and the absence of an invented catch continuation because CLI JSON does not expose the complete internal evidence collection. This external command proves successful activation, a fresh profile/fingerprint, and retention of the warning on the exact supplied target. It is external evidence, not permission to edit or commit supplied source.
 
 ## Review boundary
 
