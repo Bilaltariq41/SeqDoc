@@ -10,14 +10,14 @@
   "kind": "github-issue",
   "lifecycle": "Ready",
   "lifecycleLabel": "ready",
-  "nextAction": "Complete repeated readiness review and validation in PR #88, merge the readiness record, then select GH-87 for implementation.",
+  "nextAction": "After PR #88 merges, select GH-87 for implementation from baseline 8f26c1fe21deec75c9bfd83ecb16cbd676ffc0d3.",
   "number": 87,
   "owner": "bilal",
   "pr": null,
   "schemaVersion": 1,
   "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/87",
-  "statusReason": "Abood and Qais approved the frozen T3 scope; bounded takeover W87-F5 now explicitly requires that ambiguous mapping emit no CatchContinuations entry.",
+  "statusReason": "Bilal owns GH-87 under the explicit authorization for the exact PR #88 governance repair. Abood (https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5558609657) and Qais (https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5575040102) approved the identical frozen T3 scope.",
   "title": "[Workers] Keep BD2020 catch-continuation withholding non-blocking",
   "track": "workers"
 }

@@ -9,7 +9,7 @@
 - **Authority**: GitHub Issue #87.
 - **Baseline**: `8f26c1fe21deec75c9bfd83ecb16cbd676ffc0d3` on `origin/main`.
 - **Target branch**: `fix/issue-87-bd2020`.
-- **Owner**: Bilal.
+- **Owner**: Bilal, confirmed by the explicit owner authorization for the exact PR #88 governance repair.
 - **Blocked consumer**: Issue #18. Issue #13 remains blocked by its separately frozen dependency set.
 - **Decision boundary**: This evidence/certainty and activation change requires two non-author peer decisions before `Ready`.
 - **Frozen scope**: https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5558523794.
@@ -94,8 +94,17 @@ $cache = Join-Path $runRoot "cache.db"
 $output = Join-Path $runRoot "output"
 $project = Join-Path $worktree "Source\LP.SMSGateway.Manager\LP.SMSGateway.Manager.csproj"
 $cli = Join-Path $seqdocRoot "src\SeqDoc.Cli\bin\Release\net10.0\SeqDoc.Cli.dll"
+$sourceStatusBefore = (& git -C $sourceRepository status --porcelain=v1 --untracked-files=all) -join "`n"
+if ($LASTEXITCODE -ne 0) { throw "Failed to capture source repository status." }
+$worktreeListBefore = (& git -C $sourceRepository worktree list --porcelain) -join "`n"
+if ($LASTEXITCODE -ne 0) { throw "Failed to capture source worktree registrations." }
+$localConfigBefore = (& git -C $sourceRepository config --local --list --show-origin) -join "`n"
+if ($LASTEXITCODE -ne 0) { throw "Failed to capture source local configuration." }
+if (Test-Path -LiteralPath $worktree) { throw "The disposable worktree path already exists." }
 
 New-Item -ItemType Directory -Path $runRoot | Out-Null
+$bodyError = $null
+$cleanupError = $null
 try {
     git -C $sourceRepository worktree add --detach $worktree 7ca797356b1856eb815922ca977e9d85a569cb84
     if ($LASTEXITCODE -ne 0) { throw "Failed to create the pinned SMSGateway worktree." }
@@ -122,13 +131,34 @@ try {
     if (@($bd2020 | Where-Object { $_.severity -ne "Warning" -or $_.stage -ne "BaselineIndex" }).Count -ne 0) {
         throw "BD2020 severity or stage changed."
     }
+} catch {
+    $bodyError = $_
 } finally {
     if (Test-Path -LiteralPath $worktree) {
         git -C $sourceRepository worktree remove --force $worktree
-        git -C $sourceRepository worktree prune --expire now
+        if ($LASTEXITCODE -ne 0) { $cleanupError = "Failed to remove the disposable worktree registration." }
     }
-    if (Test-Path -LiteralPath $runRoot) { Remove-Item -LiteralPath $runRoot -Recurse -Force }
+    if (Test-Path -LiteralPath $worktree) {
+        $cleanupError = "The disposable worktree directory remains after cleanup."
+    }
+
+    $sourceStatusAfter = (& git -C $sourceRepository status --porcelain=v1 --untracked-files=all) -join "`n"
+    if ($LASTEXITCODE -ne 0) { $cleanupError = "Failed to verify source repository status after cleanup." }
+    $worktreeListAfter = (& git -C $sourceRepository worktree list --porcelain) -join "`n"
+    if ($LASTEXITCODE -ne 0) { $cleanupError = "Failed to verify source worktree registrations after cleanup." }
+    $localConfigAfter = (& git -C $sourceRepository config --local --list --show-origin) -join "`n"
+    if ($LASTEXITCODE -ne 0) { $cleanupError = "Failed to verify source local configuration after cleanup." }
+    if ($sourceStatusAfter -cne $sourceStatusBefore) { $cleanupError = "Source repository status changed." }
+    if ($worktreeListAfter -cne $worktreeListBefore) { $cleanupError = "Source worktree registrations changed." }
+    if ($localConfigAfter -cne $localConfigBefore) { $cleanupError = "Source local configuration changed." }
+
+    if (-not (Test-Path -LiteralPath $worktree) -and (Test-Path -LiteralPath $runRoot)) {
+        try { Remove-Item -LiteralPath $runRoot -Recurse -Force -ErrorAction Stop }
+        catch { $cleanupError = "Failed to remove the disposable run directory." }
+    }
 }
+if ($cleanupError) { throw $cleanupError }
+if ($bodyError) { throw $bodyError }
 ```
 
 The unique run root provides a clean cache and output directory. The producer-shaped focused test proves retained evidence, least-confident certainty, and the absence of an invented catch continuation because CLI JSON does not expose the complete internal evidence collection. This external command proves successful activation, a fresh profile/fingerprint, and retention of the warning on the exact supplied target. It is external evidence, not permission to edit or commit supplied source.
@@ -136,6 +166,14 @@ The unique run root provides a clean cache and output directory. The producer-sh
 ## Review boundary
 
 Stop implementation at `ReviewRequired`. The independent reviewer must inspect the complete candidate from the frozen baseline, confirm that `BD2020` is locally withheld by the producer, and confirm that all other fail-closed classifications remain unchanged. Record every finding as Fixed, Rejected with evidence, or Deferred with explicit owner approval.
+
+The prospective review epochs are mandatory:
+
+1. Readiness/specification review must pass before `Ready`.
+2. After focused verification and the external check pass, stop at `ReviewRequired` and request complete-candidate review pinned to the exact implementation SHA.
+3. If findings change the candidate, rerun focused verification before requesting post-repair review pinned to the new SHA.
+4. Permit at most two implementation repair rounds. After two failed rounds, set the checkpoint to `Blocked`, preserve the worktree, and obtain a separately authorized split, transfer, or takeover decision.
+5. Run the final gate once, only after every finding is Fixed, Rejected with evidence, or Deferred with explicit owner approval.
 
 ## Final gate
 
