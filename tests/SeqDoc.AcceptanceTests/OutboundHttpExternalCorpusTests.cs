@@ -81,6 +81,14 @@ public sealed class OutboundHttpExternalCorpusTests
     private const string ExpectedGetFlowFileName =
         "bll-tccintegration-tccservice-lookups-94a25a61.md";
 
+    // F-A2: frozen SHA-256 of the exact seqdoc.manifest.json bytes (issue #53 "Required candidate artifact
+    // matrix" Manifest row). A single digest over the emitted bytes locks the emitted (JSON document) order,
+    // every listed (relativePath, sha256) pair, and the exact byte content in one comparison - a different
+    // 35-file set or a different emitted order cannot pass. Byte-identical to the value recorded in the
+    // QHTTP-B checkpoint / PR body.
+    private const string FrozenManifestSha256 =
+        "b48eb3d7204492bbb9b1d779779d19679d99551c99aa8cdec33ded3b893714c8";
+
     // --- Claim 1: the POST root visibly presents exactly one conservative outbound HTTP POST boundary,
     // once, and never as a second generic HttpClient/PostAsync presentation of the same call site.
     [Fact]
@@ -625,6 +633,42 @@ public sealed class OutboundHttpExternalCorpusTests
         Assert.Equal(OutboundHttpExternalCorpusFixture.BllProjectSha256, _lane.FrozenBlobHashes.BllProject);
         Assert.Equal(OutboundHttpExternalCorpusFixture.SourceSha256, _lane.FrozenBlobHashes.Source);
 
+        // ---- F-A1: the ACTUAL on-disk materialized source that Roslyn/MSBuild consumed is byte-identical
+        // across every snapshot (immediately before run 1, immediately after run 1, immediately after run 2)
+        // AND equals the frozen committed-blob constants. GitBlobSha256 above proves only the committed
+        // blob - not the bytes on disk, and not that they stay unchanged between the two determinism runs
+        // (a restore/build step could rewrite a csproj/props). With core.autocrlf=false / core.eol=lf the
+        // on-disk bytes equal the committed blob, so the same frozen constants apply. A mismatch fails
+        // closed naming only the relative path and which snapshot differs - never file contents.
+        var snapshots = _lane.MaterializedSourceSnapshots;
+        Assert.True(
+            snapshots.Count >= 3,
+            $"expected at least 3 materialized-source snapshots (before run 1, after run 1, after run 2); "
+            + $"got {snapshots.Count}. QHTTP-B materialized-source proof is BLOCKED, not a skip.");
+        (string RelativePath, Func<MaterializedSourceSnapshot, string> Selector, string Frozen)[] materializedSlots =
+        [
+            ("FraudManagement.sln", s => s.SolutionSha256, OutboundHttpExternalCorpusFixture.SolutionSha256),
+            ("BLL/BLL.csproj", s => s.BllProjectSha256, OutboundHttpExternalCorpusFixture.BllProjectSha256),
+            ("BLL/TCCIntegration/TCCService.cs", s => s.SourceSha256, OutboundHttpExternalCorpusFixture.SourceSha256),
+        ];
+        foreach (var (relativePath, selector, frozen) in materializedSlots)
+        {
+            string baseline = selector(snapshots[0]);
+            Assert.True(
+                string.Equals(baseline, frozen, StringComparison.Ordinal),
+                $"materialized on-disk '{relativePath}' (snapshot '{snapshots[0].Label}') does not match the frozen "
+                + "committed-blob constant. A restore/build step or line-ending rewrite changed the bytes the "
+                + "compiler consumed - this is a corpus-normalisation / frozen-baseline decision for the issue #53 "
+                + "owner, not a semantic regression. STOP and report it; do not adjust the constant.");
+            foreach (var snapshot in snapshots)
+            {
+                Assert.True(
+                    string.Equals(selector(snapshot), baseline, StringComparison.Ordinal),
+                    $"materialized on-disk '{relativePath}' changed between snapshots '{snapshots[0].Label}' and "
+                    + $"'{snapshot.Label}'; the bytes Roslyn/MSBuild consumed were rewritten during the lane.");
+            }
+        }
+
         // ---- Shared supplied repository is byte-for-byte unchanged: tracked + untracked git status and
         // git worktree list recorded before and after the whole lane, asserted exactly equal.
         Assert.Equal(_lane.SharedRepoStatusBefore, _lane.SharedRepoStatusAfter);
@@ -732,12 +776,19 @@ public sealed class OutboundHttpExternalCorpusTests
                 $"index.md does not link to generated flow '{flow.RelativePath}'.");
         }
 
-        // ---- Manifest: every path relative; content-hash cross-check; listed set == generated
-        // non-operational (rendered-document) set.
+        // ---- Manifest: exact-bytes oracle; every path relative; per-entry content-hash cross-check walked
+        // in emitted order; structural decomposition; listed set == generated rendered-document set.
+        var manifestFile = run1.Files.Single(f => f.RelativePath == "seqdoc.manifest.json");
+
+        // F-A2: SHA-256 over the emitted manifest bytes must equal the frozen digest. This locks the
+        // emitted (JSON document) order, every listed (relativePath, sha256) pair, and the exact byte
+        // content in one comparison - a different 35-file set or a wrong emitted order cannot pass.
+        Assert.Equal(FrozenManifestSha256, Sha256Hex(manifestFile.Content));
+
         var manifestEntries = new List<(string RelativePath, string Sha256)>();
-        using (var manifestDocument = JsonDocument.Parse(
-            run1.Files.Single(f => f.RelativePath == "seqdoc.manifest.json").Content))
+        using (var manifestDocument = JsonDocument.Parse(manifestFile.Content))
         {
+            // Emitted (JSON document) order - never re-sorted.
             foreach (var entry in manifestDocument.RootElement.GetProperty("files").EnumerateArray())
             {
                 string path = entry.GetProperty("relativePath").GetString() ?? string.Empty;
@@ -753,8 +804,20 @@ public sealed class OutboundHttpExternalCorpusTests
         // issue #53 frozen matrix: exactly 35 listed files (17 flow .md + 17 .mmd + index.md). A silent automatic-root drop shrinks both the manifest and the generated set, so set-equality alone would not catch it.
         Assert.Equal(35, manifestEntries.Count);
         // frozen manifest byte length (normalised-checkout baseline recorded in test-writer-notes.md).
-        Assert.Equal(6282, run1.Files.Single(f => f.RelativePath == "seqdoc.manifest.json").Content.Length);
+        Assert.Equal(6282, manifestFile.Content.Length);
 
+        // F-A2: the 35 entries decompose as exactly 17 flow Markdown (.md, excluding index.md), 17 Mermaid
+        // (.mmd), and index.md.
+        Assert.Equal(
+            17,
+            manifestEntries.Count(e =>
+                e.RelativePath.EndsWith(".md", StringComparison.Ordinal) && e.RelativePath != "index.md"));
+        Assert.Equal(
+            17,
+            manifestEntries.Count(e => e.RelativePath.EndsWith(".mmd", StringComparison.Ordinal)));
+        Assert.Equal(1, manifestEntries.Count(e => e.RelativePath == "index.md"));
+
+        // Per-entry content-hash cross-check, walked element-by-element in emitted order.
         foreach (var (relativePath, listedHash) in manifestEntries)
         {
             var owned = run1.Files.SingleOrDefault(f => f.RelativePath == relativePath);
@@ -1227,6 +1290,14 @@ public sealed record OutboundHttpLaneRun(
 public sealed record FrozenExternalHashes(string Solution, string BllProject, string Source);
 
 /// <summary>
+/// F-A1: SHA-256 of the ACTUAL on-disk materialized <c>FraudManagement.sln</c> / <c>BLL/BLL.csproj</c> /
+/// <c>BLL/TCCIntegration/TCCService.cs</c> bytes (what Roslyn/MSBuild consumed), captured at one point in
+/// the lane. <c>Label</c> names the point (before run 1 / after run 1 / after run 2).
+/// </summary>
+public sealed record MaterializedSourceSnapshot(
+    string Label, string SolutionSha256, string BllProjectSha256, string SourceSha256);
+
+/// <summary>
 /// Materialises FraudManagement revision <c>7aabfef9…</c> in an isolated detached <c>git worktree</c>
 /// under a short OS temp path, normalised with <c>core.autocrlf=false</c> / <c>core.eol=lf</c> BEFORE
 /// checkout, restores it, and invokes the production CLI twice (fresh cache + output each) against ONLY
@@ -1265,6 +1336,7 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
 
     private readonly List<string> _ownedTempRoots = [];
     private readonly object _ownedTempRootsLock = new();
+    private readonly List<MaterializedSourceSnapshot> _materializedSourceSnapshots = [];
     private string? _corpusGitToplevel;
     private string? _worktreePath;
     private bool _worktreeCleanedUp;
@@ -1277,6 +1349,13 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
     public string CheckoutHead { get; private set; } = string.Empty;
 
     public FrozenExternalHashes FrozenBlobHashes { get; private set; } = new("", "", "");
+
+    /// <summary>
+    /// F-A1: on-disk materialized-source SHA-256 snapshots, in capture order (before run 1, after run 1,
+    /// after run 2). Every snapshot must be byte-identical to the others and equal the frozen blob
+    /// constants.
+    /// </summary>
+    public IReadOnlyList<MaterializedSourceSnapshot> MaterializedSourceSnapshots => _materializedSourceSnapshots;
 
     public string SharedRepoStatusBefore { get; private set; } = string.Empty;
 
@@ -1426,10 +1505,15 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
 
             string solution = Path.Combine(_worktreePath, "FraudManagement.sln");
 
+            // F-A1: hash the ACTUAL on-disk materialized source immediately before run 1, immediately
+            // after run 1, and immediately after run 2 (before-run-2 == after-run-1).
+            CaptureMaterializedSourceSnapshot("before-run-1");
             Run1 = await RunCliAsync(solution, _worktreePath, configPath);
             AssertSucceeded(Run1, "first");
+            CaptureMaterializedSourceSnapshot("after-run-1");
             Run2 = await RunCliAsync(solution, _worktreePath, configPath);
             AssertSucceeded(Run2, "second determinism");
+            CaptureMaterializedSourceSnapshot("after-run-2");
         }
         finally
         {
@@ -1791,6 +1875,31 @@ public sealed class OutboundHttpExternalCorpusFixture : IAsyncLifetime
         Directory.CreateDirectory(path);
         RegisterOwnedTempRoot(path);
         return path;
+    }
+
+    // F-A1: capture the SHA-256 of the actual on-disk materialized files the compiler consumed.
+    private void CaptureMaterializedSourceSnapshot(string label)
+    {
+        string root = _worktreePath
+            ?? throw new XunitException("normalised worktree path is not set; cannot snapshot materialized source.");
+        _materializedSourceSnapshots.Add(new MaterializedSourceSnapshot(
+            label,
+            DiskFileSha256(root, "FraudManagement.sln"),
+            DiskFileSha256(root, "BLL/BLL.csproj"),
+            DiskFileSha256(root, "BLL/TCCIntegration/TCCService.cs")));
+    }
+
+    private static string DiskFileSha256(string worktreeRoot, string relativePath)
+    {
+        string full = Path.Combine(worktreeRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(full))
+        {
+            throw new XunitException(
+                $"materialized source file '{relativePath}' is missing from the normalised checkout; "
+                + "QHTTP-B is BLOCKED, not a skip.");
+        }
+
+        return Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(full))).ToLowerInvariant();
     }
 
     private static string GitBlobSha256(string worktreeRoot, string relativePath)

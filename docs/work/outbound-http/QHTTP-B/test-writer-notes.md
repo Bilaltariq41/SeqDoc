@@ -1194,3 +1194,86 @@ only). Test count stays **7** (Fix 1 assertions folded into
   `net9.0` positive round-trip are intact; Claim 4's `Assert.Contains("net9.0", …)` +
   cross-run `SequenceEqual` unchanged.
 - **QHTTP-B-F3 — Acknowledged / accepted-as-is.** See the paragraph above; no code change.
+
+## Paired repair — F-A1 / F-A2 (fifth-review cross-stream decision), 2026-09-09
+
+One bounded paired repair authorized by both non-author peers in matching `CROSS-STREAM-DECISION v1`
+receipts (Ahmad `pull/67#issuecomment-5599…`; Abood, 2026-09-09). Scope is exactly the two proof
+repairs below. Edits confined to
+`tests/SeqDoc.AcceptanceTests/OutboundHttpExternalCorpusTests.cs` + this file. No `src/**` / semantic /
+fixture-project / config / build / workflow / `docs/project/**` change; `checkpoint.md` is
+orchestrator-owned and untouched by this pass (the orchestrator records the capsule entry separately).
+Both repairs add assertions over the SAME generated output and the SAME materialized checkout — no new
+analysis input. Test count stays **7** (both repairs are additive assertions inside
+`FrozenIdentityIsolationAndArtifactValidityHold` + the fixture; no new `[Fact]`).
+
+### F-A1 — prove the materialized normalized source is unchanged across both runs — Fixed
+
+`OutboundHttpExternalCorpusFixture.FrozenBlobHashes` only proved the *committed blob* (`git show
+<rev>:<path>`), not the bytes on disk that Roslyn/MSBuild actually consumed, nor that they stay
+unchanged between run 1 and run 2 — exactly the owner's original F1 gap.
+
+- New `MaterializedSourceSnapshot(Label, SolutionSha256, BllProjectSha256, SourceSha256)` record and
+  `OutboundHttpExternalCorpusFixture.MaterializedSourceSnapshots` (capture-ordered list).
+- New `CaptureMaterializedSourceSnapshot(label)` + `DiskFileSha256(worktreeRoot, relativePath)` (reads
+  bytes from `Path.Combine(_worktreePath, relativePath)`, SHA-256 hex; missing file = loud
+  `XunitException`, never a skip).
+- `InitializeAsync` captures 3 snapshots: `before-run-1` (immediately before run 1),
+  `after-run-1` (immediately after run 1), `after-run-2` (immediately after run 2). before-run-2 ==
+  after-run-1, so 3 snapshots is sufficient.
+- `FrozenIdentityIsolationAndArtifactValidityHold` asserts, per file, that every snapshot's hash equals
+  the first snapshot's AND equals the frozen constant
+  `SolutionSha256` / `BllProjectSha256` / `SourceSha256`. A mismatch fails closed with an actionable
+  `XunitException` naming only the relative path and which snapshot differs — never file contents.
+- The existing `GitBlobSha256` committed-blob assertions are kept (correct, only insufficient).
+
+**Observed (focused lane):** all three on-disk snapshots for each file are byte-identical to each other
+AND equal the frozen committed-blob constants — `FraudManagement.sln`
+`67d6b9f15be05f86c06ea17fa92dd7474b8886b876d1d69cf11552741ffaaca1`, `BLL/BLL.csproj`
+`c38a35ee7b3acf227fb9988ced35dceb2dec36165e8f8f01bb6b82ee6f658a06`,
+`BLL/TCCIntegration/TCCService.cs` `eff261211900578a493d40900cd0de5418dbbd132bbc4f806f684b31e184dfce`.
+With `core.autocrlf=false` / `core.eol=lf` the on-disk bytes equal the committed blob, and `dotnet
+restore` (PackageReference only) rewrote no `.csproj`/`.sln`/`.props`. No STOP condition; no matrix
+drift.
+
+### F-A2 — make the manifest oracle exact and order-sensitive — Fixed
+
+The manifest assertion checked `count==35`, byte length `==6282`, a per-entry hash cross-check, and
+set-equality with BOTH sides `OrderBy(...)` — so a different 35-file set or a wrong emitted order
+passed. Issue #53's matrix requires the manifest as exact sorted paths and content hashes with SHA-256
+equality.
+
+Chosen form: the authorization's explicitly-accepted **digest + structure** fallback (the ordered
+`(path,hash)[]` array of 35 entries is unwieldy and would need a capture round-trip to pin reliably;
+the content digest is already a frozen recorded invariant, so no capture run was needed).
+
+- New frozen `FrozenManifestSha256 = b48eb3d7204492bbb9b1d779779d19679d99551c99aa8cdec33ded3b893714c8`.
+- `FrozenIdentityIsolationAndArtifactValidityHold` now asserts `Sha256Hex(manifestFile.Content) ==
+  FrozenManifestSha256` — one digest over the emitted bytes locks emitted (JSON document) order + every
+  listed `(relativePath, sha256)` pair + exact byte content.
+- Manifest `files` array is read in emitted (JSON document) order — the entries are NOT re-sorted; the
+  per-entry file-exists + `sha256` content cross-check is walked element-by-element in that emitted
+  order.
+- New structural decomposition assertion: the 35 entries are exactly 17 flow Markdown (`.md`, excluding
+  `index.md`), 17 Mermaid (`.mmd`), and `index.md`.
+- Kept: `Assert.Equal(35, manifestEntries.Count)`, `Assert.Equal(6282, manifestFile.Content.Length)`,
+  every-path-relative checks, and the listed-set == generated rendered-document-set equality.
+
+**Observed:** `seqdoc.manifest.json` content SHA-256 = `b48eb3d7204492bbb9b1d779779d19679d99551c99aa8cdec33ded3b893714c8`,
+6282 B, 35 entries = 17 `.md` (excl. `index.md`) + 17 `.mmd` + `index.md`. Byte-identical to the
+checkpoint / PR-body matrix; no drift.
+
+### Hard-invariant / matrix-drift check
+
+The full frozen artifact matrix is byte-identical to the checkpoint/PR record: manifest `b48eb3d7…` /
+6282 B / 35 entries; POST md 3676/`20293c9d…`; POST mmd 353/`8462128742…`; GET md 2850/`43f4210f…`;
+GET mmd 289/`363e1698…`; `index.md` 2224/`0de88502…`; complete-output digest `22045be6…`; diagnostics
+ordered codes `BE1001, BE2010, BE2010, PRED001` digest `2f62d6e3…`; run identity single entry
+`(profile:v1:f874be7e…, df23b372…)` run1==run2. No STOP condition triggered.
+
+### Focused verification (once)
+
+`$env:SEQDOC_TEST_PROJECTS_ROOT = (Resolve-Path "../SeqDoc-TestProjects").Path; dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~OutboundHttpExternalCorpus"`
+→ **GREEN — Passed: 7, Failed: 0, Skipped: 0, Duration 35 s** (net10.0 host, lane target `net9.0`).
+Corpus NuGet-restored; `node`/`npx` + `@mermaid-js/mermaid-cli@11.16.0` render exercised. The complete
+unfiltered AcceptanceTests final gate is NOT this step (runs later, after an independent review).
