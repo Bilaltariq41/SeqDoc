@@ -76,6 +76,11 @@ public sealed class OutboundHttpExternalCorpusTests
     private static readonly string[] ExpectedDiagnosticCodeBaseline =
         ["BE1001", "BE2010", "BE2010", "PRED001"];
 
+    // F-A3: issue #53 frozen ordered raw diagnostics[] record digest (SHA-256 over the concatenated
+    // ordered raw diagnostics[] JSON records); byte-identical to the QHTTP-B checkpoint / PR-body matrix.
+    private const string ExpectedDiagnosticRecordDigest =
+        "2f62d6e3193c4926ff6b3a25388b2dc51d275bc716a2d5009c6c18b5d2eae3fc";
+
     private const string ExpectedPostFlowFileName =
         "bll-tccintegration-tccservice-addcomplaint-bll-tccintegration-addcomplaintrequest-f1cc2038.md";
     private const string ExpectedGetFlowFileName =
@@ -615,6 +620,7 @@ public sealed class OutboundHttpExternalCorpusTests
         string run1DiagnosticsDigest = Sha256Hex(Encoding.UTF8.GetBytes(string.Concat(run1.DiagnosticRecords)));
         string run2DiagnosticsDigest = Sha256Hex(Encoding.UTF8.GetBytes(string.Concat(run2.DiagnosticRecords)));
         Assert.Equal(run1DiagnosticsDigest, run2DiagnosticsDigest);
+        Assert.Equal(ExpectedDiagnosticRecordDigest, run1DiagnosticsDigest);
         _output.WriteLine(
             $"[QHTTP-B matrix] diagnostics ordered-record digest run1={run1DiagnosticsDigest} run2={run2DiagnosticsDigest}");
     }

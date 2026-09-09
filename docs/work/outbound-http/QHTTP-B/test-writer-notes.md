@@ -1277,3 +1277,33 @@ ordered codes `BE1001, BE2010, BE2010, PRED001` digest `2f62d6e3…`; run identi
 → **GREEN — Passed: 7, Failed: 0, Skipped: 0, Duration 35 s** (net10.0 host, lane target `net9.0`).
 Corpus NuGet-restored; `node`/`npx` + `@mermaid-js/mermaid-cli@11.16.0` render exercised. The complete
 unfiltered AcceptanceTests final gate is NOT this step (runs later, after an independent review).
+
+## F-A3 (repair pass 2026-09-09)
+
+**Finding:** the determinism claim computed `run1DiagnosticsDigest` / `run2DiagnosticsDigest` (SHA-256
+over the ordered raw `diagnostics[]` JSON records), asserted only `Assert.Equal(run1DiagnosticsDigest,
+run2DiagnosticsDigest)` (run-to-run stability) and logged both, but never asserted either digest against
+the frozen expected value. `ExpectedDiagnosticCodeBaseline` freezes only the four codes, not the full
+ordered-record digest, so two runs carrying the same drifted records would both pass. Issue #53's
+candidate artifact matrix records the diagnostics ordered-record digest as required run evidence.
+
+**Disposition:** Fixed — added one frozen constant
+`ExpectedDiagnosticRecordDigest = "2f62d6e3193c4926ff6b3a25388b2dc51d275bc716a2d5009c6c18b5d2eae3fc"`
+beside `ExpectedDiagnosticCodeBaseline`, and immediately after the existing
+`Assert.Equal(run1DiagnosticsDigest, run2DiagnosticsDigest);` added
+`Assert.Equal(ExpectedDiagnosticRecordDigest, run1DiagnosticsDigest);`. The run1/run2 digest equality,
+`run1.DiagnosticRecords.SequenceEqual(run2.DiagnosticRecords)`, `Assert.Equal(
+ExpectedDiagnosticCodeBaseline, run1.DiagnosticCodes)`, and the `_output.WriteLine` are all retained
+unchanged. No other test, assertion, helper, fixture, or behavior change.
+
+**Authorizing receipts (`CROSS-STREAM-DECISION v2`):**
+- Ahmad (AMEND, defines scope): https://github.com/Bilaltariq41/SeqDoc/pull/67#issuecomment-5602311852
+- Abood (matching): https://github.com/Bilaltariq41/SeqDoc/pull/67#issuecomment-5602378094
+
+**Observed:** run 1's emitted-order diagnostics digest =
+`2f62d6e3193c4926ff6b3a25388b2dc51d275bc716a2d5009c6c18b5d2eae3fc`, byte-identical to the frozen
+constant and the QHTTP-B checkpoint / PR-body matrix. No identity drift; the four diagnostic codes
+(`BE1001, BE2010, BE2010, PRED001`) and the wider frozen artifact matrix are unchanged.
+
+**Focused lane result:** `dotnet test … --filter "FullyQualifiedName~OutboundHttpExternalCorpus"`
+→ **GREEN — Passed: 7, Failed: 0, Skipped: 0, Duration 35 s**.
