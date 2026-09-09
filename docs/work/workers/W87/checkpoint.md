@@ -9,12 +9,14 @@
 - **Authority**: GitHub Issue #87.
 - **Baseline**: `8f26c1fe21deec75c9bfd83ecb16cbd676ffc0d3` on `origin/main`.
 - **Target branch**: `fix/issue-87-bd2020`.
-- **Owner**: Bilal, confirmed by the explicit owner authorization for the exact PR #88 governance repair.
+- **Owner**: Ahmad, agreed by the matching bounded takeover and owner decisions below.
 - **Blocked consumer**: Issue #18. Issue #13 remains blocked by its separately frozen dependency set.
 - **Decision boundary**: This evidence/certainty and activation change requires two non-author peer decisions before `Ready`.
 - **Frozen scope**: https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5558523794.
 - **Abood receipt**: https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5558609657.
 - **Qais receipt**: https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5575040102.
+- **Abood takeover/owner receipt**: https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5576067024.
+- **Qais takeover/owner receipt**: https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5584549024.
 
 ## Objective and contract
 

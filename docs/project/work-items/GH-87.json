@@ -12,12 +12,12 @@
   "lifecycleLabel": "ready",
   "nextAction": "After PR #88 merges, select GH-87 for implementation from baseline 8f26c1fe21deec75c9bfd83ecb16cbd676ffc0d3.",
   "number": 87,
-  "owner": "bilal",
+  "owner": "ahmad",
   "pr": null,
   "schemaVersion": 1,
   "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/87",
-  "statusReason": "Bilal owns GH-87 under the explicit authorization for the exact PR #88 governance repair. Abood (https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5558609657) and Qais (https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5575040102) approved the identical frozen T3 scope.",
+  "statusReason": "Abood (https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5576067024) and Qais (https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5584549024) authorized the bounded readiness correction and agreed Ahmad as implementation owner. Their T3 receipts (https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5558609657 and https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5575040102) approved the identical frozen semantic scope.",
   "title": "[Workers] Keep BD2020 catch-continuation withholding non-blocking",
   "track": "workers"
 }
