@@ -1,10 +1,10 @@
 {
-  "activeCheckpointId": null,
-  "activeCheckpointPath": null,
+  "activeCheckpointId": "QHTTP-B",
+  "activeCheckpointPath": "docs/work/outbound-http/QHTTP-B",
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
-  "mode": "idle",
-  "nextAction": "No work item is selected.",
+  "mode": "active",
+  "nextAction": "Qais must rerun the focused QHTTP-B lane after current-main integration; then obtain post-change review before the complete AcceptanceTests final gate.",
   "schemaVersion": 1,
-  "sourceId": null
+  "sourceId": "GH-53"
 }

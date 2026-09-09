@@ -2,7 +2,7 @@
 
 ## State
 
-`Verifying`
+`ResolvingFindings`
 
 GitHub Issue #53. The frozen implementation baseline is merged PR #59 at
 `0b8e4b7a91cf52e4a98542bcc307f9262414efdf`.
