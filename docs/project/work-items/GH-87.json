@@ -1,0 +1,23 @@
+{
+  "baseline": "8f26c1fe21deec75c9bfd83ecb16cbd676ffc0d3",
+  "branch": "fix/issue-87-bd2020",
+  "checkpointId": "W87",
+  "checkpointPath": "docs/work/workers/W87",
+  "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5558523794",
+  "dependencies": [],
+  "expectedGithubState": "OPEN",
+  "id": "GH-87",
+  "kind": "github-issue",
+  "lifecycle": "Ready",
+  "lifecycleLabel": "ready",
+  "nextAction": "After PR #88 merges, select GH-87 for implementation from baseline 8f26c1fe21deec75c9bfd83ecb16cbd676ffc0d3.",
+  "number": 87,
+  "owner": "ahmad",
+  "pr": null,
+  "schemaVersion": 1,
+  "selectedForExecution": false,
+  "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/87",
+  "statusReason": "Abood (https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5576067024) and Qais (https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5584549024) authorized the bounded readiness correction and agreed Ahmad as implementation owner. Their T3 receipts (https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5558609657 and https://github.com/Bilaltariq41/SeqDoc/issues/87#issuecomment-5575040102) approved the identical frozen semantic scope.",
+  "title": "[Workers] Keep BD2020 catch-continuation withholding non-blocking",
+  "track": "workers"
+}
