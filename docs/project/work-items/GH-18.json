@@ -6,21 +6,22 @@
   "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/18",
   "dependencies": [
     "GH-16",
-    "GH-17"
+    "GH-17",
+    "GH-87"
   ],
   "expectedGithubState": "OPEN",
   "id": "GH-18",
   "kind": "acceptance",
   "lifecycle": "Blocked",
   "lifecycleLabel": "blocked",
-  "nextAction": null,
+  "nextAction": "Close GH-87, then publish the approved CreditTransfer target amendment and repeat I18 readiness before implementation.",
   "number": 18,
   "owner": "abood",
   "pr": null,
   "schemaVersion": 1,
   "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/18",
-  "statusReason": "Blocked by worker implementation prerequisites.",
+  "statusReason": "The original worker prerequisites are closed, but clean SMSGateway analysis is blocked by GH-87 and the frozen CreditTransfer target requires the approved readiness amendment.",
   "title": "[Workers] Supplied-project worker and recovery acceptance",
   "track": "workers"
 }
