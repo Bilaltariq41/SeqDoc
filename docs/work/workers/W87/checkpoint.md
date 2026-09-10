@@ -2,7 +2,7 @@
 
 ## State
 
-`ReviewRequired`
+`Verifying`
 
 ## Authority and frozen state
 
