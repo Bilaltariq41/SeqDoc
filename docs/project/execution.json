@@ -4,7 +4,7 @@
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Run the independent complete-candidate review of PR #90 at exact implementation head 59a9b31; do not run the full Behavior gate until every finding is resolved.",
+  "nextAction": "Correct the review boundary to distinguish tested implementation commit 59a9b31 from the complete current PR #90 head, publish the governance-only repair, and request exact-head review without running the final gate.",
   "schemaVersion": 1,
   "sourceId": "GH-87"
 }
