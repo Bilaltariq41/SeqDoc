@@ -4,7 +4,7 @@
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Qais must rerun the focused QHTTP-B lane after current-main integration; then obtain post-change review before the complete AcceptanceTests final gate.",
+  "nextAction": "Run the complete AcceptanceTests Release final gate once on the synchronized PR #67 candidate; then verify approval, checks, conversations, and merge readiness without merging.",
   "schemaVersion": 1,
   "sourceId": "GH-53"
 }
