@@ -1,10 +1,10 @@
 {
-  "activeCheckpointId": null,
-  "activeCheckpointPath": null,
+  "activeCheckpointId": "W87",
+  "activeCheckpointPath": "docs/work/workers/W87",
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
-  "mode": "idle",
-  "nextAction": "No work item is selected.",
+  "mode": "active",
+  "nextAction": "Obtain final approval on the complete current PR #90 head, verify required checks and resolved conversations, and confirm merge readiness without rerunning the final gate or merging.",
   "schemaVersion": 1,
-  "sourceId": null
+  "sourceId": "GH-87"
 }

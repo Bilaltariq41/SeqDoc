@@ -83,7 +83,7 @@ public sealed class BehaviorAnalyzer : IBehaviorAnalyzer
     /// <item><c>BD1001</c>-<c>BD1014</c> (<see cref="ExtractionValidator"/>): extraction-level structural
     /// invariants (duplicate body, non-canonical order, missing fingerprint, bad ordinals/refs/regions).
     /// Always blocking, at both call sites.</item>
-    /// <item><c>BD2001</c>, <c>BD2002</c>, <c>BD2003</c>, <c>BD2010</c>, <c>BD2011</c>
+    /// <item><c>BD2001</c>, <c>BD2002</c>, <c>BD2003</c>, <c>BD2010</c>, <c>BD2011</c>, <c>BD2020</c>
     /// (<see cref="MethodFlowBuilder"/>): local withhold - one operation/edge/natural loop is skipped
     /// via <c>continue</c>, the method flow is still produced and fingerprintable. Non-blocking.</item>
     /// <item><c>BD3001</c> (<c>CallResolver</c>): per-invocation dynamic dispatch with no static target;
@@ -102,6 +102,7 @@ public sealed class BehaviorAnalyzer : IBehaviorAnalyzer
         "BD2003",
         "BD2010",
         "BD2011",
+        "BD2020",
         "BD3001");
 
     private static bool HasBlockingDiagnostics(IEnumerable<AnalysisDiagnostic> diagnostics) =>
