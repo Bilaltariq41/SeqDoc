@@ -12,14 +12,14 @@
   "kind": "acceptance",
   "lifecycle": "Verifying",
   "lifecycleLabel": "verifying",
-  "nextAction": "Run the complete AcceptanceTests Release final gate once on the synchronized PR #67 candidate; then verify approval, checks, conversations, and merge readiness without merging.",
+  "nextAction": "Obtain Ahmad's final approval on the resulting exact SHA; verify required status checks and resolved conversations; then confirm merge readiness without merging.",
   "number": 53,
   "owner": "qais",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/67",
   "schemaVersion": 1,
   "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/53",
-  "statusReason": "Post-change review passed the complete current-main candidate at 972f4d8b7e9485da13c91383e4175adb5479baa1 with no findings after Qais's exact-head focused lane passed 7/7.",
+  "statusReason": "Post-change review and inherited focused/final verification are complete; only Ahmad's final exact-SHA approval and merge-readiness checks remain.",
   "title": "[Outbound HTTP] FraudManagement GET/POST acceptance",
   "track": "services"
 }
