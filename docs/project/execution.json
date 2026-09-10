@@ -1,10 +1,10 @@
 {
-  "activeCheckpointId": null,
-  "activeCheckpointPath": null,
+  "activeCheckpointId": "W87",
+  "activeCheckpointPath": "docs/work/workers/W87",
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
-  "mode": "idle",
-  "nextAction": "No work item is selected.",
+  "mode": "active",
+  "nextAction": "Publish the exact W87 candidate PR, bind it canonically, and transition to ReviewRequired for independent complete-candidate review; do not rerun unchanged successful verification or run the final gate.",
   "schemaVersion": 1,
-  "sourceId": null
+  "sourceId": "GH-87"
 }
