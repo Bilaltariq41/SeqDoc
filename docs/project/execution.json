@@ -4,7 +4,7 @@
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Publish the exact W87 candidate PR, bind it canonically, and transition to ReviewRequired for independent complete-candidate review; do not rerun unchanged successful verification or run the final gate.",
+  "nextAction": "Run the independent complete-candidate review of PR #90 at exact implementation head 59a9b31; do not run the full Behavior gate until every finding is resolved.",
   "schemaVersion": 1,
   "sourceId": "GH-87"
 }
