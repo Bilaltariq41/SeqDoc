@@ -2,7 +2,7 @@
 
 ## State
 
-`Verifying`
+`Closed`
 
 ## Authority and frozen state
 
@@ -243,3 +243,7 @@ Stop if the repair requires a path outside the allowlist, if `BD2020` does not c
 path, if SMSGateway still fails because of `BD2020`, if any blocking diagnostic other than root-less `SD4008` remains,
 if either clean run changes the profile, Program Index fingerprint, or `BD2020` record, if cleanup changes shared source
 status, worktree registrations, or local Git configuration, or if any structural/unknown diagnostic becomes non-blocking.
+
+## Delivery
+
+Delivered 2026-09-10. PR #90 merged to `main` as `2cc62c432f590709e9967668b0bd5ec6b8c1fe2f`; GitHub Issue #87 closed as completed. Two matching non-author peer decisions (Qais, Abood) approved the frozen scope and the amended external-verification observable; Abood's independent complete-candidate review approved exact head `ff0ad05d94056dd478f622d094e949aa1a6d4371` with no findings. Focused `BehaviorAnalyzerTests` 14 passed / 0 failed / 0 skipped; the one-time full `SeqDoc.Behavior.Tests` Release gate 73 passed / 0 failed / 0 skipped; the amended isolated SMSGateway verification ran twice with identical profile, Program Index fingerprint, and `BD2020` record. GH-87 transitioned `Verifying` to `Closed` and was deselected; `execution.json` regenerated to idle. Blocked consumer Issue #18 may now proceed with its own readiness once the CreditTransfer target amendment is published.
