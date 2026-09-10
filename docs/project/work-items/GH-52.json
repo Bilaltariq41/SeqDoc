@@ -17,7 +17,7 @@
   "schemaVersion": 1,
   "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/52",
-  "statusReason": "Workstream complete. Both committed children are closed: semantic GH-54 merged via PR #59 as 0b8e4b7a91cf52e4a98542bcc307f9262414efdf, and acceptance GH-53 / QHTTP-B merged via PR #67 as 49d2b3a8659124d72f1759128262f91b196d34ed. Each carries an independent review, resolved findings, focused verification, and final-gate evidence in its registry record and docs/work/outbound-http checkpoint. No remaining boundaries.",
+  "statusReason": "Workstream complete within its frozen direct HttpClient GET/POST scope. Both committed children are closed: semantic GH-54 merged via PR #59 as 0b8e4b7a91cf52e4a98542bcc307f9262414efdf, and acceptance GH-53 / QHTTP-B merged via PR #67 as 49d2b3a8659124d72f1759128262f91b196d34ed. Each carries an independent review, resolved findings, focused verification, and final-gate evidence in its registry record and docs/work/outbound-http checkpoint. No boundaries remain within GH-52's frozen direct GET/POST scope; residual service and outbound-gap inventory is retained as GH-76 (blocked planning child under GH-69).",
   "title": "[Workstream] Outbound HTTP request boundaries",
   "track": "services"
 }
