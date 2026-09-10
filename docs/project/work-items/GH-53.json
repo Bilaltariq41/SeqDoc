@@ -7,19 +7,19 @@
   "dependencies": [
     "GH-54"
   ],
-  "expectedGithubState": "OPEN",
+  "expectedGithubState": "CLOSED",
   "id": "GH-53",
   "kind": "acceptance",
-  "lifecycle": "Verifying",
-  "lifecycleLabel": "verifying",
-  "nextAction": "Obtain Ahmad's final approval on the resulting exact SHA; verify required status checks and resolved conversations; then confirm merge readiness without merging.",
+  "lifecycle": "Closed",
+  "lifecycleLabel": null,
+  "nextAction": null,
   "number": 53,
   "owner": "qais",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/67",
   "schemaVersion": 1,
-  "selectedForExecution": true,
+  "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/53",
-  "statusReason": "Post-change review and inherited focused/final verification are complete; only Ahmad's final exact-SHA approval and merge-readiness checks remain.",
+  "statusReason": "PR #67 merged to main as 49d2b3a8659124d72f1759128262f91b196d34ed and Issue #53 closed as completed. Final candidate 5e499e7f5ee808fa258126b617a442045b6803b7 on base cff762b018c10bafbc7c7b2cccf8aadb145ca795. F-A1 through F-A3 and the QHTTP-B-F1 governance correction resolved; independent post-change review found no defect; Ahmad Krarha approved the final exact SHA and performed the protected merge. Focused lane 7 passed / 0 failed / 0 skipped; complete AcceptanceTests final gate 21 passed / 26 failed / 47 total, matching the 26 pre-existing unrelated failure signatures on base cff762b (14 passed / 26 failed / 40 total) with no candidate regression.",
   "title": "[Outbound HTTP] FraudManagement GET/POST acceptance",
   "track": "services"
 }
