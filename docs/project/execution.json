@@ -1,10 +1,10 @@
 {
-  "activeCheckpointId": "QHTTP-B",
-  "activeCheckpointPath": "docs/work/outbound-http/QHTTP-B",
+  "activeCheckpointId": null,
+  "activeCheckpointPath": null,
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
-  "mode": "active",
-  "nextAction": "Obtain Ahmad's final approval on the resulting exact SHA; verify required status checks and resolved conversations; then confirm merge readiness without merging.",
+  "mode": "idle",
+  "nextAction": "No work item is selected.",
   "schemaVersion": 1,
-  "sourceId": "GH-53"
+  "sourceId": null
 }
