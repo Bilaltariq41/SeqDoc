@@ -239,7 +239,7 @@ public static class MethodFlowBuilder
             if (catches.Length == 0 || loops.Length == 0) { continue; }
             if (catches.Length != 1 || loops.Length != 1)
             {
-                diagnostics.Add(CreateDiagnostic("BD2020", "A catch continuation mapping is ambiguous and was withheld.", body.Method.Value, branch.SourceBlockOrdinal));
+                diagnostics.Add(CreateAmbiguousCatchContinuationDiagnostic(body, branch, catches, loops));
                 continue;
             }
             var loopMembers = loops[0].BodyBlockOrdinals.Append(loops[0].HeaderBlockOrdinal).ToHashSet();
@@ -261,13 +261,49 @@ public static class MethodFlowBuilder
             }
             else if (candidates.Length > 1)
             {
-                diagnostics.Add(CreateDiagnostic("BD2020", "A catch continuation mapping is ambiguous and was withheld.", body.Method.Value, branch.SourceBlockOrdinal));
+                diagnostics.Add(CreateAmbiguousCatchContinuationDiagnostic(
+                    body,
+                    branch,
+                    candidates.SelectMany(candidate => new[] { candidate.Catch, candidate.Try }),
+                    candidates.Select(candidate => candidate.Loop)));
             }
         }
         return result.Count == 0
             ? default
             : result.OrderBy(item => item.LoopRegion.Value, StringComparer.Ordinal)
                 .ThenBy(item => item.SourceBlockOrdinal).ToImmutableArray();
+    }
+
+    private static AnalysisDiagnostic CreateAmbiguousCatchContinuationDiagnostic(
+        ExtractedMethodBody body,
+        ExtractedOrdinaryBranch branch,
+        IEnumerable<ExtractedExceptionRegion> regions,
+        IEnumerable<LoopNode> loops)
+    {
+        var contributingRegions = regions
+            .DistinctBy(region => region.Id)
+            .ToArray();
+        var contributingLoops = loops
+            .DistinctBy(loop => loop.Id)
+            .ToArray();
+        var evidence = branch.Evidence
+            .Concat(contributingRegions.SelectMany(region => region.Evidence))
+            .Concat(contributingLoops.SelectMany(loop => loop.Evidence))
+            .DistinctBy(item => item.Id)
+            .OrderBy(item => item.Id.Value, StringComparer.Ordinal)
+            .ToImmutableArray();
+        var certainty = new[] { branch.Certainty }
+            .Concat(contributingRegions.Select(region => region.Certainty))
+            .Concat(contributingLoops.Select(loop => loop.Certainty))
+            .Concat(evidence.Select(item => item.Certainty))
+            .Max();
+        return CreateDiagnostic(
+            "BD2020",
+            "A catch continuation mapping is ambiguous and was withheld.",
+            body.Method.Value,
+            branch.SourceBlockOrdinal,
+            evidence,
+            certainty);
     }
 
     private static FlowNode CreateOperationNode(MethodId method, ExtractedOperation operation, int blockOrdinal, Dictionary<OperationId, ExtractedOperation> operationsById, bool preserveWorkerTerminalBlocks)
@@ -1204,7 +1240,9 @@ public static class MethodFlowBuilder
         string code,
         string summary,
         string subjectId,
-        int ordinal)
+        int ordinal,
+        ImmutableArray<EvidenceRef> evidence = default,
+        CertaintyLevel certainty = CertaintyLevel.Exact)
     {
         var id = StableIdentity.CreateDiagnosticId(new DiagnosticIdentityDescriptor(
             code,
@@ -1222,7 +1260,8 @@ public static class MethodFlowBuilder
             $"The method flow violates invariant '{code}'.",
             "The method flow is not trustworthy for this method.",
             "Reanalyze the target; if the problem persists, report the affected method identity.",
-            CertaintyLevel.Exact,
+            certainty,
+            evidence,
             internalDetail: $"{code} at ordinal {ordinal}");
     }
 }
