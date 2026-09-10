@@ -229,6 +229,14 @@ Run once after all review findings are resolved:
 dotnet test tests/SeqDoc.Behavior.Tests/SeqDoc.Behavior.Tests.csproj -c Release
 ```
 
+Final gate evidence, 2026-09-10:
+
+- the command ran exactly once after Abood's post-repair review resolved W87-F1 at complete candidate
+  `2ce72c5d6ede9d4521b3bf825b04d86de7becdd9`;
+- result: 73 passed, 0 failed, 0 skipped, 73 total; exit code 0;
+- no build warning or error was observed;
+- no product or test byte changed after the reviewed candidate.
+
 ## Stop conditions
 
 Stop if the repair requires a path outside the allowlist, if `BD2020` does not come from the local `continue` withholding

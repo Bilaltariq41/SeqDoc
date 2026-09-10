@@ -4,7 +4,7 @@
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Review the complete current PR #90 head, with 59a9b31 recorded only as the tested implementation commit; do not run the full Behavior gate until the exact-head review resolves every finding.",
+  "nextAction": "Obtain final approval on the complete current PR #90 head, verify required checks and resolved conversations, and confirm merge readiness without rerunning the final gate or merging.",
   "schemaVersion": 1,
   "sourceId": "GH-87"
 }

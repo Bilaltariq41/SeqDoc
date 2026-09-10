@@ -10,14 +10,14 @@
   "kind": "github-issue",
   "lifecycle": "ReviewRequired",
   "lifecycleLabel": "review-required",
-  "nextAction": "Review the complete current PR #90 head, with 59a9b31 recorded only as the tested implementation commit; do not run the full Behavior gate until the exact-head review resolves every finding.",
+  "nextAction": "Obtain final approval on the complete current PR #90 head, verify required checks and resolved conversations, and confirm merge readiness without rerunning the final gate or merging.",
   "number": 87,
   "owner": "ahmad",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/90",
   "schemaVersion": 1,
   "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/87",
-  "statusReason": "W87-F1 is fixed by governance-only commit fdf0465: durable wording now distinguishes tested implementation commit 59a9b31 from the complete current PR #90 head; focused and external evidence are inherited because product and test bytes are unchanged.",
+  "statusReason": "The independent post-repair review resolved W87-F1, and the one-time full SeqDoc.Behavior.Tests Release gate passed 73/73 with zero failures, skips, warnings, or errors; only final exact-head approval and merge-readiness checks remain.",
   "title": "[Workers] Keep BD2020 catch-continuation withholding non-blocking",
   "track": "workers"
 }
