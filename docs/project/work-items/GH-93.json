@@ -1,0 +1,23 @@
+{
+  "baseline": "ac1a41f25357b32fbf2e0b2bff82ffc6cb1fe586",
+  "branch": "fix/issue-93-diagnostic-path-confinement",
+  "checkpointId": "I13-DP",
+  "checkpointPath": "docs/work/quality/I13-DP",
+  "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/93",
+  "dependencies": [],
+  "expectedGithubState": "OPEN",
+  "id": "GH-93",
+  "kind": "github-issue",
+  "lifecycle": "Ready",
+  "lifecycleLabel": "ready",
+  "nextAction": "After this readiness record merges, select GH-93 and activate I13-DP from the frozen baseline; dispatch the required Test Writer before product implementation.",
+  "number": 93,
+  "owner": "ahmad",
+  "pr": null,
+  "schemaVersion": 1,
+  "selectedForExecution": false,
+  "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/93",
+  "statusReason": "Qais and Abood approved the same exact T3 diagnostic-path packet at baseline ac1a41f; the frozen checkpoint is ready for implementation after this governance-only readiness transaction merges.",
+  "title": "[Diagnostics] Confine workspace and compiler paths in public diagnostics",
+  "track": "quality"
+}
