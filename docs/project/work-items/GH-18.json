@@ -1,8 +1,8 @@
 {
-  "baseline": null,
-  "branch": null,
-  "checkpointId": null,
-  "checkpointPath": null,
+  "baseline": "ac1a41f25357b32fbf2e0b2bff82ffc6cb1fe586",
+  "branch": "acceptance/issue-18-worker-recovery",
+  "checkpointId": "I18",
+  "checkpointPath": "docs/work/workers/I18",
   "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/18",
   "dependencies": [
     "GH-16",
@@ -12,16 +12,16 @@
   "expectedGithubState": "OPEN",
   "id": "GH-18",
   "kind": "acceptance",
-  "lifecycle": "Blocked",
-  "lifecycleLabel": "blocked",
-  "nextAction": "Close GH-87, then publish the approved CreditTransfer target amendment and repeat I18 readiness before implementation.",
+  "lifecycle": "Ready",
+  "lifecycleLabel": "ready",
+  "nextAction": "Select and activate GH-18 through work_state.py, then dispatch the required Test Writer against the frozen I18 checkpoint before any acceptance-test edit.",
   "number": 18,
   "owner": "abood",
   "pr": null,
   "schemaVersion": 1,
   "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/18",
-  "statusReason": "The original worker prerequisites are closed, but clean SMSGateway analysis is blocked by GH-87 and the frozen CreditTransfer target requires the approved readiness amendment.",
+  "statusReason": "GH-16, GH-17, and GH-87 are closed; the CreditTransfer target was amended to the buildable e65a94b8 hosted-worker revision and independently T2-approved with full reproduction (profile ID, Program Index fingerprint, behavior fingerprint, run ID, method/project IDs, and artifact hashes all verified). Publishing the frozen I18 checkpoint and readiness state; implementation still requires a separate selection/activation.",
   "title": "[Workers] Supplied-project worker and recovery acceptance",
   "track": "workers"
 }
