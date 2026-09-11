@@ -14,6 +14,7 @@ its current reconciled body (post v2 CreditTransfer amendment) at baseline `ac1a
 - Frozen v2 CreditTransfer amendment: https://github.com/Bilaltariq41/SeqDoc/issues/18#issuecomment-5633321734
 - Independent non-author T2 approval and reproduction: https://github.com/Bilaltariq41/SeqDoc/issues/18#issuecomment-5633920464
 - Supplemental T2 receipt (behavior fingerprint, run ID, two-run byte equality, config hash): https://github.com/Bilaltariq41/SeqDoc/issues/18#issuecomment-5634313569
+- Readiness review repair (I18-R1/R2/R3/R4): https://github.com/Bilaltariq41/SeqDoc/pull/96
 
 This readiness transaction authorizes publication only. It does not authorize implementation and does not activate
 GH-18. Implementation begins only after this readiness PR merges, GH-18 is selected and activated through
@@ -35,7 +36,7 @@ deterministic, and conservative.
 | FraudManagement worker/scheduler | `7aabfef98fa4d47781bd8a98b9061ddcafb88836` | `Provided/FraudManagement/FraudManagementWindowsService/FraudManagementWindowsService.csproj`, `Release/net9.0`; `BackgroundService`, Quartz 3.15.1 | `docs/examples/fraud-management.yaml` (21 roots); 36 baseline diagrams, profile `f874be7e`, fingerprint `f9a36fd5` | worker root, timer/scheduler registration boundary, #16 polling/retry/cancellation/terminal facts, #17 callback/non-durable recovery boundaries |
 | SMSGateway worker/events | `7ca797356b1856eb815922ca977e9d85a569cb84` | `Provided/SMSGateway-om/Source/LP.SMSGateway.WindowsHost/LP.SMSGateway.WindowsHost.csproj`, `Release/net9.0`; `SMSGatewayWorker : BackgroundService` | `docs/examples/sms-gateway.yaml` (14 roots); 15 baseline diagrams, profile `a82776da`, fingerprint `f1bfaa65` | worker lifecycle and exact event/callback boundaries; subscription is not execution and ACK/NACK is not delivery proof |
 | CreditTransfer hosted worker | `e65a94b873e712a17bc337a2b687ab4bd3dacece` | `CreditTransferWorker/CreditTransferWorker.csproj`, `Release/net9.0`; references `CreditTransferEngine/CreditTransferEngine.csproj`; root `CreditTransferWorker.Worker.ExecuteAsync(System.Threading.CancellationToken)` registered by `AddHostedService<Worker>()` | no `--config`; automatic exact hosted-worker admission; `docs/examples/credit-transfer.yaml` remains read-only and is not used for worker admission | reproduce the approved hosted-worker registration, lifecycle-entry, and cancellation-parameter observable without strengthening it into polling, retry, timing, delivery, or durable-recovery proof |
-| Notification callback secondary | exact project/revision resolved by `ExternalCorpusResolver` if available | exact profile/project recorded at readiness transition | no substitution if unavailable | unrelated callback/event negative/secondary evidence only |
+| Notification callback secondary (conditional) | exact project/revision resolved by `ExternalCorpusResolver` if available | exact profile/project recorded at readiness transition | no substitution if unavailable | unrelated callback/event negative/secondary evidence only; may be recorded unavailable without substitution |
 
 CreditTransfer is frozen to revision `e65a94b873e712a17bc337a2b687ab4bd3dacece` in the supplied full, non-shallow
 sibling checkout, where the exact commit is present in local history. The recorded upstream
@@ -132,8 +133,13 @@ path outside the allowlist above.
 ## Focused command
 
 ```powershell
-$env:SEQDOC_TEST_PROJECTS_ROOT = (Resolve-Path ../SeqDoc-TestProjects).Path; dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~WorkerExternalCorpus
+if (-not $env:SEQDOC_TEST_PROJECTS_ROOT) { $env:SEQDOC_TEST_PROJECTS_ROOT = (Resolve-Path ../SeqDoc-TestProjects).Path }; dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~WorkerExternalCorpus
 ```
+
+This preserves an already-configured `SEQDOC_TEST_PROJECTS_ROOT` and falls back to the default sibling path only
+when the variable is absent, per `docs/usage.md`. This is an owner-authorized bounded correction to the exact command
+text originally in the Issue #18 body (readiness review finding I18-R2); the issue body should be updated to match
+in a follow-up so the specification and the checkpoint stay in sync.
 
 ## Implementation boundary
 
@@ -152,15 +158,16 @@ Run one independent complete-candidate review after focused verification. Review
 checkpoint allowlist, non-goals, risk inventory, and the required-negatives list in Issue #18. Record each finding as
 `Fixed`, `Rejected` with evidence, or `Deferred` with explicit owner approval.
 
-After a changed repair candidate has green focused verification, re-review the complete candidate. After two failed
-repair rounds, preserve the worktree, transition GH-18 to `Blocked`, and obtain a separate authorized decision.
+Exactly one batched repair round is authorized: fix every open finding together, rerun the focused command once, and
+re-review the complete candidate once. A second material repair need blocks I18; preserve the worktree, transition
+GH-18 to `Blocked`, and obtain a separate authorized decision.
 
 ## Final gate
 
 Run once only, after every review finding is resolved:
 
 ```powershell
-$env:SEQDOC_TEST_PROJECTS_ROOT = (Resolve-Path ../SeqDoc-TestProjects).Path; dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release
+if (-not $env:SEQDOC_TEST_PROJECTS_ROOT) { $env:SEQDOC_TEST_PROJECTS_ROOT = (Resolve-Path ../SeqDoc-TestProjects).Path }; dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release
 ```
 
 ## Stop conditions
@@ -175,4 +182,4 @@ Stop and report the exact command, error, evidence, and smallest decision needed
 - a link is broken or Mermaid CLI rendering fails;
 - an unexplained diagnostic appears;
 - any production, configuration, external-source, or build change would be required;
-- two repair rounds fail.
+- the one authorized batched repair round does not resolve every finding.
