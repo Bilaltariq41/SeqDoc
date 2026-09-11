@@ -1,10 +1,10 @@
 {
-  "activeCheckpointId": null,
-  "activeCheckpointPath": null,
+  "activeCheckpointId": "I18",
+  "activeCheckpointPath": "docs/work/workers/I18",
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
-  "mode": "idle",
-  "nextAction": "No work item is selected.",
+  "mode": "active",
+  "nextAction": "Post the I18 implementation plan, dispatch the required Test Writer, and establish the acceptance-only candidate within the frozen allowlist before running the focused command.",
   "schemaVersion": 1,
-  "sourceId": null
+  "sourceId": "GH-18"
 }
