@@ -10,7 +10,7 @@
   "kind": "github-issue",
   "lifecycle": "Active",
   "lifecycleLabel": "active",
-  "nextAction": "Dispatch the required Test Writer against the frozen I13-DP checkpoint before any product edit.",
+  "nextAction": "A Test Writer and a two-file production candidate already exist locally as preserved, uncommitted preliminary work (CompilerDiagnosticFactoryTests: 10/10 passing; acceptance half not yet run). After this activation merges, integrate this exact main into the preserved I13-DP worktree, apply the approved test-only SeqDoc.Core.Identity import repair, and run the corrected focused command. Do not claim the focused lane passed or request review until both halves pass.",
   "number": 93,
   "owner": "ahmad",
   "pr": null,
