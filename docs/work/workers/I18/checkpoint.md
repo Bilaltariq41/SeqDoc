@@ -2,7 +2,7 @@
 
 ## State
 
-`NotStarted`
+`Building`
 
 ## Authority and frozen state
 
