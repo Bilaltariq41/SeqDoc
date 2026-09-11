@@ -2,7 +2,7 @@
 
 ## State
 
-`NotStarted`
+`Building`
 
 ## Authority and frozen state
 
@@ -16,6 +16,8 @@ Matching prospective approvals:
 
 Those approvals authorize implementation only after this governance-only readiness transaction merges and GH-93 is
 selected and activated through `tools/governance/work_state.py`. This checkpoint does not reactivate GH-13/I13.
+
+A command-only amendment to the focused command, final gate, and one stop-condition wording (removing the forced `SEQDOC_TEST_PROJECTS_ROOT` override, since `CompilerDiagnosticPathConfinementTests` is self-contained and does not read the external corpus) was approved by both peers: Abood at https://github.com/Bilaltariq41/SeqDoc/issues/93#issuecomment-5634435042 and Qais at https://github.com/Bilaltariq41/SeqDoc/issues/93#issuecomment-5637036478. No other contract term changed.
 
 ## Objective
 
@@ -140,7 +142,7 @@ outside the allowlist.
 Focused Test Writer and implementation command:
 
 ```powershell
-dotnet test tests/SeqDoc.Analysis.Tests/SeqDoc.Analysis.Tests.csproj -c Release --filter "FullyQualifiedName~CompilerDiagnosticFactoryTests"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; $env:SEQDOC_TEST_PROJECTS_ROOT = (Resolve-Path "../SeqDoc-TestProjects").Path; dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~CompilerDiagnosticPathConfinementTests"
+dotnet test tests/SeqDoc.Analysis.Tests/SeqDoc.Analysis.Tests.csproj -c Release --filter "FullyQualifiedName~CompilerDiagnosticFactoryTests"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~CompilerDiagnosticPathConfinementTests"
 ```
 
 Record nonzero discovery and exact passed, failed, skipped, and total counts. A missing corpus, restore/build failure,
@@ -168,7 +170,7 @@ repair rounds, preserve the worktree, transition GH-93 to `Blocked`, and obtain 
 Run once only after every review finding is resolved:
 
 ```powershell
-dotnet test tests/SeqDoc.Analysis.Tests/SeqDoc.Analysis.Tests.csproj -c Release; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; dotnet test tests/SeqDoc.Cli.Tests/SeqDoc.Cli.Tests.csproj -c Release; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; dotnet test tests/SeqDoc.Persistence.Tests/SeqDoc.Persistence.Tests.csproj -c Release; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; $env:SEQDOC_TEST_PROJECTS_ROOT = (Resolve-Path "../SeqDoc-TestProjects").Path; dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~CompilerDiagnosticPathConfinementTests"
+dotnet test tests/SeqDoc.Analysis.Tests/SeqDoc.Analysis.Tests.csproj -c Release; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; dotnet test tests/SeqDoc.Cli.Tests/SeqDoc.Cli.Tests.csproj -c Release; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; dotnet test tests/SeqDoc.Persistence.Tests/SeqDoc.Persistence.Tests.csproj -c Release; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~CompilerDiagnosticPathConfinementTests"
 ```
 
 The final receipt must include exact counts, both relocated-checkout artifact hashes, complete diagnostic records, stable
@@ -186,7 +188,7 @@ Stop and report the exact command, error, evidence, and smallest decision needed
 - console, JSON, build-diagnostics artifact, and persisted values disagree;
 - relocated output, IDs, or order differ;
 - both workspace and compiler producer paths cannot reach the first observable consumer;
-- a required external lane or tool is unavailable;
+- a required acceptance fixture or tool is unavailable;
 - external source or generated output would need to be committed;
 - a public contract, architecture, schema, SDK, package, build, workflow, or unrelated diagnostic factory must change;
 - two repair rounds fail.
