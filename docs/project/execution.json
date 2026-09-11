@@ -1,10 +1,10 @@
 {
-  "activeCheckpointId": null,
-  "activeCheckpointPath": null,
+  "activeCheckpointId": "I13-DP",
+  "activeCheckpointPath": "docs/work/quality/I13-DP",
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
-  "mode": "idle",
-  "nextAction": "No work item is selected.",
+  "mode": "active",
+  "nextAction": "Dispatch the required Test Writer against the frozen I13-DP checkpoint before any product edit.",
   "schemaVersion": 1,
-  "sourceId": null
+  "sourceId": "GH-93"
 }
