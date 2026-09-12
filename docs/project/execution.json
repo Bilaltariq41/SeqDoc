@@ -4,7 +4,7 @@
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Run one independent complete-candidate review; resolve every finding before any final gate.",
+  "nextAction": "Publish the reviewed repair, run the declared final gate once, and close only if it passes.",
   "schemaVersion": 1,
   "sourceId": "GH-93"
 }

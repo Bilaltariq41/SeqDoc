@@ -2,7 +2,7 @@
 
 ## State
 
-`ReviewRequired`
+`Verifying`
 
 ## Authority and frozen state
 
@@ -190,6 +190,12 @@ conditions. Record each finding as `Fixed`, `Rejected` with evidence, or `Deferr
 
 After a changed repair candidate has green focused verification, re-review the complete candidate. After two failed
 repair rounds, preserve the worktree, transition GH-93 to `Blocked`, and obtain a separate authorized decision.
+
+Review epoch 1 found five issues. `I13-DP-F1` through `I13-DP-F4` were fixed by spaced-path parsing, fixture-scoped
+cleanup, byte-exact output checks, and positive UNC coverage. Post-repair review found `I13-DP-F5`; requiring the real
+compiler `):` location terminator fixed that ordinary-prose false positive. The owner-authorized verification retry
+passed 15/15 factory tests and 2/2 acceptance tests, and the independent reviewer approved the complete changed
+candidate with no remaining findings.
 
 ## Final gate
 

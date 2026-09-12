@@ -24,6 +24,10 @@ public sealed class CompilerDiagnosticFactoryTests
     [InlineData("https://example.test/repo/src/App.cs", "https://example.test/repo/src/App.cs")]
     [InlineData("Package Example.Core 1.2.3", "Package Example.Core 1.2.3")]
     [InlineData("\\\\server\\share\\repo\\src\\App.cs", "<external-path>")]
+    [InlineData("Unable to read /outside/cache while validating option (1,1)", "Unable to read <external-path> while validating option (1,1)")]
+    [InlineData("Unable to read /repo/cache while validating option (1,1)", "Unable to read cache while validating option (1,1)")]
+    [InlineData("Build failed for project \"/repo/Workspace With Spaces/src/App.cs\"; preserve prose.", "Build failed for project \"Workspace With Spaces/src/App.cs\"; preserve prose.")]
+    [InlineData("Build failed for project \"/outside/Workspace With Spaces/src/App.cs\"; preserve prose.", "Build failed for project \"<external-path>\"; preserve prose.")]
     public void WorkspaceConfinementPreservesRawClassificationAndNonPathText(string message, string expectedCause)
     {
         var raw = new WorkspaceDiagnostic(WorkspaceDiagnosticKind.Failure, message);
@@ -40,6 +44,7 @@ public sealed class CompilerDiagnosticFactoryTests
     [Theory]
     [InlineData("C:\\repo", "C:\\repo\\src\\App.cs", "src/App.cs")]
     [InlineData("C:\\repo", "C:\\repo/src\\App.cs", "src/App.cs")]
+    [InlineData("\\\\server\\share\\repo", "\\\\server\\share\\repo\\src\\App.cs", "src/App.cs")]
     public void WindowsAndMixedSeparatorInternalPathsRemainRepositoryRelative(
         string repositoryRoot, string message, string expectedCause)
     {
@@ -58,17 +63,24 @@ public sealed class CompilerDiagnosticFactoryTests
         {
             (CreateCompilerDiagnostic("/repo/src/App.cs", "CS1002", "first"), new CoreProjectId("project:v1:test")),
             (CreateCompilerDiagnostic("/outside/src/App.cs", "CS1003", "second"), new CoreProjectId("project:v1:test")),
+            (CreateCompilerDiagnostic("/repo/Workspace With Spaces/src/App.cs", "CS1004", "quoted \"compiler prose\""), new CoreProjectId("project:v1:test")),
+            (CreateCompilerDiagnostic("/outside/Workspace With Spaces/src/App.cs", "CS1005", "external compiler prose"), new CoreProjectId("project:v1:test")),
         };
 
         var converted = CompilerDiagnosticFactory.CreateCompiler(
             diagnostics, Profile, repositoryRoot: "/repo");
 
-        Assert.Equal(2, converted.Length);
+        Assert.Equal(4, converted.Length);
         Assert.Equal("src/App.cs(1,1)", converted[0].Location.Description);
         Assert.Equal(ConfineCompilerText(diagnostics[0].Item1, "/repo/src/App.cs", "src/App.cs"), converted[0].TechnicalCause);
         Assert.Equal("<external-path>(1,1)", converted[1].Location.Description);
         Assert.Equal(ConfineCompilerText(diagnostics[1].Item1, "/outside/src/App.cs", "<external-path>"), converted[1].TechnicalCause);
         Assert.Equal("first", converted[0].Summary);
+        Assert.Equal("Workspace With Spaces/src/App.cs(1,1)", converted[2].Location.Description);
+        Assert.Equal(ConfineCompilerText(diagnostics[2].Item1, "/repo/Workspace With Spaces/src/App.cs", "Workspace With Spaces/src/App.cs"), converted[2].TechnicalCause);
+        Assert.Equal("<external-path>(1,1)", converted[3].Location.Description);
+        Assert.Equal(ConfineCompilerText(diagnostics[3].Item1, "/outside/Workspace With Spaces/src/App.cs", "<external-path>"), converted[3].TechnicalCause);
+        Assert.Equal("quoted \"compiler prose\"", converted[2].Summary);
         Assert.All(converted, diagnostic =>
         {
             Assert.Equal(CoreDiagnosticSeverity.Error, diagnostic.Severity);

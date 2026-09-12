@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using SeqDoc.Analysis.Roslyn;
@@ -21,6 +23,7 @@ public sealed class CompilerDiagnosticPathConfinementTests
         string beforeStatus = Git(source, "status", "--short").Output;
         string beforeWorktrees = Git(source, "worktree", "list", "--porcelain").Output;
         string beforeConfig = Git(source, "config", "--local", "--list").Output;
+        MetadataSnapshot beforeMetadata = CaptureMetadata(source);
         string first = NewTemp("seqdoc-i13-dp-workspace-a");
         string second = NewTemp("seqdoc-i13-dp-workspace-b");
         Exception? cleanupFailure = null;
@@ -55,12 +58,15 @@ public sealed class CompilerDiagnosticPathConfinementTests
             });
             Assert.Contains(aWarnings, d => (d.GetProperty("technicalCause").GetString() ?? "").Contains("http", StringComparison.OrdinalIgnoreCase));
 
-            Assert.Equal(Canonical(aWarnings), Canonical(bWarnings));
+            Assert.Equal(Encoding.UTF8.GetBytes(a.DiagnosticsJson), Encoding.UTF8.GetBytes(b.DiagnosticsJson));
             Assert.Equal(a.ConsoleDiagnostics, b.ConsoleDiagnostics);
+            Assert.DoesNotContain(first, a.ConsoleDiagnostics, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(second, a.ConsoleDiagnostics, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(first, b.ConsoleDiagnostics, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(second, b.ConsoleDiagnostics, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(IdsAndOrder(aWarnings), IdsAndOrder(bWarnings));
             Assert.Equal(a.PersistedDiagnosticsJson, b.PersistedDiagnosticsJson);
-            Assert.Equal(a.PersistedDiagnosticsJson, Canonical(aWarnings));
-            Assert.Equal(Canonical(aWarnings), a.ConsoleDiagnostics);
+            Assert.Equal(Canonical(aWarnings), a.PersistedDiagnosticsJson);
             Assert.Equal(a.ProfileId, b.ProfileId);
             Assert.Equal(a.RunId, b.RunId);
             Assert.Equal(a.IndexFingerprint, b.IndexFingerprint);
@@ -90,6 +96,7 @@ public sealed class CompilerDiagnosticPathConfinementTests
                 Assert.Equal(beforeStatus, Git(source, "status", "--short").Output);
                 Assert.Equal(beforeWorktrees, Git(source, "worktree", "list", "--porcelain").Output);
                 Assert.Equal(beforeConfig, Git(source, "config", "--local", "--list").Output);
+                Assert.Equal(beforeMetadata, CaptureMetadata(source));
                 Assert.False(Directory.Exists(first));
                 Assert.False(Directory.Exists(second));
             }
@@ -119,13 +126,16 @@ public sealed class CompilerDiagnosticPathConfinementTests
             Assert.NotEmpty(a.ExtractedCompilerDiagnostics);
             Assert.Contains(a.ExtractedCompilerDiagnostics, diagnostic => diagnostic.Contains("MissingResult", StringComparison.Ordinal));
             Assert.NotEmpty(b.ExtractedCompilerDiagnostics);
-            Assert.Equal(a.DiagnosticsJson, b.DiagnosticsJson);
+            Assert.Equal(Encoding.UTF8.GetBytes(a.DiagnosticsJson), Encoding.UTF8.GetBytes(b.DiagnosticsJson));
             Assert.Equal(a.IdsAndOrder, b.IdsAndOrder);
-            Assert.Equal(a.ArtifactDiagnosticsJson, b.ArtifactDiagnosticsJson);
+            Assert.Equal(a.ArtifactBytesSha256, b.ArtifactBytesSha256);
             Assert.All(a.Diagnostics, diagnostic => Assert.Contains(Canonical([diagnostic]), DiagnosticRecords(a.ArtifactDiagnosticsJson)));
             Assert.All(b.Diagnostics, diagnostic => Assert.Contains(Canonical([diagnostic]), DiagnosticRecords(b.ArtifactDiagnosticsJson)));
-            Assert.Equal(a.ConsoleDiagnostics, a.DiagnosticsJson);
             Assert.Equal(a.ConsoleDiagnostics, b.ConsoleDiagnostics);
+            Assert.DoesNotContain(first, a.ConsoleDiagnostics, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(second, a.ConsoleDiagnostics, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(first, b.ConsoleDiagnostics, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(second, b.ConsoleDiagnostics, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(3, a.ExitCode);
             Assert.Equal(3, b.ExitCode);
             Assert.True(a.HasBuildArtifact);
@@ -187,6 +197,7 @@ public sealed class CompilerDiagnosticPathConfinementTests
             string artifactJson = File.Exists(artifactFile)
                 ? Canonical(JsonDocument.Parse(File.ReadAllText(artifactFile)).RootElement.GetProperty("diagnostics").EnumerateArray().Select(x => x.Clone()))
                 : "";
+            string artifactHash = File.Exists(artifactFile) ? HashFile(artifactFile) : "";
 
             var consoleOutput = new StringWriter();
             var consoleError = new StringWriter();
@@ -195,13 +206,14 @@ public sealed class CompilerDiagnosticPathConfinementTests
             JsonElement[] consumerDiagnostics = diagnostics.Any(d => d.GetProperty("code").GetString() == "SD1101" && d.GetProperty("stage").GetString() == "WorkspaceLoad")
                 ? diagnostics.Where(d => d.GetProperty("code").GetString() == "SD1101" && d.GetProperty("stage").GetString() == "WorkspaceLoad").ToArray()
                 : diagnostics;
-            string consoleDiagnostics = CanonicalConsole(consumerDiagnostics, consoleError.ToString());
+            string consoleText = consoleOutput.ToString();
+            string consoleDiagnostics = ExtractDiagnosticBlocks(consumerDiagnostics, consoleText + consoleError);
             WorkspaceSnapshot persisted = expectSuccess
                 ? await InspectDiagnosticsAsync(root, target, cache, framework)
                 : WorkspaceSnapshot.Empty;
             bool hasPersistedValidState = !expectSuccess && File.Exists(cache)
                 && await HasValidPersistedStateAsync(root, target, cache, framework);
-            return new CliObservation(exitCode, diagnostics, Canonical(diagnostics, root), artifactJson, persisted.DiagnosticsJson, consoleDiagnostics, IdsAndOrder(diagnostics), File.Exists(artifactFile), hasPersistedValidState, persisted.ProfileId, persisted.RunId, persisted.IndexFingerprint, expectSuccess ? PackageSet(root) : "");
+            return new CliObservation(exitCode, diagnostics, rootJson.GetProperty("diagnostics").GetRawText(), artifactJson, artifactHash, persisted.DiagnosticsJson, consoleDiagnostics, IdsAndOrder(diagnostics), File.Exists(artifactFile), hasPersistedValidState, persisted.ProfileId, persisted.RunId, persisted.IndexFingerprint, expectSuccess ? PackageSet(root) : "");
         }
         finally
         {
@@ -220,7 +232,7 @@ public sealed class CompilerDiagnosticPathConfinementTests
         Assert.NotEmpty(raw);
         Assert.Contains(raw, diagnostic => diagnostic.Contains("MissingResult", StringComparison.Ordinal));
         var cli = await ObserveCliAsync(root, relative, "net9.0", expectSuccess: false);
-        return new CompilerObservation(raw, cli.Diagnostics, cli.DiagnosticsJson, cli.ArtifactDiagnosticsJson, cli.ConsoleDiagnostics, cli.IdsAndOrder, cli.ExitCode, cli.HasBuildArtifact, cli.HasPersistedValidState);
+        return new CompilerObservation(raw, cli.Diagnostics, cli.DiagnosticsJson, cli.ArtifactDiagnosticsJson, cli.ArtifactBytesSha256, cli.ConsoleDiagnostics, cli.IdsAndOrder, cli.ExitCode, cli.HasBuildArtifact, cli.HasPersistedValidState);
     }
 
     private static async Task<WorkspaceSnapshot> InspectDiagnosticsAsync(string root, string target, string cache, string framework)
@@ -312,8 +324,7 @@ public sealed class CompilerDiagnosticPathConfinementTests
         GC.WaitForPendingFinalizers();
         for (int attempt = 0; attempt < 20; attempt++)
         {
-            Git(source, "worktree", "remove", "--force", path);
-            Git(source, "worktree", "prune", "--expire", "now");
+            ProcessResult removal = Git(source, "worktree", "remove", "--force", path);
             bool registered = Git(source, "worktree", "list", "--porcelain").Output.Contains(path, StringComparison.OrdinalIgnoreCase);
             if (!registered && Directory.Exists(path))
             {
@@ -338,6 +349,11 @@ public sealed class CompilerDiagnosticPathConfinementTests
             if (!Directory.Exists(path) && !registered)
             {
                 return;
+            }
+            if (removal.ExitCode != 0 && registered)
+            {
+                Thread.Sleep(500);
+                continue;
             }
             Thread.Sleep(500);
         }
@@ -383,6 +399,29 @@ public sealed class CompilerDiagnosticPathConfinementTests
     }
 
     private static string NewTemp(string name) => Path.Combine(Path.GetTempPath(), $"{name}-{Guid.NewGuid():N}");
+
+    private static MetadataSnapshot CaptureMetadata(string source)
+    {
+        string common = Git(source, "rev-parse", "--git-common-dir").Output.Trim();
+        string worktrees = Path.GetFullPath(Path.Combine(source, common, "worktrees"));
+        if (!Directory.Exists(worktrees))
+        {
+            return new MetadataSnapshot(false, []);
+        }
+
+        var files = Directory.EnumerateFiles(worktrees, "*", SearchOption.AllDirectories)
+            .Select(file => new MetadataFile(Path.GetRelativePath(worktrees, file), HashFile(file)))
+            .OrderBy(file => file.Path, StringComparer.Ordinal)
+            .ToArray();
+        return new MetadataSnapshot(true, files);
+    }
+
+    private static string HashFile(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(stream));
+    }
+
     private static void Delete(string path)
     {
         GC.Collect();
@@ -412,22 +451,59 @@ public sealed class CompilerDiagnosticPathConfinementTests
         using var document = JsonDocument.Parse(json);
         return document.RootElement.EnumerateArray().Select(value => Canonical([value])).ToArray();
     }
-    private static string CanonicalConsole(IEnumerable<JsonElement> values, string console)
+    private static string ExtractDiagnosticBlocks(IEnumerable<JsonElement> values, string console)
     {
-        string normalized = console.Replace("\r\n", "\n");
-        var records = values.Select(x => new[]
+        var blocks = new List<string>();
+        var search = 0;
+        foreach (JsonElement value in values)
         {
-            x.GetProperty("code").GetString() ?? "",
-            x.GetProperty("summary").GetString() ?? "",
-            $"Location: {x.GetProperty("location").GetString()}",
-            $"Cause: {x.GetProperty("technicalCause").GetString()}",
-        });
-        foreach (string[] record in records)
-        {
-            Assert.All(record, line => Assert.Contains(line, normalized, StringComparison.Ordinal));
+            string[] lines =
+            [
+                $"{value.GetProperty("code").GetString()}: {value.GetProperty("summary").GetString()}",
+                $"Location: {value.GetProperty("location").GetString()}",
+                $"Cause: {value.GetProperty("technicalCause").GetString()}",
+                $"Impact: {value.GetProperty("userImpact").GetString()}",
+                $"Next action: {value.GetProperty("nextAction").GetString()}",
+            ];
+            int start = FindConsoleLine(console, lines[0], search);
+            Assert.True(start >= 0, $"Console diagnostic line was not emitted: {lines[0]}");
+            int end = start;
+            foreach (string line in lines)
+            {
+                int lineStart = FindConsoleLine(console, line, end);
+                Assert.True(lineStart >= end, $"Console diagnostic line was not emitted: {line}");
+                end = EndOfLine(console, lineStart);
+            }
+
+            blocks.Add(console[start..end]);
+            search = end;
         }
 
-        return Canonical(values);
+        return string.Concat(blocks);
+    }
+
+    private static int FindConsoleLine(string text, string expected, int start)
+    {
+        for (int position = text.IndexOf(expected, start, StringComparison.Ordinal);
+             position >= 0;
+             position = text.IndexOf(expected, position + expected.Length, StringComparison.Ordinal))
+        {
+            int lineStart = position == 0 ? 0 : text.LastIndexOf('\n', position - 1) + 1;
+            int lineEnd = text.IndexOf('\n', position);
+            if (lineEnd < 0) { lineEnd = text.Length; }
+            if (position >= lineStart && lineEnd - position >= expected.Length)
+            {
+                return lineStart;
+            }
+        }
+
+        return -1;
+    }
+
+    private static int EndOfLine(string text, int lineStart)
+    {
+        int newline = text.IndexOf('\n', lineStart);
+        return newline < 0 ? text.Length : newline + 1;
     }
 
     private sealed record ProcessResult(int ExitCode, string Output, string Error);
@@ -435,6 +511,8 @@ public sealed class CompilerDiagnosticPathConfinementTests
     {
         public static WorkspaceSnapshot Empty { get; } = new("", "", "", "", "");
     }
-    private sealed record CliObservation(int ExitCode, JsonElement[] Diagnostics, string DiagnosticsJson, string ArtifactDiagnosticsJson, string PersistedDiagnosticsJson, string ConsoleDiagnostics, string IdsAndOrder, bool HasBuildArtifact, bool HasPersistedValidState, string ProfileId, string RunId, string IndexFingerprint, string PackageSet);
-    private sealed record CompilerObservation(string[] ExtractedCompilerDiagnostics, JsonElement[] Diagnostics, string DiagnosticsJson, string ArtifactDiagnosticsJson, string ConsoleDiagnostics, string IdsAndOrder, int ExitCode, bool HasBuildArtifact, bool HasPersistedValidState);
+    private sealed record CliObservation(int ExitCode, JsonElement[] Diagnostics, string DiagnosticsJson, string ArtifactDiagnosticsJson, string ArtifactBytesSha256, string PersistedDiagnosticsJson, string ConsoleDiagnostics, string IdsAndOrder, bool HasBuildArtifact, bool HasPersistedValidState, string ProfileId, string RunId, string IndexFingerprint, string PackageSet);
+    private sealed record CompilerObservation(string[] ExtractedCompilerDiagnostics, JsonElement[] Diagnostics, string DiagnosticsJson, string ArtifactDiagnosticsJson, string ArtifactBytesSha256, string ConsoleDiagnostics, string IdsAndOrder, int ExitCode, bool HasBuildArtifact, bool HasPersistedValidState);
+    private sealed record MetadataSnapshot(bool DirectoryExists, MetadataFile[] Files);
+    private sealed record MetadataFile(string Path, string Hash);
 }

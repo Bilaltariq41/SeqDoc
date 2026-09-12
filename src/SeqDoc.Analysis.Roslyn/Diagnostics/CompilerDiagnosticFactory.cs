@@ -300,10 +300,28 @@ internal static class CompilerDiagnosticFactory
         }
 
         var position = start;
+        var quoted = start > 0 && (text[start - 1] == '"' || text[start - 1] == '\'');
+        if (quoted)
+        {
+            var quote = text[start - 1];
+            var close = text.IndexOf(quote, start);
+            if (close > start)
+            {
+                end = close;
+                return true;
+            }
+        }
+
         while (position < text.Length && !char.IsWhiteSpace(text[position])
             && !"\"'<>|".Contains(text[position]))
         {
             position++;
+        }
+
+        var locationDelimiter = FindCompilerLocationDelimiter(text, start);
+        if (locationDelimiter > start && (position == text.Length || locationDelimiter > position))
+        {
+            position = locationDelimiter;
         }
 
         while (position > start && ".,;:!?]}".Contains(text[position - 1]))
@@ -319,6 +337,34 @@ internal static class CompilerDiagnosticFactory
 
         end = position;
         return end > start;
+    }
+
+    private static int FindCompilerLocationDelimiter(string text, int start)
+    {
+        for (var position = start; position < text.Length; position++)
+        {
+            if (text[position] != '(')
+            {
+                continue;
+            }
+
+            var close = text.IndexOf(')', position + 1);
+            if (close <= position || close + 1 >= text.Length || text[close + 1] != ':')
+            {
+                continue;
+            }
+
+            var location = text[(position + 1)..close];
+            var comma = location.IndexOf(',');
+            if (comma > 0
+                && int.TryParse(location[..comma], NumberStyles.Integer, CultureInfo.InvariantCulture, out _)
+                && int.TryParse(location[(comma + 1)..], NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+            {
+                return position;
+            }
+        }
+
+        return -1;
     }
 
     private static bool IsUrlPath(string text, int start)
