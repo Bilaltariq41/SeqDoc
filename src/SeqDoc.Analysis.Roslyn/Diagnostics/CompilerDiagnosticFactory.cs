@@ -62,7 +62,8 @@ internal static class CompilerDiagnosticFactory
     public static ImmutableArray<AnalysisDiagnostic> CreateWorkspace(
         IEnumerable<WorkspaceDiagnostic> workspaceDiagnostics,
         CompilationProfileId profile,
-        Func<string, string?, bool>? isWarningPromoted = null)
+        Func<string, string?, bool>? isWarningPromoted = null,
+        string? repositoryRoot = null)
     {
         var ordered = workspaceDiagnostics
             .OrderBy(diagnostic => diagnostic.Kind)
@@ -82,7 +83,7 @@ internal static class CompilerDiagnosticFactory
                     ? "MSBuild could not load part of the selected project graph."
                     : "MSBuild reported a workspace warning.",
                 new DiagnosticLocation("MSBuild workspace", profile),
-                diagnostic.Message,
+                 ConfineDiagnosticText(diagnostic.Message, repositoryRoot),
                 effectiveKind == WorkspaceDiagnosticKind.Failure
                     ? "The compiler gate failed and no Program Index was produced."
                     : "Analysis can continue, but the project may not match the intended build.",
@@ -99,7 +100,8 @@ internal static class CompilerDiagnosticFactory
 
     public static ImmutableArray<AnalysisDiagnostic> CreateCompiler(
         IEnumerable<(Diagnostic Diagnostic, StableProjectId Project)> compilerDiagnostics,
-        CompilationProfileId profile)
+        CompilationProfileId profile,
+        string? repositoryRoot = null)
     {
         var ordered = compilerDiagnostics
             .OrderBy(item => item.Diagnostic.Id, StringComparer.Ordinal)
@@ -113,7 +115,7 @@ internal static class CompilerDiagnosticFactory
         {
             var lineSpan = item.Diagnostic.Location.GetLineSpan();
             var description = lineSpan.IsValid
-                ? $"{lineSpan.Path}({lineSpan.StartLinePosition.Line + 1},{lineSpan.StartLinePosition.Character + 1})"
+                ? $"{ConfinePath(lineSpan.Path, repositoryRoot)}({lineSpan.StartLinePosition.Line + 1},{lineSpan.StartLinePosition.Character + 1})"
                 : "compiler";
 
             return Create(
@@ -122,7 +124,7 @@ internal static class CompilerDiagnosticFactory
                 AnalysisStage.CompilationValidation,
                 item.Diagnostic.GetMessage(CultureInfo.InvariantCulture),
                 new DiagnosticLocation(description, profile, item.Project),
-                item.Diagnostic.ToString(),
+                 ConfineDiagnosticText(item.Diagnostic.ToString(), repositoryRoot),
                 "The compiler gate failed and no Program Index was produced.",
                 "Fix the compiler error using the selected configuration and target framework, then retry.",
                 profile,
@@ -204,4 +206,175 @@ internal static class CompilerDiagnosticFactory
             CertaintyLevel.Exact,
             internalDetail: internalDetail);
     }
+
+    private static string ConfineDiagnosticText(string text, string? repositoryRoot)
+    {
+        if (string.IsNullOrWhiteSpace(repositoryRoot))
+        {
+            return text;
+        }
+
+        var builder = new System.Text.StringBuilder(text.Length);
+        var position = 0;
+        while (position < text.Length)
+        {
+            if (IsUrlStart(text, position))
+            {
+                var urlEnd = position;
+                while (urlEnd < text.Length && !char.IsWhiteSpace(text[urlEnd]))
+                {
+                    urlEnd++;
+                }
+
+                builder.Append(text[position..urlEnd]);
+                position = urlEnd;
+                continue;
+            }
+
+            if (!TryReadAbsolutePath(text, position, out var end)
+                || IsUrlPath(text, position))
+            {
+                builder.Append(text[position++]);
+                continue;
+            }
+
+            builder.Append(ConfinePath(text[position..end], repositoryRoot));
+            position = end;
+        }
+
+        return builder.ToString();
+    }
+
+    private static bool IsUrlStart(string text, int start)
+    {
+        var separator = text.IndexOf("://", start, StringComparison.Ordinal);
+        if (separator <= start)
+        {
+            return false;
+        }
+
+        for (var position = start; position < separator; position++)
+        {
+            if (!char.IsLetter(text[position]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static string ConfinePath(string path, string? repositoryRoot)
+    {
+        if (string.IsNullOrWhiteSpace(repositoryRoot) || !IsAbsolutePath(path))
+        {
+            return path;
+        }
+
+        var root = NormalizePath(repositoryRoot);
+        var candidate = NormalizePath(path);
+        if (root is null || candidate is null)
+        {
+            return "<external-path>";
+        }
+
+        var comparison = IsWindowsPath(root) || IsWindowsPath(candidate)
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (!candidate.Equals(root, comparison)
+            && !(root == "/" ? candidate.StartsWith('/') : candidate.StartsWith(root + "/", comparison)))
+        {
+            return "<external-path>";
+        }
+
+        var relative = candidate[root.Length..].TrimStart('/');
+        return relative;
+    }
+
+    private static bool TryReadAbsolutePath(string text, int start, out int end)
+    {
+        end = start;
+        if (!IsAbsolutePathStart(text, start) || (start > 0 && text[start - 1] == ':'))
+        {
+            return false;
+        }
+
+        var position = start;
+        while (position < text.Length && !char.IsWhiteSpace(text[position])
+            && !"\"'<>|".Contains(text[position]))
+        {
+            position++;
+        }
+
+        while (position > start && ".,;:!?]}".Contains(text[position - 1]))
+        {
+            position--;
+        }
+
+        var parenthesis = text.IndexOf('(', start, position - start);
+        if (parenthesis > start)
+        {
+            position = parenthesis;
+        }
+
+        end = position;
+        return end > start;
+    }
+
+    private static bool IsUrlPath(string text, int start)
+    {
+        var boundary = start - 1;
+        while (boundary >= 0 && !char.IsWhiteSpace(text[boundary]))
+        {
+            boundary--;
+        }
+
+        return text[(boundary + 1)..Math.Min(start + 1, text.Length)].Contains("://", StringComparison.Ordinal);
+    }
+
+    private static bool IsAbsolutePath(string path) =>
+        path.StartsWith('/') || path.StartsWith('\\')
+        || (path.Length >= 3 && char.IsLetter(path[0]) && path[1] == ':'
+            && (path[2] == '/' || path[2] == '\\'));
+
+    private static bool IsAbsolutePathStart(string text, int start) =>
+        text[start] == '/' || text[start] == '\\'
+        || (start + 2 < text.Length && char.IsLetter(text[start]) && text[start + 1] == ':'
+            && (text[start + 2] == '/' || text[start + 2] == '\\'));
+
+    private static string? NormalizePath(string path)
+    {
+        var value = path.Replace('\\', '/');
+        var windows = value.Length >= 2 && value[1] == ':';
+        var prefix = windows ? value[..2] : value.StartsWith("//", StringComparison.Ordinal) ? "//" : "/";
+        var remainder = value[prefix.Length..];
+        var segments = new List<string>();
+        foreach (var segment in remainder.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (segment == ".")
+            {
+                continue;
+            }
+            if (segment == "..")
+            {
+                if (segments.Count == 0)
+                {
+                    return null;
+                }
+                segments.RemoveAt(segments.Count - 1);
+            }
+            else
+            {
+                segments.Add(segment);
+            }
+        }
+
+        var normalized = prefix + string.Join("/", segments);
+        return normalized.Length > prefix.Length && normalized.EndsWith('/')
+            ? normalized.TrimEnd('/')
+            : normalized;
+    }
+
+    private static bool IsWindowsPath(string path) => path.Length >= 2 && path[1] == ':'
+        || path.StartsWith("//", StringComparison.Ordinal);
 }

@@ -79,10 +79,12 @@ internal static class CompilationWorkspaceLoader
             var convertedWorkspaceDiagnostics = CompilerDiagnosticFactory.CreateWorkspace(
                 workspaceDiagnostics,
                 request.Profile.Id,
-                warningPolicy.IsPromoted);
+                warningPolicy.IsPromoted,
+                request.RepositoryRoot);
             var convertedCompilerDiagnostics = CompilerDiagnosticFactory.CreateCompiler(
                 compilerErrors,
-                request.Profile.Id);
+                request.Profile.Id,
+                request.RepositoryRoot);
             var diagnostics = convertedWorkspaceDiagnostics
                 .AddRange(convertedCompilerDiagnostics)
                 .OrderBy(diagnostic => diagnostic.Id.Value, StringComparer.Ordinal)
