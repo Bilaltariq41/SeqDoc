@@ -4,7 +4,7 @@
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Apply the approved acceptance-test repair, run the corrected focused command once, inspect the complete candidate, and stop at ReviewRequired.",
+  "nextAction": "Run one independent complete-candidate review; resolve every finding before any final gate.",
   "schemaVersion": 1,
   "sourceId": "GH-93"
 }

@@ -2,7 +2,7 @@
 
 ## State
 
-`Building`
+`ReviewRequired`
 
 ## Authority and frozen state
 
