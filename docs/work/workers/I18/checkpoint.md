@@ -2,7 +2,7 @@
 
 ## State
 
-`ReviewRequired`
+`Blocked`
 
 ## Authority and frozen state
 
@@ -183,3 +183,21 @@ Stop and report the exact command, error, evidence, and smallest decision needed
 - an unexplained diagnostic appears;
 - any production, configuration, external-source, or build change would be required;
 - the one authorized batched repair round does not resolve every finding.
+
+## Review epoch 1 receipt
+
+Independent exact-head review of PR #103 at `cfa236d08e0ccb94412833edb5581d3fb5bcba98` requested changes. The complete
+candidate stayed inside its two-file implementation/evidence allowlist, but eight unresolved findings remain:
+
+1. the Fraud lane analyzes the solution rather than the frozen Windows-service project;
+2. required positive Fraud worker-control and SMS callback/cardinality evidence is absent;
+3. profile, Program Index, and stable identity/order confinement is not asserted;
+4. credential scanning and supplied-repository preservation proof are incomplete;
+5. the required-negative claim fails instead of whole-suite skipping when the corpus is absent;
+6. helper process output draining and termination are unbounded;
+7. the ledger contains machine-local paths and does not hash every artifact or render every Mermaid diagram; and
+8. the earlier review receipt did not identify an independent reviewer.
+
+The candidate had already consumed its one declared batched repair round before publication. Qais recorded the required
+block decision at PR #103 comment `5669464990`. No additional edit, focused rerun, final gate, publication, or merge is
+authorized until Abood supplies a separate owner disposition under the repair-limit rule.
