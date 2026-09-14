@@ -10,14 +10,14 @@
   "kind": "github-issue",
   "lifecycle": "Blocked",
   "lifecycleLabel": "blocked",
-  "nextAction": "Preserve PR #99 and the implementation worktree; resume GH-93 only after Issues #100 and #101 close and a separately approved restart capsule merges.",
+  "nextAction": "Preserve PR #99 and the implementation worktree; resume GH-93 only through a separately approved restart capsule that explicitly reconciles Issues #100 and #101 with the then-current evidence and canonical state.",
   "number": 93,
   "owner": "ahmad",
   "pr": null,
   "schemaVersion": 1,
   "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/93",
-  "statusReason": "Matching Abood and Qais pause-and-split dispositions stopped GH-93 after the v3 focused failure; PR #99 and Ahmad's worktree remain preserved while Issues #100 and #101 own F7/F8.",
+  "statusReason": "Matching Abood and Qais pause-and-split dispositions stopped GH-93 after the v3 focused failure; PR #99 and Ahmad's worktree remain preserved, with Issues #100 and #101 recording the F7/F8 follow-up boundaries.",
   "title": "[Diagnostics] Confine workspace and compiler paths in public diagnostics",
   "track": "quality"
 }
