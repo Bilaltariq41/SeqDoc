@@ -2,7 +2,7 @@
 
 ## State
 
-`NotStarted`
+`Building`
 
 ## Authority and frozen state
 
@@ -16,9 +16,9 @@ its current reconciled body (post v2 CreditTransfer amendment) at baseline `ac1a
 - Supplemental T2 receipt (behavior fingerprint, run ID, two-run byte equality, config hash): https://github.com/Bilaltariq41/SeqDoc/issues/18#issuecomment-5634313569
 - Readiness review repair (I18-R1/R2/R3/R4): https://github.com/Bilaltariq41/SeqDoc/pull/96
 
-This readiness transaction authorizes publication only. It does not authorize implementation and does not activate
-GH-18. Implementation begins only after this readiness PR merges, GH-18 is selected and activated through
-`tools/governance/work_state.py`, and the required Test Writer is dispatched before any acceptance-test edit.
+PR #96 was the readiness publication only and did not activate GH-18. PR #102 is the separate activation handoff.
+After PR #102 merges and lifecycle synchronization succeeds, implementation begins only after the Orchestrator posts
+the frozen I18 implementation capsule and dispatches the required Test Writer before any acceptance-test edit.
 
 ## Objective
 
