@@ -4,7 +4,7 @@
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Post the I18 implementation plan, dispatch the required Test Writer, and establish the acceptance-only candidate within the frozen allowlist before running the focused command.",
+  "nextAction": "Arrange one independent exact-head review of PR #103 against docs/work/workers/I18/checkpoint.md before any final-gate action; do not rerun the focused command on the unchanged candidate.",
   "schemaVersion": 1,
   "sourceId": "GH-18"
 }
