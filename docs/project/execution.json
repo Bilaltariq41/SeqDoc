@@ -4,7 +4,7 @@
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Implement the I100-A Windows contained-process ownership primitive per the frozen checkpoint capsule; delegate to a builder, then stop at ReviewRequired for independent review.",
+  "nextAction": "Awaiting one independent, non-author, Windows-focused human/reviewer-agent peer review of the complete candidate at PR #108 (branch testing/issue-106-process-ownership). Resolve every finding before the declared final gate.",
   "schemaVersion": 1,
   "sourceId": "GH-106"
 }
