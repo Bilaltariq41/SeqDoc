@@ -1,10 +1,10 @@
 {
-  "activeCheckpointId": null,
-  "activeCheckpointPath": null,
+  "activeCheckpointId": "I100-A",
+  "activeCheckpointPath": "docs/work/quality/I100-A",
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
-  "mode": "idle",
-  "nextAction": "No work item is selected.",
+  "mode": "active",
+  "nextAction": "All findings repaired and independently reverified across four review rounds; final gate run once with only pre-existing, structurally-unrelated failures (4/93, see docs/work/quality/I100-A/ledger.md). GH-106 cannot transition to Closed until the GitHub issue itself closes via merge. Awaiting owner decision on whether to push commits 1c23f9b/9192152/bd6440c/f13857e/892c103/etc. and post the repair summary to PR #108 for Abood-essa's re-review.",
   "schemaVersion": 1,
-  "sourceId": null
+  "sourceId": "GH-106"
 }

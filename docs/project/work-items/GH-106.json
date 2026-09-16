@@ -1,0 +1,23 @@
+{
+  "baseline": "ab6e3e1cf16213ee5346506b16949fa32c4ddfa4",
+  "branch": "testing/issue-106-process-ownership",
+  "checkpointId": "I100-A",
+  "checkpointPath": "docs/work/quality/I100-A",
+  "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/106",
+  "dependencies": [],
+  "expectedGithubState": "OPEN",
+  "id": "GH-106",
+  "kind": "github-issue",
+  "lifecycle": "Verifying",
+  "lifecycleLabel": "verifying",
+  "nextAction": "All findings repaired and independently reverified across four review rounds; final gate run once with only pre-existing, structurally-unrelated failures (4/93, see docs/work/quality/I100-A/ledger.md). GH-106 cannot transition to Closed until the GitHub issue itself closes via merge. Awaiting owner decision on whether to push commits 1c23f9b/9192152/bd6440c/f13857e/892c103/etc. and post the repair summary to PR #108 for Abood-essa's re-review.",
+  "number": 106,
+  "owner": "qais",
+  "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/108",
+  "schemaVersion": 1,
+  "selectedForExecution": true,
+  "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/106",
+  "statusReason": "Final gate (dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release) run once on head 88ba3df: Failed 4, Passed 89, Skipped 0, Total 93. All 46 ProcessOwnershipTests pass. The 4 failures match the same pre-existing, structurally-unrelated signatures already documented in this repo's history (SD1102 multi-SDK conflict, external-corpus SD4011 drift). Not characterized as passed -- literal result recorded per Abood-essa's explicit wording critique.",
+  "title": "[Testing] Prove Windows contained-process ownership primitive",
+  "track": "quality"
+}

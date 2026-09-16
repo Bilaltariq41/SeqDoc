@@ -13,6 +13,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj" />
+    <Project Path="tests/SeqDoc.AcceptanceTests.ProcessOwnershipStub/SeqDoc.AcceptanceTests.ProcessOwnershipStub.csproj" />
     <Project Path="tests/SeqDoc.Analysis.Tests/SeqDoc.Analysis.Tests.csproj" />
     <Project Path="tests/SeqDoc.Behavior.Tests/SeqDoc.Behavior.Tests.csproj" />
     <Project Path="tests/SeqDoc.Cli.Tests/SeqDoc.Cli.Tests.csproj" />

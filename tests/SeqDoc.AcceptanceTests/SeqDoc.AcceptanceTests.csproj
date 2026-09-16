@@ -4,10 +4,20 @@
     <ProjectReference Include="..\..\src\SeqDoc.Cli\SeqDoc.Cli.csproj" />
     <ProjectReference Include="..\..\src\SeqDoc.Application\SeqDoc.Application.csproj" />
     <ProjectReference Include="..\..\src\SeqDoc.Core\SeqDoc.Core.csproj" />
+    <!-- GH-106/I100-A: builds the deterministic test-child ahead of ProcessOwnershipTests.cs. The
+         primitive under test resolves the stub's built exe path at run time (see
+         ProcessOwnershipTests.cs's ResolveStubExecutablePath) rather than via a compile-time asset
+         reference, so this reference carries zero shared-type dependency. -->
+    <ProjectReference Include="..\SeqDoc.AcceptanceTests.ProcessOwnershipStub\SeqDoc.AcceptanceTests.ProcessOwnershipStub.csproj"
+                       ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <PropertyGroup>
     <IsTestProject>true</IsTestProject>
+    <!-- GH-106/I100-A finalized contract decision 3: unsafe pointer construction for the
+         PROC_THREAD_ATTRIBUTE_LIST handle-inheritance restriction and job-object completion-port
+         buffers in ProcessOwnership.cs. Never set on the stub project. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
