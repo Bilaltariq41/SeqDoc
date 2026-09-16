@@ -2,7 +2,7 @@
 
 ## State
 
-`Verifying`
+`ResolvingFindings`
 
 ## Authority and frozen state
 
