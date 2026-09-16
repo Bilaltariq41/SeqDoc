@@ -96,8 +96,10 @@ internal static class Program
     }
 
     // utf8-boundary — GH106-R2-F10: writes exactly 65535 single-byte filler bytes, then a 3-byte UTF-8
-    // character (so its first byte lands at offset 65535, splitting it exactly across DrainPipe's 64 KiB
-    // read boundary), then a trailing marker.
+    // character (so its first byte lands at offset 65535), then a trailing marker. The caller (see
+    // ContainedProcess.PipeBufferSizeOverrideForTests in ProcessOwnershipTests.cs) forces the pipe's
+    // buffer large enough to hold this whole payload atomically, so the split is guaranteed, by
+    // construction, to land exactly at that offset, straddling DrainPipe's real 64 KiB read boundary.
     private static int RunUtf8Boundary()
     {
         using var stdout = Console.OpenStandardOutput();

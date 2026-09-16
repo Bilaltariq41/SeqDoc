@@ -649,20 +649,31 @@ public sealed class ProcessOwnershipTests
     [Fact]
     public async Task Utf8MultibyteCharacterStraddling64KiBReadBoundaryDecodesCorrectly()
     {
-        // GH106-R2-F10: a multibyte UTF-8 character split exactly across DrainPipe's 64 KiB read boundary
-        // must decode correctly, not as corrupted/replacement-character fragments, while Truncated stays
-        // false.
-        var options = NewOptions(["utf8-boundary"]);
-        var result = ContainedProcess.Start(options);
-        Assert.True(result.Succeeded, result.Detail);
-        using var process = result.Process!;
+        // GH106-R2-F10 follow-up: a non-overlapped anonymous-pipe ReadFile returns as soon as any data is
+        // available, not only once a full 64 KiB buffer fills, so the byte offset any given DrainPipe
+        // Read() call actually returns at is governed by the OS pipe's own buffer size/scheduling — not by
+        // the stub's chosen 65535-byte filler length — unless the pipe buffer is made large enough to hold
+        // the whole payload atomically. Force that here so the split is guaranteed, by construction, to
+        // land exactly at the stub's chosen offset, straddling DrainPipe's 64 KiB read boundary.
+        ContainedProcess.PipeBufferSizeOverrideForTests = 80000;
+        try
+        {
+            var options = NewOptions(["utf8-boundary"]);
+            var result = ContainedProcess.Start(options);
+            Assert.True(result.Succeeded, result.Detail);
+            using var process = result.Process!;
 
-        var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
 
-        Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
-        Assert.False(wait.StdOut.Truncated);
-        string expected = new string('x', 65535) + "€" + "-MARKER-END";
-        Assert.Equal(expected, wait.StdOut.Text);
+            Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+            Assert.False(wait.StdOut.Truncated);
+            string expected = new string('x', 65535) + "€" + "-MARKER-END";
+            Assert.Equal(expected, wait.StdOut.Text);
+        }
+        finally
+        {
+            ContainedProcess.PipeBufferSizeOverrideForTests = null;
+        }
     }
 
     [Fact]

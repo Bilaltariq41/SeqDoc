@@ -138,8 +138,12 @@ ledger, and `checkpoint.md`.
   pure string-transform claim): `EnvironmentBlockDedupIsCaseInsensitiveLastWriteWinsAndWellFormed`.
 - **F10**: `DrainPipe` now holds one `Decoder` (`Encoding.UTF8.GetDecoder()`) across the whole read loop instead of
   calling `Encoding.UTF8.GetString` independently per 64 KiB chunk, flushing the decoder at EOF. New stub command
-  `utf8-boundary` writes exactly 65535 filler bytes then a 3-byte UTF-8 character, splitting it exactly across the
-  read boundary. Proof: `Utf8MultibyteCharacterStraddling64KiBReadBoundaryDecodesCorrectly`.
+  `utf8-boundary` writes exactly 65535 filler bytes then a 3-byte UTF-8 character, so its first byte lands at offset
+  65535. The proof test also sets a new test-only `ContainedProcess.PipeBufferSizeOverrideForTests` seam (consumed
+  by `CreatePipePair`, defaulting to `0`/system-default in every other caller) large enough to hold the whole
+  payload, so the pipe buffers it atomically before the parent's first read — guaranteeing by construction, not just
+  usually in practice, that the multibyte character is actually split exactly across `DrainPipe`'s real 64 KiB read
+  boundary. Proof: `Utf8MultibyteCharacterStraddling64KiBReadBoundaryDecodesCorrectly`.
 - **F11**: `Dispose()`'s close order corrected to true exact reverse acquisition order: process handle, thread
   handle, environment-block buffer, command-line buffer, completion port handle, job handle, attribute-list buffer,
   handle-list buffer, stderr pipe, stdout pipe, stdin pipe (see `checkpoint.md` for the full derivation).

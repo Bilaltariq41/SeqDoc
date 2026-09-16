@@ -199,6 +199,12 @@ finding-by-finding root cause and proof:
 - **Family-exit-proof failure recording (GH106-R2-F2/F3).** Inability to observe `ACTIVE_PROCESS_ZERO` within its
   bound (production default 10s) is now itself recorded as `ProcessFailed` on both the normal-exit path and the
   timeout/cancellation path (which now awaits family exit after forced termination rather than only terminating).
+  Contract note: because the timeout/cancellation path now also awaits `WaitForActiveProcessZero` after forced
+  termination, `WaitAsync(timeout: X, ...)` can legitimately take up to roughly `X + 10s` (the production-default
+  `_activeProcessZeroBound`) in the worst case — e.g. `TerminateJobObject` succeeds but IOCP's
+  `JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO` notification is delayed. This is an intentional trade-off (terminate *and*
+  await proof of family exit, not terminate-and-hope), not a bug; a future caller (e.g. #107) should budget for this
+  ceiling rather than assume `WaitAsync` returns at or immediately after `X`.
 - **`TerminateJobObject`/`WaitForSingleObject` failure recording (GH106-R2-F4/F5).** Both native call families now
   have their return values checked at every call site; a genuine failure records `ProcessFailed` with the captured
   `Win32Error`, distinct from a benign timeout.
@@ -212,7 +218,11 @@ finding-by-finding root cause and proof:
   (was `Ordinal`), matching Windows environment-variable case-insensitivity.
 - **Stream decoding (GH106-R2-F10).** `DrainPipe` now holds one `Decoder` across its whole read loop instead of
   decoding each 64 KiB chunk independently, so a multibyte UTF-8 character split across a read boundary decodes
-  correctly.
+  correctly. The fix is unconditionally correct regardless of where any given split lands; the proof test forces the
+  split to a deterministic offset via a test-only `PipeBufferSizeOverrideForTests` seam on `CreatePipePair` (the
+  default anonymous-pipe buffer is far smaller than 64 KiB and a non-overlapped `ReadFile` can return well before it
+  fills, so without this seam the split's actual offset would be governed by uncontrolled OS pipe
+  buffering/scheduling, not by the stub's chosen byte offset).
 - **Exact teardown order (GH106-R2-F11).** `Dispose()`'s close order is now true exact reverse acquisition order:
   process handle, thread handle, environment-block buffer, command-line buffer, completion port handle, job handle,
   attribute-list buffer, handle-list buffer, stderr pipe, stdout pipe, stdin pipe (the last a no-op given the stdin

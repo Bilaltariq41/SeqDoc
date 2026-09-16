@@ -302,6 +302,14 @@ public sealed class ContainedProcess : IDisposable
     /// <summary>GH106-R2-F5 test-only seam: overrides the real <c>WaitForSingleObject</c> call.</summary>
     internal static Func<nint, int, uint>? WaitForSingleObjectOverrideForTests;
 
+    /// <summary>
+    /// GH106-R2-F10 follow-up test-only seam: overrides the anonymous pipe's requested buffer size
+    /// (<c>nSize</c> passed to <c>CreatePipe</c>). <c>null</c> preserves the production default of
+    /// <c>0</c> (system default), matching every other <c>...ForTests</c> seam in this file — never
+    /// reachable from any production caller.
+    /// </summary>
+    internal static int? PipeBufferSizeOverrideForTests;
+
     public int ProcessId { get; private set; }
 
     /// <summary>
@@ -1168,7 +1176,7 @@ public sealed class ContainedProcess : IDisposable
             bInheritHandle = false,
         };
 
-        if (!NativeMethods.CreatePipe(out readHandle, out writeHandle, ref security, 0))
+        if (!NativeMethods.CreatePipe(out readHandle, out writeHandle, ref security, (uint)(PipeBufferSizeOverrideForTests ?? 0)))
         {
             throw Win32("CreatePipe");
         }
