@@ -350,6 +350,11 @@ public sealed class ContainedProcess : IDisposable
     private CancellationTokenSource? _completionMonitorCts;
     private CancellationTokenSource? _drainCts;
     private volatile bool _activeProcessZeroObserved;
+    private bool _stdOutDrainCompleted;
+    private bool _stdErrDrainCompleted;
+    private bool _drainsCompletedBeforeCompletionProof;
+    private bool _drainCompletionEvaluated;
+    private bool _terminalRequiredByDrainCompletion;
     private bool _terminateJobObjectCalled;
     private LifecycleState _lifecycleState = LifecycleState.Running;
     private readonly object _lifecycleGate = new();
@@ -359,10 +364,6 @@ public sealed class ContainedProcess : IDisposable
     private Task<ProcessOwnershipWaitResult>? _waitTask;
     private readonly ProcessOwnershipNativeCalls _nativeCalls;
     private int _peekFailureRecorded;
-    private volatile bool _drainCompletedBeforeActiveZero;
-    private long _drainCompletedTimestamp;
-    private long _familyProofStartedTimestamp;
-    private long _familyProofCompletedTimestamp;
 
     // GH106-R2-F2: production default is 10s; only a test seam may shrink it (never reachable from a
     // production caller — there is no public setter).
@@ -877,7 +878,6 @@ public sealed class ContainedProcess : IDisposable
         bool waitFailed = false;
         bool deadlineExpired = false;
         bool callerCancelled = false;
-        bool delayedFamilyProof = false;
         try
         {
             var outcome = await Task.Run(() => WaitForSingleProcessExit(linked.Token), CancellationToken.None)
@@ -930,11 +930,6 @@ public sealed class ContainedProcess : IDisposable
         }
         else
         {
-            if (!_activeProcessZeroObserved)
-            {
-                await EnsureTerminalAsync().ConfigureAwait(false);
-            }
-
             if (!NativeMethods.GetExitCodeProcess(_processHandle, out uint code))
             {
                 _failures.Record(ProcessOwnershipFailureClass.ProcessFailed, "GetExitCodeProcess failed.");
@@ -956,24 +951,19 @@ public sealed class ContainedProcess : IDisposable
             Task waitDeadline = Task.Delay(Timeout.InfiniteTimeSpan, linked.Token);
             Task raceWinner = await Task.WhenAny(familyProof, drainCompletion, waitDeadline).ConfigureAwait(false);
             bool activeZeroObservedAtRace = _activeProcessZeroObserved;
-            long drainCompletedAt = Interlocked.Read(ref _drainCompletedTimestamp);
-            long familyProofCompletedAt = Interlocked.Read(ref _familyProofCompletedTimestamp);
-            bool familyProofWasDelayed = familyProofCompletedAt != 0
-                && familyProofCompletedAt - Interlocked.Read(ref _familyProofStartedTimestamp)
-                    > System.Diagnostics.Stopwatch.Frequency / 2;
-            delayedFamilyProof = familyProofWasDelayed;
-            bool drainCompletedBeforeProof = _drainCompletedBeforeActiveZero
-                || (drainCompletedAt != 0 && familyProofCompletedAt != 0 && drainCompletedAt < familyProofCompletedAt)
-                || (familyProofWasDelayed && drainCompletion.IsCompleted);
-            if ((raceWinner != familyProof && !activeZeroObservedAtRace) || drainCompletedBeforeProof)
+            if (raceWinner != familyProof && !activeZeroObservedAtRace)
             {
                 _failures.Record(
                     ProcessOwnershipFailureClass.ProcessFailed,
                     "Family exit was not proven before forced terminal enforcement.");
             }
-            if (raceWinner != familyProof)
+            if (raceWinner == waitDeadline)
             {
                 await EnsureTerminalAsync().ConfigureAwait(false);
+            }
+            else if (drainCompletion.IsCompleted)
+            {
+                await EvaluateCompletedDrainsAsync().ConfigureAwait(false);
             }
 
             // Complete the shared proof task before constructing the immutable wait result. If proof
@@ -981,13 +971,6 @@ public sealed class ContainedProcess : IDisposable
             bool familyProven = await EnsureFamilyProofAsync(CancellationToken.None).ConfigureAwait(false);
             if (!familyProven)
             {
-                await EnsureTerminalAsync().ConfigureAwait(false);
-            }
-            else if (drainCompletedBeforeProof)
-            {
-                // The drain may have won the underlying race just before the proof continuation was
-                // scheduled. Preserve the operation evidence from that boundary, even if proof arrives
-                // immediately afterward.
                 await EnsureTerminalAsync().ConfigureAwait(false);
             }
         }
@@ -1008,10 +991,6 @@ public sealed class ContainedProcess : IDisposable
         var deadlineTask = Task.Delay(_drainTimeout, linked.Token);
         var drainRaceWinner = await Task.WhenAny(drainsTask, deadlineTask).ConfigureAwait(false);
         bool drainDeadlineForcedTermination = drainRaceWinner == deadlineTask;
-        if (!drainDeadlineForcedTermination && delayedFamilyProof)
-        {
-            await EnsureTerminalAsync().ConfigureAwait(false);
-        }
         if (drainDeadlineForcedTermination)
         {
             bool terminalSucceeded = await EnsureTerminalAsync().ConfigureAwait(false);
@@ -1021,6 +1000,10 @@ public sealed class ContainedProcess : IDisposable
                 // success, leave drains running to consume buffered bytes and observe EOF.
                 _drainCts?.Cancel();
             }
+        }
+        else
+        {
+            await EvaluateCompletedDrainsAsync().ConfigureAwait(false);
         }
 
         var (stdOutText, stdOutTruncated) = await AwaitDrainBounded(stdOutDrainTask).ConfigureAwait(false);
@@ -1162,17 +1145,65 @@ public sealed class ContainedProcess : IDisposable
         lock (_lifecycleGate) { return _familyProofTask ??= RunFamilyProofAsync(cancellationToken); }
     }
 
+    private void MarkDrainCompleted(bool standardError)
+    {
+        lock (_lifecycleGate)
+        {
+            if (standardError)
+            {
+                _stdErrDrainCompleted = true;
+            }
+            else
+            {
+                _stdOutDrainCompleted = true;
+            }
+
+            if (_stdOutDrainCompleted && _stdErrDrainCompleted && !_activeProcessZeroObserved)
+            {
+                _drainsCompletedBeforeCompletionProof = true;
+            }
+        }
+    }
+
+    private async Task EvaluateCompletedDrainsAsync()
+    {
+        lock (_lifecycleGate)
+        {
+            if (!_drainsCompletedBeforeCompletionProof || _drainCompletionEvaluated)
+            {
+                return;
+            }
+
+            _drainCompletionEvaluated = true;
+        }
+
+        NativeCallResult<uint> activeProcesses = QueryActiveProcessCount();
+        if (!activeProcesses.Succeeded)
+        {
+            _failures.Record(
+                ProcessOwnershipFailureClass.ProcessFailed,
+                $"QueryInformationJobObject failed with Win32 error {activeProcesses.Win32Error}.");
+            lock (_lifecycleGate) { _terminalRequiredByDrainCompletion = true; }
+        }
+        else if (activeProcesses.Value > 0)
+        {
+            _failures.Record(
+                ProcessOwnershipFailureClass.ProcessFailed,
+                "Family exit was not proven before forced terminal enforcement.");
+            lock (_lifecycleGate) { _terminalRequiredByDrainCompletion = true; }
+        }
+
+        bool terminalRequired;
+        lock (_lifecycleGate) { terminalRequired = _terminalRequiredByDrainCompletion; }
+        if (terminalRequired)
+        {
+            await EnsureTerminalAsync().ConfigureAwait(false);
+        }
+    }
+
     private async Task<bool> RunFamilyProofAsync(CancellationToken cancellationToken)
     {
-        Interlocked.CompareExchange(
-            ref _familyProofStartedTimestamp,
-            System.Diagnostics.Stopwatch.GetTimestamp(),
-            0);
         await WaitForActiveProcessZero(cancellationToken).ConfigureAwait(false);
-        Interlocked.CompareExchange(
-            ref _familyProofCompletedTimestamp,
-            System.Diagnostics.Stopwatch.GetTimestamp(),
-            0);
         bool proven = _activeProcessZeroObserved;
         if (!proven)
         {
@@ -1303,12 +1334,12 @@ public sealed class ContainedProcess : IDisposable
     {
         _drainTimeout = timeout;
         _drainCts = new CancellationTokenSource();
-        _stdOutDrain = Task.Run(() => DrainPipe(_parentStdOutRead, timeout, _drainCts.Token));
-        _stdErrDrain = Task.Run(() => DrainPipe(_parentStdErrRead, timeout, _drainCts.Token));
+        _stdOutDrain = Task.Run(() => DrainPipe(_parentStdOutRead, timeout, false, _drainCts.Token));
+        _stdErrDrain = Task.Run(() => DrainPipe(_parentStdErrRead, timeout, true, _drainCts.Token));
     }
 
     private (string Text, bool Truncated) DrainPipe(
-        nint readHandle, TimeSpan timeout, CancellationToken cancellationToken)
+        nint readHandle, TimeSpan timeout, bool standardError, CancellationToken cancellationToken)
     {
         using var stream = new FileStream(
             new Microsoft.Win32.SafeHandles.SafeFileHandle(readHandle, ownsHandle: false),
@@ -1358,6 +1389,7 @@ public sealed class ContainedProcess : IDisposable
                     available = peek.Value;
                 }
 
+                bool pipeClosed = available == uint.MaxValue;
                 if (available == 0)
                 {
                     if (_activeProcessZeroObserved)
@@ -1370,6 +1402,10 @@ public sealed class ContainedProcess : IDisposable
                         continue;
                     }
                 }
+                else if (pipeClosed)
+                {
+                    available = (uint)buffer.Length;
+                }
 
                 read = stream.Read(buffer, 0, (int)Math.Min((uint)buffer.Length, available));
             }
@@ -1381,18 +1417,7 @@ public sealed class ContainedProcess : IDisposable
 
             if (read == 0)
             {
-                Interlocked.CompareExchange(
-                    ref _drainCompletedTimestamp,
-                    System.Diagnostics.Stopwatch.GetTimestamp(),
-                    0);
-                if (!_activeProcessZeroObserved)
-                {
-                    _drainCompletedBeforeActiveZero = true;
-                    // EOF is not family proof. Start the shared terminal operation immediately so a
-                    // descendant that closed the inherited pipe first cannot reach natural completion
-                    // while the proof task is still waiting on ACTIVE_PROCESS_ZERO.
-                    _ = EnsureTerminalAsync();
-                }
+                MarkDrainCompleted(standardError);
                 int flushedChars = decoder.GetChars(ReadOnlySpan<byte>.Empty, charBuffer, flush: true);
                 if (flushedChars > 0)
                 {
@@ -1479,6 +1504,23 @@ public sealed class ContainedProcess : IDisposable
             : NativeCallResult.Failure(Marshal.GetLastWin32Error());
     }
 
+    private NativeCallResult<uint> QueryActiveProcessCount()
+    {
+        var accounting = default(NativeMethods.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION);
+        if (!NativeMethods.QueryInformationJobObject(
+            _jobHandle,
+            NativeMethods.JobObjectBasicAccountingInformation,
+            ref accounting,
+            (uint)Marshal.SizeOf<NativeMethods.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>(),
+            out _))
+        {
+            int error = Marshal.GetLastWin32Error();
+            return NativeCallResult<uint>.Failure(error);
+        }
+
+        return NativeCallResult<uint>.Success(accounting.ActiveProcesses);
+    }
+
     private NativeCallResult<uint> InvokePeekNamedPipe(nint handle)
     {
         if (_nativeCalls.PeekNamedPipe is not null)
@@ -1489,7 +1531,13 @@ public sealed class ContainedProcess : IDisposable
         {
             int error = Marshal.GetLastWin32Error();
             // ERROR_BROKEN_PIPE is the normal anonymous-pipe EOF indication, not a probe failure.
-            return error is 109 or 232 ? NativeCallResult<uint>.Success(0) : NativeCallResult<uint>.Failure(error);
+            // Preserve the broken-pipe EOF indication distinctly from a live pipe with no buffered
+            // bytes. The sentinel is outside the DWORD byte-count domain and lets DrainPipe perform
+            // the bounded synchronous read that observes EOF without treating ordinary emptiness as
+            // family proof.
+            return error is 109 or 232
+                ? NativeCallResult<uint>.Success(uint.MaxValue)
+                : NativeCallResult<uint>.Failure(error);
         }
         return NativeCallResult<uint>.Success(available);
     }
@@ -1513,7 +1561,7 @@ public sealed class ContainedProcess : IDisposable
 
                 if (key == expectedKey && bytes == NativeMethods.JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO)
                 {
-                    _activeProcessZeroObserved = true;
+                    lock (_lifecycleGate) { _activeProcessZeroObserved = true; }
                     return;
                 }
             }
@@ -1610,6 +1658,7 @@ internal static unsafe class NativeMethods
     internal const int STARTF_USESTDHANDLES = 0x00000100;
     internal const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
     internal const int JobObjectExtendedLimitInformation = 9;
+    internal const int JobObjectBasicAccountingInformation = 1;
     internal const int JobObjectAssociateCompletionPortInformation = 7;
     internal const uint JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO = 4;
     internal const nint PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002;
@@ -1678,6 +1727,19 @@ internal static unsafe class NativeMethods
         public nuint Affinity;
         public uint PriorityClass;
         public uint SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct JOBOBJECT_BASIC_ACCOUNTING_INFORMATION
+    {
+        public long TotalUserTime;
+        public long TotalKernelTime;
+        public long ThisPeriodTotalUserTime;
+        public long ThisPeriodTotalKernelTime;
+        public uint TotalPageFaultCount;
+        public uint TotalProcesses;
+        public uint ActiveProcesses;
+        public uint TotalTerminatedProcesses;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -1757,6 +1819,15 @@ internal static unsafe class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool SetInformationJobObject(
         nint hJob, int JobObjectInformationClass, nint lpJobObjectInformation, uint cbJobObjectInformationLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool QueryInformationJobObject(
+        nint hJob,
+        int JobObjectInformationClass,
+        ref JOBOBJECT_BASIC_ACCOUNTING_INFORMATION lpJobObjectInformation,
+        uint cbJobObjectInformationLength,
+        out uint lpReturnLength);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
