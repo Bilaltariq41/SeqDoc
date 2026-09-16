@@ -320,3 +320,11 @@ case still lacked required terminal-operation evidence. Orchestrator diff inspec
 coordination that was not ready for independent review. Under the frozen v3 condition, canonical state returned to
 `Blocked` permanently pending human technical direction. No Reviewer or final gate ran; candidate, tests, history,
 both PRs, and attribution remain preserved.
+
+## Owner-directed final race fix v4 authorization
+
+Abood reviewed the remaining descendant pipe-closure failure and authorized one exact human-directed repair from
+`beb5c3a`: remove timing/fire-and-forget inference and atomically require plus await the shared terminal operation when
+drains complete before family-zero proof. Tests remain frozen and scope remains `ProcessOwnership.cs` plus truthful
+lifecycle evidence. The required handoff result is focused 60/60 and an independent Reviewer-agent pass, followed by
+`ReviewRequired` for Ahmad without the final gate.

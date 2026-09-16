@@ -2,7 +2,7 @@
 
 ## State
 
-`Blocked`
+`Building`
 
 ## Authority and frozen state
 
@@ -361,3 +361,15 @@ Its isolated-SDK result was `Failed 1, Passed 59, Skipped 0, Total 60`. The desc
 not retain the required terminal-operation evidence. The permanent stop condition therefore fired: I100-A is
 `Blocked`, no Reviewer or final gate ran, and no additional automatic repair is authorized pending human technical
 direction and non-author review availability.
+
+## Owner-directed final race fix v4
+
+After reviewing the remaining failure, Abood authorized one human-directed fix from blocked head `beb5c3a`. Scope is
+only the descendant pipe-closure race: replace timestamp/fire-and-forget inference with one atomic lifecycle decision
+that permanently requires and awaits the shared terminal task when drains finish before family-zero is proven. Tests
+remain frozen; all history and attribution remain preserved.
+
+Only `tests/SeqDoc.AcceptanceTests/ProcessOwnership.cs` and truthful I100-A lifecycle records may change. No other
+behavior, test, stub, build/configuration, product source, issue, or corpus work is authorized. The focused lane must
+pass 60/60 under isolated SDK `10.0.302`, followed by complete diff inspection and one independent Reviewer-agent
+review. Stop at `ReviewRequired` for Ahmad; do not run the final gate or merge.
