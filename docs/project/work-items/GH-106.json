@@ -10,14 +10,14 @@
   "kind": "github-issue",
   "lifecycle": "ReviewRequired",
   "lifecycleLabel": "review-required",
-  "nextAction": "Awaiting one independent, non-author, Windows-focused human/reviewer-agent peer review of the complete candidate at PR #108 (branch testing/issue-106-process-ownership). Resolve every finding before the declared final gate.",
+  "nextAction": "Awaiting a post-repair independent review pass on commit e1d1f0a (GH106-F1 fix) at PR #108, branch testing/issue-106-process-ownership. If clean, run the declared final gate once.",
   "number": 106,
   "owner": "qais",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/108",
   "schemaVersion": 1,
   "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/106",
-  "statusReason": "Implementation complete: native Windows process-ownership primitive (ProcessOwnership.cs), ProcessOwnershipStub test child, and the 11-group ProcessOwnershipTests.cs acceptance suite. Focused command dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~ProcessOwnershipTests passed 27/27 (independently rerun by the orchestrator). PR #108 opened against Bilaltariq41/SeqDoc main.",
+  "statusReason": "GH106-F1 (High) repaired in commit e1d1f0a: WaitAsync's exited-process drain path now races against its own timeout/cancellation token and force-terminates the job to unblock a stuck read from a silent handle-holding descendant, with a new focused test (WaitAsyncDirectlyAgainstLiveGrandchildDrainsWithinBoundInsteadOfHanging) proving the bound holds. Focused verification passed 28/28 (0 failed, 0 skipped), independently rerun by the orchestrator. Repair trace recorded in docs/project/delegated-contribution-workflow.md.",
   "title": "[Testing] Prove Windows contained-process ownership primitive",
   "track": "quality"
 }

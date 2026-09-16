@@ -24,3 +24,13 @@ post-`Ready` T2 amendment.
 | (created) → `Draft` | `docs/project/work-items/GH-106.json` created |
 | `Draft` → `Ready` | Contract frozen at baseline `ab6e3e1cf16213ee5346506b16949fa32c4ddfa4`; `checkpointId=I100-A` |
 | `Ready` → `Active` | Selected for root-Orchestrator execution; implementation begins |
+| `Active` → `ReviewRequired` | PR #108 submitted for independent review |
+| `ReviewRequired` → `ResolvingFindings` | Independent review at PR #108 found GH106-F1 (High severity); repair in progress |
+
+## Independent review findings (PR #108)
+
+| Finding | Severity | Disposition | Evidence |
+|---|---|---|---|
+| GH106-F1 — `WaitAsync`'s exited-process drain path has no real bound against a live descendant silently holding a pipe write handle open; `DrainPipe`'s synchronous `Read` (line ~755) is only checked for its deadline *between* reads, not during an in-flight blocked read, so a caller invoking `WaitAsync` directly (without first calling `Terminate()`) against such a descendant can hang indefinitely, contradicting the checkpoint's own "drains stdout and stderr concurrently within explicit bounds" objective and its native API admission table's "bounded by the same timeout token" claim. | High | Repair in progress | Independent review at PR #108; confirmed by the orchestrator's own reading of `ProcessOwnership.cs:586-611,737-776`. |
+
+Repair trace recorded in `docs/project/delegated-contribution-workflow.md` once verified.

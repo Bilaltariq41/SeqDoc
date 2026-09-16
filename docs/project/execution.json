@@ -4,7 +4,7 @@
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Awaiting one independent, non-author, Windows-focused human/reviewer-agent peer review of the complete candidate at PR #108 (branch testing/issue-106-process-ownership). Resolve every finding before the declared final gate.",
+  "nextAction": "Awaiting a post-repair independent review pass on commit e1d1f0a (GH106-F1 fix) at PR #108, branch testing/issue-106-process-ownership. If clean, run the declared final gate once.",
   "schemaVersion": 1,
   "sourceId": "GH-106"
 }
