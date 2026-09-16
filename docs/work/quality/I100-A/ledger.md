@@ -279,3 +279,11 @@ One checkpoint-builder then changed only `tests/SeqDoc.AcceptanceTests/ProcessOw
 construction-cleanup risks. Orchestrator diff inspection confirmed the candidate was not safe to advance. No worker
 Reviewer or final gate ran. Under the frozen one-attempt stop condition, canonical state returned to `Blocked` and
 the tests, implementation candidate, both PR histories, and all attribution were preserved without another repair.
+
+## Owner redesign v2 authorization
+
+On 2026-09-16, Abood separately authorized one bounded forward redesign on PR #109 while Qais and Ahmad are
+unavailable. The decision preserves blocked head `f5ceff4` and all earlier history; it does not authorize a revert,
+force-push, rewrite, squash, deletion, test weakening, or scope beyond `ProcessOwnership.cs` and truthful lifecycle
+evidence. Commit `2e6d3d2` remains the executable acceptance contract. The candidate must pass the isolated-SDK
+focused lane and independent Reviewer-agent review, then stop at `ReviewRequired` without the final gate.

@@ -2,7 +2,7 @@
 
 ## State
 
-`Blocked`
+`Building`
 
 ## Authority and frozen state
 
@@ -302,3 +302,28 @@ The Test Writer established the intended red baseline under isolated SDK `10.0.3
 single implementation candidate then reported `Failed 18, Passed 42, Skipped 0, Total 60`. Its self-review retained
 High drain-lifecycle and construction-cleanup risks. The frozen stop condition therefore fired: I100-A is `Blocked`,
 the candidate is preserved, and no worker Reviewer, final gate, additional repair, or GH-107 work is authorized.
+
+## Owner redesign v2
+
+On 2026-09-16, Abood separately authorized one bounded lifecycle redesign while Qais and Ahmad are unavailable. The
+redesign continues forward on PR #109 after blocked head `f5ceff4`; every existing commit, author, review receipt,
+PR #108, and PR #109 remains preserved. No force-push, rewrite, squash, deletion, or history removal is authorized.
+
+The committed owner-recovery regressions at `2e6d3d2` are the acceptance contract. The only writable implementation
+path is `tests/SeqDoc.AcceptanceTests/ProcessOwnership.cs`, plus this checkpoint, its ledger, the GH-106 record, and
+generated execution projection for truthful lifecycle evidence. Tests may not be weakened or removed. The redesign
+must replace the failed terminal/cleanup implementation with one explicit serialized lifecycle state machine covering
+terminal-operation ownership, drain completion before handle release, bounded family-zero proof, construction-unwind
+completion, fail-closed `PeekNamedPipe` evidence, synchronized immutable secondary evidence, and the already-passing
+isolated-runtime behavior.
+
+Non-goals remain GH-107, I18/PR #103, `src/**`, packages, build/SDK/repository configuration, external corpus work,
+ARM64, global/name-based or PID-only killing, unrelated refactoring, and new capability. Existing focused evidence is
+the 60-test lane: red-contract baseline `6 failed / 54 passed`, followed by the preserved failed R3 candidate at
+`18 failed / 42 passed`. No additional tests are budgeted unless independent review identifies a concrete uncovered
+regression within this exact outcome.
+
+Run the existing focused command under isolated SDK `10.0.302`, then run one independent Reviewer-agent review. Stop
+at `ReviewRequired` for a future non-author human review; do not run the unfiltered final gate, merge, close GH-106,
+or begin GH-107 without that human review. If focused verification remains red or the Reviewer finds another High
+lifecycle defect, return GH-106 to `Blocked` without another automatic repair.
