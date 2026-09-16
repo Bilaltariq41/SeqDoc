@@ -267,3 +267,15 @@ latest-head independent-review role. Canonical state transitioned `Blocked` → 
 `abood`, PR #109 remained the integration branch, and I100-A was selected for tests-first execution. The transition
 tool does not expose an owner-field option, so the canonical owner field was updated directly before lifecycle and
 execution projections were generated and validated through `work_state.py`.
+
+## Owner recovery R3 result and block
+
+The Test Writer added seven grouped owner-recovery observables without editing implementation. Under isolated SDK
+`10.0.302`, the resulting baseline was `Failed 6, Passed 54, Skipped 0, Total 60`: F1-F6 failed for the intended
+declared gaps, F7's explicit `dotnet.exe --version` launch passed, and existing focused coverage was green.
+
+One checkpoint-builder then changed only `tests/SeqDoc.AcceptanceTests/ProcessOwnership.cs`. Its focused run reported
+`Failed 18, Passed 42, Skipped 0, Total 60`; its self-review identified unresolved High drain-lifecycle and
+construction-cleanup risks. Orchestrator diff inspection confirmed the candidate was not safe to advance. No worker
+Reviewer or final gate ran. Under the frozen one-attempt stop condition, canonical state returned to `Blocked` and
+the tests, implementation candidate, both PR histories, and all attribution were preserved without another repair.

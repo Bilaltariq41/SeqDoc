@@ -2,7 +2,7 @@
 
 ## State
 
-`Building`
+`Blocked`
 
 ## Authority and frozen state
 
@@ -294,3 +294,11 @@ Run the worker Reviewer only after the complete focused candidate passes, then s
 The unfiltered Acceptance final gate remains the command at lines 177-179 and must not run until Ahmad's findings are
 resolved. If this candidate retains any High ownership, cleanup, family-exit, handle-isolation, or unrelated-process
 safety defect, preserve the branch, return GH-106 to `Blocked`, and stop without another automatic repair.
+
+### Owner recovery R3 result
+
+The Test Writer established the intended red baseline under isolated SDK `10.0.302`: `Failed 6, Passed 54, Skipped
+0, Total 60`; F1-F6 failed for their declared lifecycle/evidence gaps and the explicit isolated-runtime F7 passed. The
+single implementation candidate then reported `Failed 18, Passed 42, Skipped 0, Total 60`. Its self-review retained
+High drain-lifecycle and construction-cleanup risks. The frozen stop condition therefore fired: I100-A is `Blocked`,
+the candidate is preserved, and no worker Reviewer, final gate, additional repair, or GH-107 work is authorized.
