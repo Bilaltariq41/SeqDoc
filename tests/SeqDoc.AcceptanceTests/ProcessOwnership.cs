@@ -604,8 +604,44 @@ public sealed class ContainedProcess : IDisposable
             await WaitForActiveProcessZero(linked.Token).ConfigureAwait(false);
         }
 
-        var (stdOutText, stdOutTruncated) = await DrainOrTruncate(_stdOutDrain).ConfigureAwait(false);
-        var (stdErrText, stdErrTruncated) = await DrainOrTruncate(_stdErrDrain).ConfigureAwait(false);
+        // Bound the drain: DrainPipe's own deadline check only runs between completed reads, so it
+        // cannot interrupt a single blocked FileStream.Read call held open by a live job member (for
+        // example, a descendant that inherited the write handle but never writes and never exits). Race
+        // the drain tasks against the same `linked` deadline WaitAsync already constructs from its own
+        // `timeout` and `cancellationToken`; if the deadline wins and TerminateJobObject has not already
+        // been called (the exited == false branch above already calls it), call it now. That force-closes
+        // every handle held by every process in the job — including the silent descendant's inherited
+        // write end — which is what actually unblocks the in-flight blocked Read() (via EOF or the
+        // existing IOException catch in DrainPipe). No change to DrainPipe itself is required: once
+        // unblocked, its existing EOF/IOException handling completes it and marks truncation.
+        var stdOutDrainTask = DrainOrTruncate(_stdOutDrain);
+        var stdErrDrainTask = DrainOrTruncate(_stdErrDrain);
+        var drainsTask = Task.WhenAll(stdOutDrainTask, stdErrDrainTask);
+        var deadlineTask = Task.Delay(Timeout.InfiniteTimeSpan, linked.Token);
+        var raceWinner = await Task.WhenAny(drainsTask, deadlineTask).ConfigureAwait(false);
+        bool drainDeadlineForcedTermination = raceWinner == deadlineTask;
+        if (drainDeadlineForcedTermination && !_terminateJobObjectCalled)
+        {
+            _terminateJobObjectCalled = true;
+            NativeMethods.TerminateJobObject(_jobHandle, uint.MaxValue);
+        }
+
+        var (stdOutText, stdOutTruncated) = await stdOutDrainTask.ConfigureAwait(false);
+        var (stdErrText, stdErrTruncated) = await stdErrDrainTask.ConfigureAwait(false);
+        if (drainDeadlineForcedTermination)
+        {
+            // Force-closing every job member's handles to unblock a stuck read yields a real, clean EOF
+            // rather than an I/O error on Windows anonymous pipes, so DrainPipe's own truncated flag can
+            // legitimately come back false even though we had to intervene. That intervention itself
+            // means the drain did not reach EOF within its own bound naturally, so it is recorded as
+            // DrainIncomplete regardless — never TimedOut, since the process itself already exited (or,
+            // for the exited == false branch above, TimedOut was already recorded first and wins by the
+            // tracker's first-recorded precedence).
+            _failures.Record(
+                ProcessOwnershipFailureClass.DrainIncomplete,
+                "A stream did not reach EOF within the wait's own bound; job termination was forced to unblock it.");
+        }
+
         if (stdOutTruncated || stdErrTruncated)
         {
             _failures.Record(ProcessOwnershipFailureClass.DrainIncomplete, "A stream did not reach EOF in time.");
@@ -772,8 +808,10 @@ public sealed class ContainedProcess : IDisposable
     private static async Task<(string Text, bool Truncated)> DrainOrTruncate(
         Task<(string Text, bool Truncated)>? drain)
     {
-        // Each drain task is already internally bounded by its own DrainTimeout deadline (see
-        // DrainPipe), so this only needs to await the already-bounded result.
+        // DrainPipe's own DrainTimeout deadline is only checked between completed reads, so it cannot
+        // bound a single in-flight blocked Read(). The real bound comes from WaitAsync's race against its
+        // `linked` cancellation token, which force-terminates the job (closing every inherited pipe
+        // handle) to unblock a stuck read before awaiting this task to completion.
         if (drain is null)
         {
             return (string.Empty, true);

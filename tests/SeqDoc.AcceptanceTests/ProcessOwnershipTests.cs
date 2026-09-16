@@ -222,6 +222,57 @@ public sealed class ProcessOwnershipTests
         }
     }
 
+    [Fact]
+    public async Task WaitAsyncDirectlyAgainstLiveGrandchildDrainsWithinBoundInsteadOfHanging()
+    {
+        // GH106-F1 repair proof: unlike the sibling test above (which deliberately routes around the
+        // hang by calling Terminate() before WaitAsync), this test calls WaitAsync directly against a
+        // still-alive, pipe-write-handle-holding grandchild — exactly the condition that hung
+        // indefinitely before the repair, because DrainPipe's synchronous Read() blocks inside the
+        // kernel and its own deadline check only runs between completed reads. The grandchild sleeps far
+        // longer (8s) than the WaitAsync timeout given here (3s), so if the fix did not force-unblock the
+        // blocked read, this test would hang until xunit's own default test-collection timeout rather
+        // than returning within the asserted bound.
+        string markerPath = Path.Combine(Path.GetTempPath(), $"seqdoc-i100a-livewait-{Guid.NewGuid():N}.marker");
+        var options = NewOptions(["spawn-grandchild", markerPath, "8000"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        try
+        {
+            await WaitForFileToExistAsync(markerPath, TimeSpan.FromSeconds(5));
+            Assert.False(File.Exists(markerPath + ".completed"));
+            Assert.False(process.HasObservedActiveProcessZero());
+
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(3), CancellationToken.None);
+            stopwatch.Stop();
+
+            // Bounded well short of the grandchild's own 8s sleep and far short of a real hang: proves
+            // the drain race actually forced TerminateJobObject to unblock the stuck read rather than
+            // waiting for the grandchild's natural exit or timing out only at the harness level.
+            Assert.True(
+                stopwatch.Elapsed < TimeSpan.FromSeconds(6),
+                $"WaitAsync took {stopwatch.Elapsed}, which is not bounded by the 3s drain deadline.");
+
+            Assert.Equal(0, wait.ExitCode); // the immediate parent's own, already-recorded natural exit code
+
+            // Forcing TerminateJobObject to unblock the stuck read yields a real, clean EOF on Windows
+            // anonymous pipes (not an I/O error), so DrainPipe's own per-stream truncated flag can
+            // legitimately come back false even though intervention was required — the fix records
+            // DrainIncomplete explicitly for exactly this case (WaitAsync's own bound was reached and
+            // forced termination, never TimedOut, since the process itself already exited cleanly).
+            Assert.Equal(ProcessOwnershipFailureClass.DrainIncomplete, wait.FailureClass);
+            Assert.Contains("parent-exited", wait.StdOut.Text, StringComparison.Ordinal);
+            Assert.False(File.Exists(markerPath + ".completed"));
+        }
+        finally
+        {
+            File.Delete(markerPath);
+            File.Delete(markerPath + ".completed");
+        }
+    }
+
     // ---- Group 6: complete concurrent stdout/stderr drain under load ---------------------------------
 
     [Fact]

@@ -2,7 +2,7 @@
 
 ## State
 
-`ReviewRequired`
+`ResolvingFindings`
 
 ## Authority and frozen state
 
@@ -90,7 +90,7 @@ Any additional path requires a new owner decision before editing.
 | Handle policy | `bInheritHandles = TRUE` at `CreateProcessW`, but only the 3 std handles are inheritable (`SetHandleInformation(HANDLE_FLAG_INHERIT)` set only on the pipe ends actually passed); the job handle itself is non-inheritable |
 | Completion/active-zero proof | IOCP associated to the job (`SetInformationJobObject(JobObjectAssociateCompletionPortInformation)`), observing `JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO` |
 | Termination | `TerminateJobObject` (relies on `KILL_ON_JOB_CLOSE` for normal `Dispose`, explicit `TerminateJobObject` for timeout/cancellation/unwind) |
-| Stream draining | Two overlapped/async pipe reads started before `ResumeThread` returns control to the wait loop, bounded by the same timeout token; both must reach EOF or truncation is recorded |
+| Stream draining | Two synchronous, thread-pool-offloaded pipe reads (`FileStream.Read` off `Task.Run`, matching the in-repo IR-1 `RunProcess`/`RunGit` idiom — anonymous pipes from `CreatePipe` do not support `FILE_FLAG_OVERLAPPED`, so true overlapped/async I/O is not available here) started before `ResumeThread` returns control to the wait loop; bounded in practice by `WaitAsync` racing drain completion against its own timeout/cancellation token and forcing `TerminateJobObject` (closing every inherited handle, including a silent descendant's) to unblock an in-flight blocked read if the deadline is reached first; both must reach EOF or truncation is recorded |
 | Supported platform | Windows x64 only (finalized decision 1 above). x86, ARM64, Linux, and macOS fail closed via an explicit runtime guard, never silently skipped |
 | Executable resolution | Finalized decision 2 above: caller-resolved, rooted, existing path only; zero PATH/cwd search inside the primitive |
 
