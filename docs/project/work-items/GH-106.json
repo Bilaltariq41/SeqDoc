@@ -1,0 +1,23 @@
+{
+  "baseline": "ab6e3e1cf16213ee5346506b16949fa32c4ddfa4",
+  "branch": "testing/issue-106-process-ownership",
+  "checkpointId": "I100-A",
+  "checkpointPath": "docs/work/quality/I100-A",
+  "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/106",
+  "dependencies": [],
+  "expectedGithubState": "OPEN",
+  "id": "GH-106",
+  "kind": "github-issue",
+  "lifecycle": "Active",
+  "lifecycleLabel": "active",
+  "nextAction": "Implement the I100-A Windows contained-process ownership primitive per the frozen checkpoint capsule; delegate to a builder, then stop at ReviewRequired for independent review.",
+  "number": 106,
+  "owner": "qais",
+  "pr": null,
+  "schemaVersion": 1,
+  "selectedForExecution": true,
+  "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/106",
+  "statusReason": "Owner (Qais) directed the root Orchestrator to begin implementation; GH-106 selected for execution.",
+  "title": "[Testing] Prove Windows contained-process ownership primitive",
+  "track": "quality"
+}
