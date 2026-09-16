@@ -350,6 +350,94 @@ public sealed class ProcessOwnershipTests
         process.Dispose();
     }
 
+    [Fact]
+    public async Task DisposeDoesNotReleaseHandlesWhileWaitUsesNativeProcessHandle()
+    {
+        var entered = new TaskCompletionSource<nint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releases = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        int terminalCalls = 0;
+        var nativeCalls = new ProcessOwnershipNativeCalls
+        {
+            TerminateJobObject = (handle, exitCode) =>
+            {
+                Interlocked.Increment(ref terminalCalls);
+                return NativeMethods.TerminateJobObject(handle, exitCode)
+                    ? NativeCallResult.Success()
+                    : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+            },
+            WaitForSingleObject = (handle, timeout) =>
+            {
+                entered.TrySetResult(handle);
+                release.Task.GetAwaiter().GetResult();
+                uint waitResult = NativeMethods.WaitForSingleObject(handle, timeout);
+                int error = waitResult == NativeMethods.WAIT_FAILED
+                    ? System.Runtime.InteropServices.Marshal.GetLastWin32Error()
+                    : 0;
+                return new NativeWaitResult(waitResult, error);
+            },
+        };
+        var result = ContainedProcess.Start(NewOptions(["sleep", "5000"], nativeCalls: nativeCalls));
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        System.Reflection.PropertyInfo? releaseObserver = null;
+        Task<ProcessOwnershipWaitResult>? waitTask = null;
+        Task? disposeTask = null;
+        try
+        {
+            releaseObserver = FindInstanceTestSeam("ResourceReleaseObserverForTests", typeof(Action<string>));
+            Assert.True(releaseObserver is not null, "Expected per-process resource-release observer seam is not implemented yet.");
+            releaseObserver!.SetValue(process, (Action<string>)releases.Enqueue);
+
+            waitTask = process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            Assert.Equal(process.ProcessHandleForTests, await entered.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+            disposeTask = Task.Run(process.Dispose);
+
+            Task negativeWinner = await Task.WhenAny(disposeTask, Task.Delay(TimeSpan.FromMilliseconds(250)));
+            Assert.NotSame(disposeTask, negativeWinner);
+            Assert.DoesNotContain("process handle", releases);
+            Assert.DoesNotContain("job handle", releases);
+
+            release.TrySetResult();
+            await Task.WhenAll(waitTask, disposeTask).WaitAsync(TimeSpan.FromSeconds(10));
+
+            var wait = await waitTask;
+            Assert.Equal(ProcessOwnershipFailureClass.ProcessFailed, wait.FailureClass);
+            Assert.False(wait.TimedOut);
+            Assert.False(wait.Cancelled);
+            Assert.True(wait.ActiveProcessZeroObserved);
+            Assert.Equal(1, terminalCalls);
+            Assert.True(process.TerminateJobObjectWasCalled);
+            Assert.Empty(process.TeardownFailuresForTests);
+            Assert.Equal(1, releases.Count(label => label == "process handle"));
+            Assert.Equal(1, releases.Count(label => label == "job handle"));
+        }
+        finally
+        {
+            release.TrySetResult();
+            if (waitTask is not null && disposeTask is not null)
+            {
+                try
+                {
+                    await Task.WhenAll(waitTask, disposeTask).WaitAsync(TimeSpan.FromSeconds(10));
+                }
+                catch
+                {
+                    try { process.Terminate(); } catch { }
+                }
+            }
+            else
+            {
+                process.Dispose();
+            }
+
+            if (releaseObserver is not null)
+            {
+                releaseObserver.SetValue(process, null);
+            }
+        }
+    }
+
     // ---- Group 6: complete concurrent stdout/stderr drain under load ---------------------------------
 
     [Fact]

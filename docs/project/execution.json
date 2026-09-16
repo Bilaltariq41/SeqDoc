@@ -4,7 +4,7 @@
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Implement and verify only deterministic drain-before-family terminal coordination, then stop at ReviewRequired for Ahmad without final gate.",
+  "nextAction": "Add the deterministic Wait/Dispose barrier regression, repair shared wait quiescence before handle release, rerun focused verification, then rerun complete Reviewer.",
   "schemaVersion": 1,
   "sourceId": "GH-106"
 }

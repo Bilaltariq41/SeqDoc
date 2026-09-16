@@ -328,3 +328,11 @@ Abood reviewed the remaining descendant pipe-closure failure and authorized one 
 drains complete before family-zero proof. Tests remain frozen and scope remains `ProcessOwnership.cs` plus truthful
 lifecycle evidence. The required handoff result is focused 60/60 and an independent Reviewer-agent pass, followed by
 `ReviewRequired` for Ahmad without the final gate.
+
+## v4 independent review finding
+
+At exact head `08733dd`, independent review found one unresolved High Wait/Dispose interleaving: disposal can close
+the process and job handles while the shared wait task still calls `GetExitCodeProcess` or
+`QueryInformationJobObject`. The focused lane was 60/60 but did not cover this handle-lifetime signature. The finding
+is accepted for one deterministic barrier-based regression and the smallest lifecycle repair; no final gate is
+authorized.

@@ -2,7 +2,7 @@
 
 ## State
 
-`Building`
+`ResolvingFindings`
 
 ## Authority and frozen state
 
@@ -373,3 +373,13 @@ Only `tests/SeqDoc.AcceptanceTests/ProcessOwnership.cs` and truthful I100-A life
 behavior, test, stub, build/configuration, product source, issue, or corpus work is authorized. The focused lane must
 pass 60/60 under isolated SDK `10.0.302`, followed by complete diff inspection and one independent Reviewer-agent
 review. Stop at `ReviewRequired` for Ahmad; do not run the final gate or merge.
+
+### v4 independent review finding
+
+The independent Reviewer found one High handle-lifetime gap at head `08733dd`: `DisposeCoreAsync` may release process
+and job handles while an already-started `WaitAsync` still uses them for process exit or job accounting. This concrete
+regression expands the v4 test allowance by exactly one deterministic barrier-based Wait/Dispose case in
+`ProcessOwnershipTests.cs`; implementation remains limited to `ProcessOwnership.cs`. The repair must quiesce or retain
+the in-flight wait before releasing its native handles, without holding the lifecycle lock across waits/native calls
+or deadlocking terminal/drain coordination. Focused verification and a new complete Reviewer pass are required before
+`ReviewRequired`.
