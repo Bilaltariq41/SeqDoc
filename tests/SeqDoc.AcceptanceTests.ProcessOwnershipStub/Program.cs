@@ -95,23 +95,29 @@ internal static class Program
         return 0;
     }
 
-    // utf8-boundary — GH106-R2-F10: writes exactly 65535 single-byte filler bytes, then a 3-byte UTF-8
-    // character (so its first byte lands at offset 65535), then a trailing marker. The caller (see
-    // ContainedProcess.PipeBufferSizeOverrideForTests in ProcessOwnershipTests.cs) forces the pipe's
-    // buffer large enough to hold this whole payload atomically, so the split is guaranteed, by
-    // construction, to land exactly at that offset, straddling DrainPipe's real 64 KiB read boundary.
+    // utf8-boundary — GH106-R2-F10: writes a single atomic payload comprising exactly 65535 single-byte
+    // filler bytes, followed by a 3-byte UTF-8 character (so its first byte lands at offset 65535), followed
+    // by a trailing marker. The caller (see ContainedProcess.PipeBufferSizeOverrideForTests in
+    // ProcessOwnershipTests.cs) forces the pipe's buffer large enough to hold this whole payload atomically,
+    // so the split is guaranteed, by construction, to land exactly at that offset, straddling DrainPipe's
+    // real 64 KiB read boundary.
     private static int RunUtf8Boundary()
     {
         using var stdout = Console.OpenStandardOutput();
         var filler = new byte[65535];
         Array.Fill(filler, (byte)'x');
-        stdout.Write(filler, 0, filler.Length);
 
         byte[] straddling = Encoding.UTF8.GetBytes("€");
-        stdout.Write(straddling, 0, straddling.Length);
-
         byte[] marker = Encoding.UTF8.GetBytes("-MARKER-END");
-        stdout.Write(marker, 0, marker.Length);
+
+        // Combine all three parts into a single payload for atomicity.
+        byte[] payload = new byte[filler.Length + straddling.Length + marker.Length];
+        Buffer.BlockCopy(filler, 0, payload, 0, filler.Length);
+        Buffer.BlockCopy(straddling, 0, payload, filler.Length, straddling.Length);
+        Buffer.BlockCopy(marker, 0, payload, filler.Length + straddling.Length, marker.Length);
+
+        // Issue a single write call for the entire payload, making partial-payload reads structurally impossible.
+        stdout.Write(payload, 0, payload.Length);
         stdout.Flush();
         return 0;
     }
