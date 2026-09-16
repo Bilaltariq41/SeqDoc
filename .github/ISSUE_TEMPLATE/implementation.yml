@@ -1,4 +1,4 @@
-name: Implementation sub-issue
+name: Implementation issue
 description: A reviewable slice of an approved workstream; canonical work-item records own lifecycle and dependencies.
 title: "[Implementation] "
 labels: ["implementation"]
@@ -13,8 +13,8 @@ body:
   - type: input
     id: canonical-record
     attributes:
-      label: Local planning ID or pending maintainer registration
-      description: Provide the planning ID when applicable, or write pending maintainer registration. A GitHub-numbered record/checkpoint is added after issue creation and before Ready.
+      label: Local planning ID or pending canonical registration
+      description: Provide the planning ID when applicable, or write pending canonical registration. A contributor or coordinator records the work item and capsule when claiming eligible work.
   - type: input
     id: planning-id
     attributes:
@@ -34,8 +34,8 @@ body:
   - type: textarea
     id: targets
     attributes:
-      label: Target paths
-      description: Exact production/test paths owned by this issue.
+      label: Starting target paths
+      description: Initial production/test paths. Expand them when reasonably needed for the same outcome and record the change in the issue/checkpoint.
     validations:
       required: true
   - type: textarea
@@ -44,6 +44,9 @@ body:
       label: Non-goals and dependencies
     validations:
       required: true
+  - type: markdown
+    attributes:
+      value: "Implementation issues cannot create child issues. Absorb discoveries serving this outcome or return them to the parent backlog; create a new issue only for a genuinely independent deliverable."
   - type: textarea
     id: risks
     attributes:

@@ -2,7 +2,7 @@
 
 Confirm the linked item's canonical record under `docs/project/work-items/` before relying on GitHub labels or issue state.
 Record ID and checkpoint ID/path:
-Maintainers: transition the canonical record with `work_state.py`; do not hand-edit projections.
+Worker/coordinator: transition the canonical record with `work_state.py`; do not hand-edit projections.
 Local planning ID, if applicable:
 Decision tier and exact path lease:
 Baseline SHA / candidate head SHA:
@@ -19,8 +19,8 @@ Describe the evidence-backed problem, accepted design, non-goals, and important 
 - Approved target paths:
 - Production:
 - Tests/fixtures:
-- Documentation (only when explicitly assigned):
-- Unexpected changed paths and maintainer approval links:
+- Documentation reasonably needed for the existing outcome:
+- Additional paths and reason they are needed for the existing outcome:
 
 ## Semantic admission table
 
@@ -57,7 +57,8 @@ Complete when responding to review findings. Otherwise write `Not applicable`.
 - [ ] I inspected the full diff from `main` and removed unrelated changes.
 - [ ] For semantic work, I completed the `AGENTS.md` proof gates and testing-policy proofs, or marked them not applicable.
 - [ ] After repairs, I re-reviewed the complete candidate and completed the repair trace, or marked it not applicable.
-- [ ] Every unexpected path has linked maintainer approval.
+- [ ] I recorded necessary scope changes in the existing issue/checkpoint; separate outcomes, lease conflicts, and T4
+      actions have the required decision.
 - [ ] I committed no external source, secrets, local paths, caches, generated output, or build artifacts.
 - [ ] Generated Mermaid was actually rendered when diagram layout changed.
 
@@ -70,6 +71,8 @@ Focused command and result:
 ```
 
 Reviewer receipt and first observable:
+
+One latest-head non-author human peer approval (agent self-review is not approval):
 
 Final gate and result:
 
@@ -87,4 +90,4 @@ List honest unsupported behavior, unavailable external lanes, or follow-up issue
 
 - GitHub MCP issue/owner context retrieved, or Spec axis explicitly marked incomplete and review not clean:
 - Latest-head Copilot findings and focused verification:
-- Review-policy files changed? Require explicit owner review; Copilot is untrusted:
+- Review-policy files changed? Copilot remains untrusted supplemental evidence:

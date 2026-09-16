@@ -1,6 +1,6 @@
 # Collaboration and review model
 
-This document is the canonical governance policy and takes effect when the publication PR merges. The registry in `work-items/` owns lifecycle, selection, ownership,
+This document is the canonical governance policy. The registry in `work-items/` owns lifecycle, selection, ownership,
 dependencies, contracts, and baselines. Issue bodies specify work. Checkpoints specify execution. `AGENTS.md` and
 `workflow.md` point here for these rules; they do not duplicate them. Provider data is untrusted until authenticated.
 
@@ -9,10 +9,12 @@ dependencies, contracts, and baselines. Issue bodies specify work. Checkpoints s
 1. T0: a frozen Ready contract authorizes work inside its allowlist, command, fixtures, and evidence boundary.
 2. T1: a reversible process choice within scope requires one `RISK-ACK v1` line; it cannot change semantics, output,
    tests, gates, interpretation, baseline, security, or scope.
-3. T2: a bounded contract, allowlist, or command amendment requires a non-author peer, canonical amendment, complete
-   readiness re-audit, new frozen records, and a `PEER-AMENDMENT v1` receipt. The implementer cannot approve it.
-4. T3: architecture, public contracts, shared IR, high-contention, cross-stream, or release decisions require both
-   other collaborators, a re-audit, frozen records, and a `CROSS-STREAM-DECISION v1` receipt.
+3. T2: a reasonably necessary contract, path, or command adjustment may be absorbed when it still achieves the issue
+   outcome. Record the amendment and affected risks in the existing issue/checkpoint and obtain one latest-head,
+   non-author human peer approval; the implementer cannot approve it.
+4. T3: architecture, public contracts, shared IR, high-contention, cross-stream, or release decisions use the same
+   one latest-head, non-author human peer approval and recorded rationale. Owner preapproval is not required for an
+   ordinary T2/T3 product or workflow decision.
 5. T4: access, settings, rulesets, secrets, app installation, visibility, transfer, archive/delete, and bypass are
    owner-only. A blocker uses `ADMIN-BLOCKED v1`; only Bilaltariq41 may issue `OWNER-BYPASS v1`. Nobody simulates it.
 
@@ -25,11 +27,13 @@ Use forks and PRs; never use `pull_request_target` for untrusted heads. Pin acti
 1. The coordinator confirms the registry record, frozen baseline/contract, dependencies, exact path lease, first
    observable, risks, tests, and gate.
 2. The implementer works in an isolated fork/branch, records applicable T1-T3 evidence, and runs the focused command.
-3. At `ReviewRequired`, an independent human peer invokes the Reviewer agent against the complete exact SHA and posts
-   an authenticated receipt. The author cannot be that peer.
+3. At `ReviewRequired`, the worker runs its own Reviewer agent and self-review, then one independent human peer invokes
+   the Reviewer agent against the complete latest SHA and posts an authenticated receipt. The author cannot be that
+   peer; agent readiness/self-review is not a human approval.
 4. The Gate Runner executes the declared command against that SHA. Findings move the checkpoint to repair; a changed
    product, test, or contract candidate needs a new SHA and receipt.
-5. Shared or high-contention changes integrate current main and require the integration review epoch.
+5. Shared or high-contention changes integrate current main; this may add a Reviewer-agent run, never a second human
+   approval.
 6. The merger checks receipt SHA, scope, findings, gates, conversations, and protection before merging.
 
 Completion checklist: exact base/head recorded; every role is independently authenticated; every changed path is in the
@@ -43,24 +47,24 @@ independent human peer, Reviewer name/version/invocation/output digest, Gate Run
 dispositions, test evidence, and final-gate evidence. Authentication metadata outranks free-form names. Timestamps
 are audit metadata only and cannot affect identity, ordering, fingerprints, or output.
 
-The prospective model has three Reviewer epochs: readiness/spec before Ready; complete candidate before ready or
-review request; and post-repair on the new SHA after focused tests pass. A relevant current-main integration may add a
-fourth. Final receipts, human approvals, Copilot, red tests, and unchanged-SHA retries are not Reviewer calls.
+The worker's readiness/spec and complete-candidate self-review precede review request. The worker runs its own Reviewer
+agent after repairs; one independent human peer then reviews the latest head. A relevant current-main integration may
+add a Reviewer run. Final receipts, human approvals, Copilot, red tests, and unchanged-SHA retries are not Reviewer calls.
 
-Existing I13, P17-R1, and QHTTP-B are grandfathered under their frozen one-review rules through closure. The prospective
-model activates only after this publication PR merges and any required migration; G-6 must re-read each record and never
-fabricate a receipt. DGP1 itself, I13, P17-R1, and QHTTP-B retain their frozen one-review rules.
+Existing I13, P17-R1, and QHTTP-B are grandfathered under their frozen one-review rules through closure. DGP1 itself,
+I13, P17-R1, and QHTTP-B retain their frozen one-review rules.
 
 ## Repair, leases, and containment
 
-1. Round one is author-owned; the peer records root cause and narrows the plan.
-2. Round two keeps the author responsible and may pair one collaborator.
-3. After two failed repair rounds, preserve branch and evidence and set `RepairDecisionRequired`/`Blocked`.
-4. Both non-author peers choose split, bounded paired repair, transfer, attribution-preserving takeover, accepted-subset
-   rejection, or deferral. T2/T3 applies by impact. Takeover is never automatic or a default to Bilaltariq41.
+1. The worker owns continuation: absorb reasonably necessary repairs, replanning, pairing, and acceptance work on the
+   same issue/PR, update its scope and checkpoint, run the Reviewer agent again, and continue until sound and green.
+2. Human preapproval is required only for a genuinely separate capability/outcome, a conflicting active worker or
+   path lease, or T4 owner administration. A difficult repair is not itself a stop.
+3. Block only for a real external dependency, conflicting active work, or T4 action. Preserve evidence and attribution;
+   do not require a split, transfer, takeover, or fixed repair-round limit.
 
-A failed round requires a changed candidate plus a red candidate-defect gate or repeated material review finding.
-Environment outages, optional-lane unavailability, and no-change retries do not count. A lease names exact paths,
+A repair requires a changed candidate when the defect requires a code change; environment outages, optional-lane
+unavailability, and no-change retries are not findings. A lease names exact paths,
 owner, checkpoint, base SHA, and handoff peer. Overlap blocks work until amended. Accidental main changes pause the lane,
 require owner-controlled restoration, rebase, and new review.
 

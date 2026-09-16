@@ -1,6 +1,6 @@
 # SeqDoc Contributor Agent Guide
 
-For collaboration tiers, receipts, path leases, review epochs, repair limits, and owner-only administration, read
+For collaboration tiers, receipts, path leases, review, continuation, and owner-only administration, read
 [`docs/project/collaboration-model.md`](docs/project/collaboration-model.md). For owner operations, use
 [`docs/project/collaborator-setup.md`](docs/project/collaborator-setup.md).
 
@@ -14,7 +14,7 @@ project instruction source for coding agents. Human contributors follow the same
    `docs/project/testing-policy.md`.
 3. Inspect `git status`, the target files, nearby tests, and recent commits before proposing changes.
 4. Comment a short implementation plan on the issue or draft PR. Identify target paths, risks, tests, and blockers.
-5. Stay inside the issue scope. Ask before changing architecture, public contracts, or unrelated files.
+5. Read the capsule's risks and tests, then preserve the existing issue outcome while recording necessary scope changes.
 
 Canonical work state is the sole authority for lifecycle, selection, ownership, dependencies, contracts, baselines,
 and checkpoints. Use `python tools/governance/work_state.py transition` for normal state edits; do not hand-edit
@@ -22,8 +22,9 @@ execution, status, parallel-workstreams, labels, or capsule state. `Ready` permi
 the frozen contract/baseline; `Active` means that implementation has started. Both authorize implementation, while at
 most one selected record authorizes the root Orchestrator; zero selected records represent an idle Orchestrator.
 
-Issue bodies are specification authority; canonical work-item records are lifecycle and execution authority. Files under `docs/project/` are maintainer-owned durable
-strategy and execution state; do not edit them unless the issue explicitly requires it.
+Issue bodies and comments are specification and amendment inputs; accepted changes belong in the current issue,
+checkpoint, and risk evidence. The canonical work-item records remain lifecycle and execution authority. Update
+applicable canonical records when the current outcome requires it; preserve strategy files unless genuinely needed.
 
 ## Product invariants
 
@@ -69,9 +70,10 @@ consumer. Stop and ask when the issue does not provide enough evidence to fill t
 6. Run focused tests during implementation. Run the issue's final gate once after self-review.
 7. Inspect the complete diff, not only files you remember changing.
 
-Treat the issue's target paths as an allowlist. Before changing an unlisted path, stop and obtain maintainer approval.
-Build configuration, SDK selection, CLI behavior, public contracts, and maintainer-owned project files never count as
-incidental cleanup. Record the approval link in the PR.
+Treat the issue's target paths as the starting scope, not a stop sign. Absorb reasonably necessary production, tests,
+fixtures, docs, config, scripts, blocking defects, refactors, and contract adjustments; update the issue/checkpoint and
+record affected risks. Human preapproval is needed only for a separate capability/outcome, a conflicting lease/worker,
+or T4 owner administration.
 
 When blocked, stop and report the exact command, error, evidence, and smallest decision needed. Do not weaken tests,
 remove conservative diagnostics, guess semantics, or expand scope to make the task appear complete.
@@ -96,38 +98,28 @@ documentation to SeqDoc. See `docs/usage.md` for setup.
 ## Pull requests and review
 
 - Work in a fork and a focused branch. Never push directly to SeqDoc `main`.
-- Follow the parent workstream's approved delivery packages. One PR may close 1–3 cohesive sub-issues when they share a
-  contract, target paths, and acceptance boundary; list every included issue with `Closes #<number>`.
-- Do not combine unrelated issues or invent a package without maintainer approval. Shared contracts should include
-  their first real consumer in the same package when that makes the design reviewable, but review-sensitive foundations
-  may still be separated explicitly.
+- Follow the parent workstream. An implementation issue owns one outcome and may include all necessary cohesive work.
+- Keep one issue focused on its existing outcome. Do not create child issues from an implementation issue; absorb
+  discoveries or return them to the parent backlog. Create a new implementation issue only for a genuinely independent
+  deliverable.
 - Describe the problem, design, risks, changed paths, focused verification, final gate, and remaining boundaries.
 - For a semantic package, one contributor or coding agent owns the complete vertical candidate from compiler producer
   through its first observable consumer and self-review. Independent review starts after that candidate is complete;
   avoid layer-by-layer handoffs unless the contract is already accepted and the paths are independent.
 - Open a draft PR early for substantial work, but request review only after tests and self-review pass.
-- The maintainer will batch findings. Fix every finding on the same PR branch, record the repair trace described in
-  `docs/project/delegated-contribution-workflow.md`, re-review the complete candidate, rerun affected focused tests plus
-  the required gate, and request review again.
-- After two unsuccessful repair rounds, stop and wait for an explicit split, rejection, or bounded maintainer takeover.
-  A takeover retains accepted contributor work and attribution, records its repair delta, and uses the original PR when
-  practical.
-- Do not rewrite canonical roadmap/status files to claim completion. The maintainer updates them after merge.
+- Fix every finding on the same PR branch, record the repair trace, run the Reviewer agent again, rerun focused tests,
+  and request one latest-head non-author human peer approval.
+- Continue repairing and replanning on the same issue/PR; block only for a real external dependency, conflicting active
+  work/path lease, or T4 action. Preserve attribution and evidence.
+- Update the existing issue/checkpoint and affected paths when the outcome requires it; do not force roadmap/status
+  churn or rewrite them merely to claim completion.
 
 ### While waiting for review
 
 1. Finish and self-review the submitted PR before starting more implementation.
-2. Prefer another independent issue or approved delivery package labeled `ready`, branched from current `main`. Keep
-   at most two implementation PRs open per contributor.
-3. For a blocked next issue, research and comment a plan, risks, fixtures, and tests without changing production code.
-4. A dependent implementation may start only after the maintainer comments approval and applies `stack-approved`.
-   Keep the GitHub dependency in place, branch from the pending PR, open a draft PR, state `Depends on PR #...`, and
-   limit the stack to the base PR plus one dependent PR.
-5. Never stack shared Core/IR, identity, persistence, profile, or other review-sensitive foundation changes unless the
-   issue explicitly permits it.
-6. After the base merges, rebase the dependent branch onto `main`, verify its diff contains only its issue, rerun its
-   focused command and final gate, remove draft status, and request review.
-7. If the base changes substantially or is rejected, pause and rework/discard dependent changes. If no independent or
-   approved stacked work exists, comment on the parent workstream and wait rather than expanding scope.
+2. Prefer another independent Ready issue.
+3. Do not create child issues or stack a new implementation issue merely to route a discovery; return it to the parent
+   backlog. Continue repairing the same issue/PR unless it becomes a separate outcome, conflicts with active work/path
+   leases, or needs T4 owner administration.
 
 The repository is licensed under MPL-2.0. By contributing, you agree to the terms in `docs/contributing.md`.

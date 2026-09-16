@@ -90,7 +90,7 @@ Everything else is unassigned. W and O exception work are suggested pickups for 
 
 ## How claiming works
 
-Claim only a Ready item whose dependencies and readiness review are complete and whose exact path lease is available. A suggestion is not a reservation. Keep one active owner or lease for shared paths, preserve author/reviewer independence, and use the existing receipt and repair rules. T3 cross-stream, public, and release decisions are peer decisions; T4 repository access, settings, rulesets, secrets, and bypass actions require Bilaltariq41.
+Claim only a Ready item whose dependencies and readiness self-review are complete and whose exact path lease is available. A suggestion is not a reservation. Keep one active owner or lease for shared paths and preserve author/reviewer independence. Normal decisions use one latest-head non-author human peer approval; T4 repository access, settings, rulesets, secrets, and bypass actions require Bilaltariq41.
 
 ## The dependency rule
 
@@ -112,30 +112,17 @@ K risks stale or wrongly joined evidence, profile/configuration leakage, corrupt
 
 ## How many Reviewer calls?
 
-For one request-changes cycle: **3 Reviewer calls.**
-
-- Call 1: Review the plan and specification before the issue is Ready.
-- Call 2: Review the complete PR and return requested changes.
-- No call: The author repairs the issues and focused tests pass.
-- Call 3: Review the repaired complete PR.
-- Maybe call 4: After integrating main, review relevant shared-code changes.
-- No call: If shared code did not change, compare the changed files.
-
-Run final tests, make the receipt, get human approval, and merge. These are not Reviewer calls.
+The worker reviews readiness and the complete candidate, runs the Reviewer agent after repairs, and continues on the same
+issue/PR. Then one latest-head non-author human peer reviews and approves. A relevant shared integration may add a run.
+Run final tests and make the receipt; agent self-review is not human approval.
 
 Copilot is separate. Disable auto-review-on-push after mandatory receipts are active to avoid duplicate cost.
 
-## What happens after two failed repair attempts?
+## What happens after a failed repair?
 
-Do not automatically hand the PR to Bilal.
-
-Attempt 1 is repaired by the author. Attempt 2 keeps the author responsible, with permission to pair with one collaborator. After the second failed repair that counts under the policy, stop only that lane and preserve the work.
-
-Both non-author peers may separately authorize a split, transfer, or takeover as a new decision. Preserve the work and
-attribution; do not begin an automatic third repair attempt.
-
-After two failed repair rounds, the lane is blocked and preserved. An environment or CI outage is not a failed attempt.
-Reviewer runs happen only after focused tests pass, so red tests do not waste a call.
+The worker continues repairing, replanning, pairing, and absorbing necessary acceptance work on the same issue/PR,
+updating the checkpoint and running focused tests and the Reviewer agent again. Block only for an external dependency,
+conflicting active work/path lease, or T4 action. A separate capability/outcome requires a new issue.
 
 ## What the letters mean
 
@@ -147,4 +134,4 @@ Reviewer runs happen only after focused tests pass, so red tests do not waste a 
 
 - Keep the work separate now.
 - Combine accepted work later.
-- Normal request-changes flow uses three reviews, with no automatic takeover.
+- Normal request-changes flow ends with one latest-head non-author human peer approval; there is no automatic takeover or repair stop.

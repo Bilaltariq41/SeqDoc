@@ -6,9 +6,9 @@ assignments; issue bodies own specifications; checkpoints own implementation con
 map retains planning IDs, dependencies, and cross-references; the registry owns registered ownership and current state.
 Suggested pickups are not reservations. Do not treat unregistered future assignments as registry state.
 
-The owner-created completion-program parent is [GH-69](https://github.com/Bilaltariq41/SeqDoc/issues/69). Its child
-records [GH-70](https://github.com/Bilaltariq41/SeqDoc/issues/70) through [GH-81](https://github.com/Bilaltariq41/SeqDoc/issues/81)
-are Blocked planning/readiness records, not implementation authority, until PR #68 merges and readiness/dependencies pass.
+The completion-program workstream is [GH-69](https://github.com/Bilaltariq41/SeqDoc/issues/69). Its implementation issues
+[GH-70](https://github.com/Bilaltariq41/SeqDoc/issues/70) through [GH-81](https://github.com/Bilaltariq41/SeqDoc/issues/81)
+are independently claimable when their own readiness and dependencies pass; an implementation issue cannot create child issues.
 
 Every future contract must state outcome, producer/identity, first observable, exact allowlist, non-goals, risks and
 negatives, existing coverage, test budget, focused command, final gate, dependencies, and review receipt. Semantic work
@@ -30,10 +30,10 @@ forbidden; shared paths use one lease; missing capability is diagnosed, withheld
 | A-3 | QHTTP-B FraudManagement GET/POST acceptance | GH-53 frozen contract/baseline | Qais; acceptance-only |
 | A-4 | GH-18 worker acceptance/frontier ledger | A-2 | Abood; no duplicated implementation |
 | G-0 ([GH-70](https://github.com/Bilaltariq41/SeqDoc/issues/70)) | governance rollout and readiness verification | Stage 1 | unassigned; verifies publication adoption without rewriting history |
-| G-1 | GH-57 transactional multi-execution lifecycle/lease model | Stage 2; GH-13 closes | unassigned; governance |
-| G-2 | epoch receipts pinned to candidate SHAs | G-1; Stage 2 | unassigned; governance |
-| G-3 | receipt validator and mandatory review tests | G-2 | unassigned; CI seam |
-| G-4 | ruleset/CODEOWNERS/emergency bypass plan | G-3 | unassigned; owner required for T4 settings |
+| G-1 | GH-57 transactional multi-execution lifecycle/lease model | Stage 2 | unassigned; Ready at its recorded baseline; claimant creates/freezes its capsule during self-service readiness |
+| G-2 | one latest-head peer receipt pinned to candidate SHA | G-1; Stage 2 | unassigned; governance |
+| G-3 | one-peer receipt validator/tests | G-2 | unassigned; CI seam |
+| G-4 | ruleset/emergency bypass plan | G-3 | unassigned; owner required for T4 settings |
 | G-5 ([GH-71](https://github.com/Bilaltariq41/SeqDoc/issues/71)) | collaborator access and manual receipt pilot | Stage 1 | unassigned; disposable fork, read-only checks |
 | G-6 | grandfathered-record migration without fabricated receipts | G-1 | unassigned; preserve legacy evidence |
 | G-7 | negative rehearsals for tiers, bypass, owners, leases, forks, containment, repair | G-4/G-6 | unassigned; fail closed |
@@ -120,8 +120,8 @@ forbidden; shared paths use one lease; missing capability is diagnosed, withheld
 | R-5 | release candidate and rollback gate | R-4 | critical, unassigned, serial |
 
 K is outside v1 and cannot start without repeatable evidence that full analysis is too slow plus readiness covering
-stale evidence, isolation, corruption, and safe activation. G-1/G-2 wait for GH-57 to unblock; G-3/G-4/G-6/G-7 follow
-G-1. P-1 waits for GH-13 closure; W-1 waits for P17-R1 and GH-18 closure. X/M begin sibling integration only in
+stale evidence, isolation, corruption, and safe activation. G-1/G-2 follow GH-57's readiness and dependencies;
+G-3/G-4/G-6/G-7 follow G-1. P-1 waits for GH-13 closure; W-1 waits for P17-R1 and GH-18 closure. X/M begin sibling integration only in
 Stage 6. No suggested pickup is an assignment.
 
 ## Creation, readiness, and retirement

@@ -11,7 +11,7 @@ This page orients a new development session without relying on conversation hist
 - Historical topology: `docs/project/parallel-workstreams.md` (not current authority).
 - `docs/project/completion-roadmap.md` is the staged v1 strategy; its visual companion is the plain-English overview.
 - `docs/project/completion-issue-map.md` contains the detailed future plan; its IDs are planning-only until registered.
-- `docs/project/collaboration-model.md` defines decision rights, leases, receipts, review epochs, and repair limits.
+- `docs/project/collaboration-model.md` defines decision rights, leases, receipts, review, and continuation.
 - `docs/project/testing-policy.md` defines risk-based test selection; `docs/project/test-performance.md` records measurements.
 - `docs/project/issue-readiness.md` defines the frozen issue contract.
 - `docs/usage.md` contains reproducible CLI and external-corpus setup.
@@ -27,8 +27,9 @@ projection. GitHub labels, `execution.json`, status, parallel topology, and chec
 Use the governance `transition` command for lifecycle changes.
 
 Read the selected record in `docs/project/work-items/`, then `docs/project/status.md`, `docs/project/workflow.md`, and `docs/project/execution.json` at session start.
-`execution.json` identifies the selected active checkpoint when one exists. When it is idle, planning and repository maintenance may
-continue, but product implementation waits for owner activation.
+`execution.json` identifies the selected active checkpoint when one exists. When it is idle, the root Orchestrator may
+not delegate product work without owner activation; contributors may claim eligible `Ready` items, establish or update
+their capsule and local canonical state on a branch, and begin implementation.
 
 Raw agent session exports are local recovery artifacts and are not repository authority. Durable decisions and
 the restart position are recorded in `docs/project/` so a fresh session can resume safely.

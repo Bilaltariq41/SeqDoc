@@ -30,7 +30,7 @@ SBOM, and attestations are conditional on the release decision and threat model.
 |---|---|
 | Baseline | `main` `08cb735945a178e93458069d6c42da833e044a74` on 2026-09-02 |
 | Current state | Read the live selected item and lifecycle from `work-items/`; this dated table is not execution authority |
-| Parallel | GH-17/P17-R1 Abood: ResolvingFindings; reviewed PR #64 candidate `11e433f`, now integrated PR head `2c1283e8`; GH-53/QHTTP-B Qais Ready; GH-18 worker acceptance blocked on GH-17; GH-57 maintainer operations blocked on GH-13 |
+| Parallel | GH-17/P17-R1 Abood: ResolvingFindings; reviewed PR #64 candidate `11e433f`, now integrated PR head `2c1283e8`; GH-53/QHTTP-B Qais Ready; GH-18 worker acceptance blocked on GH-17; GH-57 project operations Ready and contributor-claimable |
 | Parents | GH-3, GH-4, GH-52 active |
 | Reusable foundations | deterministic Program Index/Method Flow; configurable roots; depthless cycle/budget traversal; compatible loaded-source traversal; decomposition/budgets; ASP.NET controllers/minimal APIs; narrow CoreWCF/WCF and EF Core/EF6/EDMX; MediatR 13; hosted workers/schedulers/recovery controls; HttpClient GET/POST; SQLite atomic activation and previous-valid-state preservation |
 | Corpus | CreditTransfer, FraudManagement, SMSGateway, TicketReservation, TelecomSimulator, CustomerManagement, DotNet eShop |
@@ -63,7 +63,7 @@ The dependency firewall favors independent workstream trains with planning buffe
 | 0. Current frontier A | Independent I13/A-1, P17/A-2 → GH-18/A-4 internal worker edge, and QHTTP-B/A-3 on its frozen GH-53 contract/baseline. |
 | 1. Independent audits/readiness | G-0/G-5, Q-1/Q-4, M-1, C-1, S-1, P-1 after I13 closes, W-1 after P17/GH-18 close, D-1, O-1, and T-1; no cross-lane edges. |
 | 2. Foundation Snapshot Gate | Freeze accepted typed contracts, baseline, gap briefs, and path leases; no implementation. |
-| 3. Independent vertical slices | G-1/G-2 when GH-57 is unblocked; Q-2; C/S/P/W/D/O/T implementation slices; L-1, F-1, and R-0. Each consumes its own prior issue and Stage 2 snapshot. |
+| 3. Independent vertical slices | G-1/G-2 after GH-57 self-service readiness; Q-2; C/S/P/W/D/O/T implementation slices; L-1, F-1, and R-0. Each consumes its own prior issue and Stage 2 snapshot. |
 | 4. Independent lane acceptance | G-3..G-7 as internally permitted, Q-3, C-6/S-4/P-5/W-4/D-4/O-4/T-4; semantic lanes emit accepted evidence inputs. Each consumes its own lane gate, not Q-3. |
 | 5. Accepted Lane Snapshot Gate | Validate receipts, identities, evidence/certainty, profiles/fingerprints, and determinism; missing lanes stay explicit. |
 | 6. Integration | X-1..X-5 owns the first cross-stream Scenario Graph joins; M-2..M-4 builds the support matrix from Stage 5 evidence. |
@@ -83,7 +83,7 @@ and CLI composition changes use one exact path lease at a time. Sibling composit
 
 The current frontier remains Ahmad on I13/A-1, Abood on P17/A-2 then GH-18/A-4, and Qais on QHTTP-B/A-3. The only
 firm future assignments are Ahmad on P-1..P-5, Qais on S-1..S-4, and Abood on C-1..C-6. Everything else is
-unassigned. A free qualified collaborator may claim a Ready item only when its dependencies, readiness review, and path
+unassigned. A free qualified collaborator may claim a Ready item only when its dependencies, readiness self-review, and path
 lease permit it; suggested pickups are not reservations and may change.
 
 Bilaltariq41 is unavailable for routine coordination or implementation. He remains required only for provider-restricted
@@ -91,21 +91,22 @@ T4 actions: repository access, settings, rulesets, secrets, and bypass. T3 cross
 are peer decisions. Any qualified collaborator may coordinate integration or merge when independence and receipt rules
 permit it.
 
-Parallel delivery uses one exact lease per path set, a coordinator, a non-author peer, and the mandatory review epochs.
-T0 permits work inside a frozen Ready contract; T1 records reversible risk; T2/T3 handle bounded amendments and
-cross-stream decisions; T4 remains owner-only. I13/P17/QHTTP-B retain their frozen policy through closure.
+Parallel delivery uses one exact lease per path set and preserves author/reviewer independence. T0 permits work inside a
+frozen Ready contract; T1 records reversible risk; T2/T3 use one latest-head non-author human peer approval. T4 remains
+owner-only. I13/P17/QHTTP-B retain their frozen policy through closure.
 
 Immediate governance work is G-0/G-5: this is critical unassigned work that any qualified collaborator may claim when its
-dependencies, readiness review, and path lease permit it. Verify rollout/readiness of the published model; invite collaborators and configure the
+dependencies, readiness self-review, and path lease permit it. Verify rollout/readiness of the published model; invite collaborators and configure the
 manual receipt pilot, and run the disposable smoke test. G-6 migrates grandfathered records and G-7 exercises negative
-cases. G-1 is specifically GH-57's transactional multi-execution work and waits for GH-13 to
-close/unblock it; G-2/G-3/G-4/G-6/G-7 are not automation-executable before G-1, while manual G-5 is separate. G, Q,
+cases. G-1 is specifically GH-57's transactional multi-execution work, Ready at its recorded baseline; its claimant
+creates and freezes the capsule during self-service readiness. G-2/G-3/G-4/G-6/G-7 are not automation-executable before
+G-1, while manual G-5 is separate. G, Q,
 T, X, U, L, F, M, and R remain unassigned flexible work, subject to the dependency firewall.
 
 ## Milestone gates
 
 1. **Frontier gate:** exact revisions/configs, observable artifacts, and dispositioned findings for all active work.
-2. **Governance gate:** candidate SHA, review epochs, lease/path-conflict checks, locked build, and required-corpus receipt.
+2. **Governance gate:** candidate SHA, review receipt, lease/path-conflict checks, locked build, and required-corpus receipt.
 3. **Semantic gate:** producer, propagation, observable, and boundary proofs for each supported matrix row.
 4. **Composition gate:** complete CreditTransfer classification, linked views, budgets, links, Mermaid, and byte equality.
 5. **Release gate:** Release build/tests, supported matrix, performance/security/reliability evidence, the R-0-selected

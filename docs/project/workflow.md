@@ -5,8 +5,11 @@
 1. Read `docs/README.md`, the selected record in `docs/project/work-items/`, `docs/project/status.md`, and `docs/project/execution.json`.
 2. Read `docs/roadmap.md` and only the architecture/decision material relevant to the active checkpoint.
 3. Inspect Git status and preserve unrelated work.
-4. If execution is idle, do not begin product implementation without owner activation.
-5. If execution is active, read the named checkpoint capsule and state immediately before delegation or editing.
+4. If execution is idle, the root Orchestrator must not delegate product work without owner activation. Contributors may
+   claim an eligible `Ready` item, establish or update its capsule and local canonical state on their branch, and begin
+   implementation without owner activation.
+5. If execution is active, read the named checkpoint capsule and state immediately before delegation or editing. Preserve
+   at most one selected record for the root Orchestrator.
 
 Durable repository files are execution authority. Conversation summaries, model memory, and raw session exports are
 recovery aids only.
@@ -26,12 +29,13 @@ paths, non-goals, risks, existing coverage, a soft test budget, one focused impl
  and the remaining named states project to their matching capsule state.
 
 The Orchestrator drafts the capsule and delegates implementation; it does not edit product source, tests, build, or
-OpenCode configuration. Follow [collaboration-model.md](collaboration-model.md) for review epochs and repair limits.
-DGP1, I13, P17-R1, and QHTTP-B use one independent complete-candidate review under frozen rules. New work after policy
-activation uses readiness/spec before Ready, complete candidate at ReviewRequired, and post-repair only after a changed
-candidate has green focused tests; relevant shared integration may add one. Record every finding as `Fixed`, `Rejected`
-with evidence, or `Deferred` with explicit owner approval. Run the final gate only after findings are resolved. After two
-failed repair rounds, preserve the worktree, mark the checkpoint `Blocked`, and stop.
+OpenCode configuration. Follow [collaboration-model.md](collaboration-model.md) for review and continuation rules.
+DGP1, I13, P17-R1, and QHTTP-B use one independent complete-candidate review under frozen rules. New work uses worker
+readiness/self-review, focused tests, the worker's Reviewer agent after repairs, and one latest-head independent
+non-author human peer approval. Record every finding as `Fixed`, `Rejected` with evidence, or `Deferred` with a
+disposition accepted by the final non-author peer; owner approval is required only for T4. Run the final gate only after
+findings are resolved; continue on the same issue/PR unless a separate
+outcome, conflict, or T4 action requires a decision.
 
 Accepted pushes to `main` run validation first and then automatically synchronize only GitHub lifecycle labels. The
 explicit `sync-github --dry-run` and manual synchronization commands remain maintainer tools. CI never rewrites pull
@@ -40,7 +44,8 @@ request branches and cannot mutate issue titles, bodies, assignees, non-lifecycl
 ## Scope and verification
 
 - Static compiler evidence remains authoritative; incomplete identity fails closed.
-- Never broaden a checkpoint to solve adjacent discoveries. Record them for later planning.
+- Absorb reasonably necessary discoveries and blocking defects that serve the existing outcome; update the existing
+  issue/checkpoint and paths. Create a new implementation issue only for a genuinely independent deliverable.
 - Use risk-based tests at the least expensive reliable layer and avoid duplicate assertions.
 - Run focused verification during implementation and the declared final gate once after review resolution.
 - Do not repeat a successful command against an unchanged candidate.

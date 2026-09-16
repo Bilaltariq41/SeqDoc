@@ -1,14 +1,13 @@
 # Delegated Contribution Workflow
 
-Delegated changes remain candidates until the maintainer verifies their complete behavior. The canonical record under
-`docs/project/work-items/` is the current-state authority; GitHub lifecycle labels and checkpoint prose are projections.
-Preserve the submitted
-branch, record its base revision, inspect the actual diff, and classify each area as accepted, repairable, or rejected.
-Follow [collaboration-model.md](collaboration-model.md) for review epochs, receipts, repair limits, and separately
-authorized split, transfer, or takeover decisions.
-Return bounded findings to human contributors with file/line evidence, risk, expected behavior, and one focused
-verification command. The contributor re-reviews the complete candidate; the maintainer reviews the repair delta and
-affected risks when it returns. After two unsuccessful repair rounds, reject, split, or explicitly take ownership.
+Delegated changes remain candidates until worker self-review and one complete latest-head, non-author human peer review.
+The canonical record under `docs/project/work-items/` is the current-state authority; GitHub lifecycle labels and
+checkpoint prose are projections. Preserve the submitted branch, record its base revision, inspect the actual diff, and
+classify each area as accepted, repairable, or rejected. Follow [collaboration-model.md](collaboration-model.md) for
+review, receipts, continuation, and T4 decisions. Record findings with file/line evidence, risk, expected behavior, and
+one focused verification command. Findings continue on the same PR; the worker repairs, replans, pairs, and absorbs
+necessary acceptance work until the latest head is ready. Block only for an external dependency, conflicting active
+work, or T4 action.
 
 For each finding, record a repair trace:
 
@@ -18,10 +17,9 @@ For each finding, record a repair trace:
 A repair is complete only when the trace reaches its required observable or persisted consumer and the contributor's
 full-candidate self-review finds no regression outside the repair delta.
 
-Use the same return-and-repair loop for an available implementation agent: resume the same agent session with exact
-findings, require it to fix its own delta, and verify only changed risks. Do not have the maintainer silently rewrite
-repairable delegated work. The maintainer takes over only when the contributor/agent is unavailable, repeated repair
-fails, or the required architectural decision exceeds the delegated scope.
+Use the same continuation loop for an available implementation agent: resume the same session with exact findings,
+require it to fix its own delta, and verify changed risks. Do not silently rewrite repairable delegated work. A new
+implementation issue is for a genuinely independent deliverable, not a discovery from the current outcome.
 
 Automated or unavailable-author candidates may be hardened on a local branch based on the submission. Retain correct
 code and repair only demonstrated defects. Before publication, compare the full candidate against canonical `main`,
@@ -39,9 +37,9 @@ Recurring semantic failures are broken evidence chains, stronger downstream clai
 placement, and silent unsupported forms. Apply the five proof gates in `AGENTS.md`. Reviewers should search for fixtures
 with no production-path test and hand-built facts with no producer or observable proof.
 
-Scope drift is a separate recurring category. SDK/build files, CLI behavior, public contracts, and other paths outside
-the issue allowlist require prior maintainer approval. A useful unrelated fix stays out of the candidate until it has
-its own authority and coverage.
+Scope drift is a separate recurring category. The worker may add paths and adjust contracts when reasonably necessary
+for the existing outcome, recording the change and preserving quality invariants. A genuinely separate capability is
+the boundary requiring human preapproval and a new issue.
 
 ## Semantic delivery sequence
 
@@ -51,17 +49,15 @@ shape, registration or admission requirement, evidence chain to the first observ
 negative lookalikes, target paths, and one focused command. Do not split one semantic chain among layer-specific agents
 unless the contract has already been reviewed and the paths are independent.
 
-Follow [collaboration-model.md](collaboration-model.md) for the applicable review epochs, grandfathered one-review
-rules, repair rounds, and separately authorized split/transfer/takeover decisions. This workflow preserves the complete
-vertical candidate, focused verification, evidence, attribution, and final-gate requirements without redefining review
-counts.
+Follow [collaboration-model.md](collaboration-model.md) for grandfathered rules, one-peer review, continuation, and T4
+decisions. This workflow preserves the complete vertical candidate, focused verification, evidence, attribution, and
+final-gate requirements.
 
 ## Delivery package sizing
 
-Use sub-issues to model dependencies and acceptance, but avoid requiring maintainer review after every small internal
-step. A parent workstream should group 1–3 cohesive sub-issues into an approved delivery package when they share target
-paths and one vertical outcome. The contributor and agent may use multiple ordered commits inside one package PR; the
-PR closes every included issue and receives one complete self-review.
+Use the parent workstream to group implementation issues and dependencies. An implementation issue owns one outcome and
+may use multiple ordered commits inside one PR; it cannot create child issues. Absorb discoveries serving that outcome or
+return them to the parent backlog. Create a new implementation issue only for a genuinely independent deliverable.
 
 Keep a contract and its first consumer together when that makes the abstraction demonstrably useful. Separate a shared
 foundation when its review could materially redirect dependent work, and keep supplied-project acceptance separate
@@ -70,15 +66,8 @@ reduce review count.
 
 ## Review latency and dependent work
 
-Maintain at least one independent `ready` issue per contributor where practical. A contributor with a review-ready PR
-may start one independent branch from `main`, keeping a maximum of two open implementation PRs. Blocked work remains
-planning-only unless the maintainer explicitly authorizes a two-level stack.
-
-Stack authorization is workflow permission, not code approval: retain the GitHub `blocked by` relationship, add
-`stack-approved`, branch the dependent issue from the pending PR, and keep its PR draft with an explicit dependency.
-Do not stack review-sensitive shared contracts unless pre-approved. When the base merges, rebase, verify the isolated
-diff, rerun affected verification, and remove the label/draft state. If the base direction changes or fails review,
-stop dependent implementation rather than preserving sunk work on a rejected foundation.
+Contributors may claim eligible Ready items independently when their dependencies and path leases permit it. Do not use
+child issues or a two-level stack to route discoveries; absorb them or return them to the parent backlog.
 
 ## Repair trace: PR #33 (`feature/issue-5-exact-contract-operation`, closes #5 and #7)
 
