@@ -1,16 +1,29 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
 
 namespace SeqDoc.AcceptanceTests.ProcessOwnershipStub;
 
 /// <summary>
-/// Deterministic, ordinary managed test-child for GH-106/I100-A. No P/Invoke, no
-/// <c>AllowUnsafeBlocks</c> — every scenario needed by <c>ProcessOwnershipTests.cs</c> is driven purely
-/// by command-line arguments and ordinary <see cref="Process"/>/<see cref="Console"/> use.
+/// Deterministic, ordinary managed test-child for GH-106/I100-A. No <c>AllowUnsafeBlocks</c> — every
+/// scenario needed by <c>ProcessOwnershipTests.cs</c> is driven purely by command-line arguments and
+/// ordinary <see cref="Process"/>/<see cref="Console"/> use, plus (GH106-R2-F12) one plain, pointer-free
+/// P/Invoke signature used only for the <c>report-job-membership</c> observable-receipt command.
 /// </summary>
 internal static class Program
 {
     private static int Main(string[] args)
     {
+        // GH106-R2-F12: as the very first action this process takes — before any other argument
+        // handling, console I/O, or logic — report whether the OS already considers this process a job
+        // member. This is a genuine, external, production-code-path receipt proving job membership (via
+        // AssignProcessToJobObject) was established before this child ever executed any other
+        // instruction, replacing/supplementing the prior in-process test-hook-only proof.
+        if (args.Length > 0 && args[0] == "report-job-membership")
+        {
+            return RunReportJobMembership();
+        }
+
         if (args.Length == 0)
         {
             Console.Error.WriteLine("usage: <command> [args...]");
@@ -37,6 +50,10 @@ internal static class Program
                     return RunSpawnGrandchild(args);
                 case "print-env":
                     return RunPrintEnv(args);
+                case "read-stdin-to-eof":
+                    return RunReadStdinToEof();
+                case "utf8-boundary":
+                    return RunUtf8Boundary();
                 case "exitcode":
                     return int.Parse(args[1]);
                 default:
@@ -49,6 +66,52 @@ internal static class Program
             Console.Error.WriteLine($"stub failure: {ex}");
             return 70;
         }
+    }
+
+    // report-job-membership — see the dispatch comment in Main above. Queries this process's own
+    // membership in any job before doing anything else and prints it as the very first stdout line.
+    private static int RunReportJobMembership()
+    {
+        IsProcessInJob(GetCurrentProcess(), nint.Zero, out bool inJob);
+        Console.Out.WriteLine($"IN-JOB:{inJob}");
+        Console.Out.Flush();
+        return 0;
+    }
+
+    [DllImport("kernel32.dll")]
+    private static extern nint GetCurrentProcess();
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsProcessInJob(nint processHandle, nint jobHandle, [MarshalAs(UnmanagedType.Bool)] out bool result);
+
+    // read-stdin-to-eof — GH106-R2-F6: proves the parent's stdin write handle is closed immediately (not
+    // retained-but-unusable), so a child reading stdin to EOF completes instead of hanging.
+    private static int RunReadStdinToEof()
+    {
+        string all = Console.In.ReadToEnd();
+        Console.Out.Write($"READ-COMPLETE:{all.Length}");
+        Console.Out.Flush();
+        return 0;
+    }
+
+    // utf8-boundary — GH106-R2-F10: writes exactly 65535 single-byte filler bytes, then a 3-byte UTF-8
+    // character (so its first byte lands at offset 65535, splitting it exactly across DrainPipe's 64 KiB
+    // read boundary), then a trailing marker.
+    private static int RunUtf8Boundary()
+    {
+        using var stdout = Console.OpenStandardOutput();
+        var filler = new byte[65535];
+        Array.Fill(filler, (byte)'x');
+        stdout.Write(filler, 0, filler.Length);
+
+        byte[] straddling = Encoding.UTF8.GetBytes("€");
+        stdout.Write(straddling, 0, straddling.Length);
+
+        byte[] marker = Encoding.UTF8.GetBytes("-MARKER-END");
+        stdout.Write(marker, 0, marker.Length);
+        stdout.Flush();
+        return 0;
     }
 
     // echo <stdoutMarker> <stderrMarker>

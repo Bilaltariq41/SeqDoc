@@ -257,12 +257,14 @@ public sealed class ProcessOwnershipTests
 
             Assert.Equal(0, wait.ExitCode); // the immediate parent's own, already-recorded natural exit code
 
-            // Forcing TerminateJobObject to unblock the stuck read yields a real, clean EOF on Windows
-            // anonymous pipes (not an I/O error), so DrainPipe's own per-stream truncated flag can
-            // legitimately come back false even though intervention was required — the fix records
-            // DrainIncomplete explicitly for exactly this case (WaitAsync's own bound was reached and
-            // forced termination, never TimedOut, since the process itself already exited cleanly).
-            Assert.Equal(ProcessOwnershipFailureClass.DrainIncomplete, wait.FailureClass);
+            // GH106-R2-F2 repair consequence: the live grandchild also prevents ACTIVE_PROCESS_ZERO from
+            // ever being observed within WaitAsync's own 3s bound, so the exited==true branch now records
+            // ProcessFailed ("family exit could not be proven") before the drain race below even runs.
+            // Per the frozen failure-class precedence table, ProcessFailed (3) legitimately outranks
+            // DrainIncomplete (4) — both describe the same root cause (the live descendant), and
+            // ProcessFailed is the more fundamental of the two facts, so first-write-wins correctly
+            // surfaces it instead of the drain's own truncation.
+            Assert.Equal(ProcessOwnershipFailureClass.ProcessFailed, wait.FailureClass);
             Assert.Contains("parent-exited", wait.StdOut.Text, StringComparison.Ordinal);
             Assert.False(File.Exists(markerPath + ".completed"));
         }
@@ -387,6 +389,7 @@ public sealed class ProcessOwnershipTests
     [InlineData((int)ConstructionFaultPoint.AfterAttributeListBuilt)]
     [InlineData((int)ConstructionFaultPoint.AfterJobCreated)]
     [InlineData((int)ConstructionFaultPoint.AfterProcessCreatedBeforeAssign)]
+    [InlineData((int)ConstructionFaultPoint.AfterDrainsStartedBeforeAssign)]
     public void EachConstructionFaultPointUnwindsOnlyWhatWasAcquired(int faultPointValue)
     {
         var faultPoint = (ConstructionFaultPoint)faultPointValue;
@@ -408,6 +411,349 @@ public sealed class ProcessOwnershipTests
         // incidental handles concurrently; the point is proving no large, monotonically growing leak per
         // fault point, not chasing an exact process-wide handle count.
         Assert.True(after - before < 25, $"Handle count grew by {after - before} after a fault at {faultPoint}.");
+    }
+
+    // ---- GH106-R2 repair round: PR #108 human peer review findings F1-F12 (F13 folded into F8/F9) -----
+
+    [Fact]
+    public void PostDrainsUnwindFaultCancelsAndAwaitsBackgroundDrainsAndCompletionMonitor()
+    {
+        // GH106-R2-F1: a failure between StartDrains/StartCompletionMonitor and AssignProcessToJobObject/
+        // ResumeThread must not leak the background drain/completion-monitor tasks. The construction-
+        // fault hook captures the internal ContainedProcess reference (never returned to a caller on a
+        // failed Start) so this test can prove those tasks are genuinely completed, not merely abandoned.
+        ContainedProcess? captured = null;
+        ContainedProcess.PostDrainsStartHookForTests = p => captured = p;
+        try
+        {
+            var options = NewOptions(["sleep", "1000"]);
+            var result = ContainedProcess.Start(options, ConstructionFaultPoint.AfterDrainsStartedBeforeAssign);
+
+            Assert.False(result.Succeeded);
+            Assert.NotNull(captured);
+            Assert.NotNull(captured!.StdOutDrainTaskForTests);
+            Assert.NotNull(captured.StdErrDrainTaskForTests);
+            Assert.True(captured.StdOutDrainTaskForTests!.IsCompleted, "stdout drain task was left running after unwind.");
+            Assert.True(captured.StdErrDrainTaskForTests!.IsCompleted, "stderr drain task was left running after unwind.");
+            Assert.True(
+                captured.CompletionMonitorTaskForTests is null || captured.CompletionMonitorTaskForTests.IsCompleted,
+                "completion monitor task was left running after unwind.");
+        }
+        finally
+        {
+            ContainedProcess.PostDrainsStartHookForTests = null;
+        }
+    }
+
+    [Fact]
+    public async Task UnprovenActiveProcessZeroOnNormalExitRecordsProcessFailed()
+    {
+        // GH106-R2-F2: the frozen failure table requires ProcessFailed when family exit cannot be proven.
+        // Stopping the completion monitor for real (a genuine code path, not a mock) means
+        // ACTIVE_PROCESS_ZERO can truly never be observed; a short test-only bound keeps this fast rather
+        // than waiting out the real 10s production bound.
+        var options = NewOptions(["echo", "out", "err"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        process.ActiveProcessZeroBoundForTests = TimeSpan.FromMilliseconds(150);
+        process.StopCompletionMonitorForTests();
+
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        Assert.Equal(ProcessOwnershipFailureClass.ProcessFailed, wait.FailureClass);
+        Assert.False(wait.ActiveProcessZeroObserved);
+    }
+
+    [Fact]
+    public async Task TimeoutBranchAwaitsFamilyExitAfterForcedTermination()
+    {
+        // GH106-R2-F3: the timeout/cancellation branch must terminate AND await family exit, not just
+        // fire TerminateJobObject and return. The immediate child itself (not a descendant) is still
+        // running well past WaitAsync's own short timeout, so this exercises the `!exited` branch
+        // directly.
+        string markerPath = Path.Combine(Path.GetTempPath(), $"seqdoc-i100a-timeoutawait-{Guid.NewGuid():N}.marker");
+        var options = NewOptions(["sleep-with-marker", markerPath, "8000"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        try
+        {
+            var wait = await process.WaitAsync(TimeSpan.FromMilliseconds(300), CancellationToken.None);
+
+            Assert.Equal(ProcessOwnershipFailureClass.TimedOut, wait.FailureClass);
+            Assert.True(process.TerminateJobObjectWasCalled);
+            Assert.True(
+                wait.ActiveProcessZeroObserved,
+                "TerminateJobObject was called but the timeout branch must await ACTIVE_PROCESS_ZERO before returning.");
+            Assert.False(File.Exists(markerPath + ".completed"));
+        }
+        finally
+        {
+            File.Delete(markerPath);
+            File.Delete(markerPath + ".completed");
+        }
+    }
+
+    [Fact]
+    public async Task TerminateJobObjectFailureRecordsProcessFailedWithoutOverwritingEarlierTimedOut()
+    {
+        // GH106-R2-F4: a discarded TerminateJobObject failure is a real gap. Force it to fail via the
+        // same injectable-seam pattern as the WaitForSingleObject seam below, and prove the earlier,
+        // higher-precedence TimedOut class still wins (tracker first-write-wins), while the failure is
+        // still recorded rather than silently dropped. The override intercepts every in-band
+        // TerminateJobObject call, so the sleeping child is never actually terminated during WaitAsync
+        // itself — WaitAsync's own drain-await only unblocks once the child exits naturally, so a
+        // deliberately short sleep (well past the 300ms timeout, but not 10s) keeps this test fast.
+        var options = NewOptions(["sleep", "2000"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+
+        ContainedProcess.TerminateJobObjectOverrideForTests = (_, _) => false;
+        try
+        {
+            var wait = await process.WaitAsync(TimeSpan.FromMilliseconds(300), CancellationToken.None);
+
+            Assert.Equal(ProcessOwnershipFailureClass.TimedOut, wait.FailureClass);
+            Assert.True(process.TerminateJobObjectWasCalled);
+        }
+        finally
+        {
+            ContainedProcess.TerminateJobObjectOverrideForTests = null;
+
+            // The override made every in-band TerminateJobObject call a no-op, so the sleeping child is
+            // still alive; clean it up for real now that the override is cleared.
+            process.Terminate();
+        }
+    }
+
+    [Fact]
+    public async Task WaitForSingleObjectFailureRecordsProcessFailedDistinctFromGenuineTimeout()
+    {
+        // GH106-R2-F5: WAIT_FAILED/WAIT_ABANDONED must not be misreported as TimedOut.
+        var options = NewOptions(["sleep", "5000"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+
+        ContainedProcess.WaitForSingleObjectOverrideForTests = (_, _) => NativeMethods.WAIT_FAILED;
+        try
+        {
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+
+            Assert.Equal(ProcessOwnershipFailureClass.ProcessFailed, wait.FailureClass);
+        }
+        finally
+        {
+            ContainedProcess.WaitForSingleObjectOverrideForTests = null;
+        }
+    }
+
+    [Fact]
+    public async Task StdinIsClosedImmediatelySoChildReadingToEofCompletesWithoutHanging()
+    {
+        // GH106-R2-F6: the parent's stdin write handle must be closed immediately (not retained but
+        // unusable), giving a stdin-reading child immediate EOF instead of hanging forever.
+        var options = NewOptions(["read-stdin-to-eof"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+        Assert.Equal("READ-COMPLETE:0", wait.StdOut.Text);
+    }
+
+    [Fact]
+    public async Task TeardownDegradedIsObservableThroughPublicSurfaceAfterDispose()
+    {
+        // GH106-R2-F7: a real caller (not just an internal test-only accessor) must be able to observe a
+        // degraded teardown. Force a genuine CloseHandle failure by closing the process handle out from
+        // under Dispose before it runs, so Dispose's own CloseHandle call fails for real.
+        var options = NewOptions(["echo", "out", "err"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+        Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+
+        NativeMethods.CloseHandle(process.ProcessHandleForTests);
+
+        process.Dispose();
+
+        Assert.Equal(ProcessOwnershipFailureClass.TeardownDegraded, process.FailureClass);
+        Assert.NotEmpty(process.TeardownFailures);
+    }
+
+    [Theory]
+    [InlineData("exec-nul")]
+    [InlineData("arg-nul")]
+    [InlineData("env-name-nul")]
+    [InlineData("env-value-nul")]
+    [InlineData("env-name-equals")]
+    public void MalformedVectorsFailClosedBeforeReachingNativeConstruction(string vector)
+    {
+        // GH106-R2-F8/F13: embedded-NUL and malformed environment-name vectors must fail closed before
+        // any native call (StartCore is never reached: Start() returns synchronously from validation).
+        ProcessOwnershipOptions options = vector switch
+        {
+            "exec-nul" => new ProcessOwnershipOptions
+            {
+                ExecutablePath = StubExecutablePath + "\0evil",
+                Environment = DefaultEnvironment(),
+            },
+            "arg-nul" => NewOptions(["echo", "a\0b", "c"]),
+            "env-name-nul" => NewOptionsWithEnv(new Dictionary<string, string>(DefaultEnvironment()) { ["BAD\0NAME"] = "v" }),
+            "env-value-nul" => NewOptionsWithEnv(new Dictionary<string, string>(DefaultEnvironment()) { ["BADVALUE"] = "v\0v" }),
+            "env-name-equals" => NewOptionsWithEnv(new Dictionary<string, string>(DefaultEnvironment()) { ["BAD=NAME"] = "v" }),
+            _ => throw new InvalidOperationException($"unknown vector {vector}"),
+        };
+
+        var result = ContainedProcess.Start(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ProcessOwnershipFailureClass.ProcessConstructionFailed, result.FailureClass);
+        Assert.Null(result.Process);
+    }
+
+    [Fact]
+    public void EnvironmentBlockDedupIsCaseInsensitiveLastWriteWinsAndWellFormed()
+    {
+        // GH106-R2-F9/F13: Windows environment-variable names are case-insensitive; BuildEnvironmentBlock
+        // must collapse case-variant duplicate keys (last-write-wins) rather than treating them as
+        // distinct entries. Exercised directly at the encoding layer — the least expensive reliable
+        // layer for a pure string-transform claim.
+        var env = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["Path"] = "first-value",
+            ["PATH"] = "second-value",
+            ["AAA"] = "a",
+        };
+
+        string block = ProcessOwnershipEncoding.BuildEnvironmentBlock(env);
+
+        Assert.Contains("second-value", block, StringComparison.Ordinal);
+        Assert.DoesNotContain("first-value", block, StringComparison.Ordinal);
+        Assert.Equal(1, CountOccurrences(block, "-value"));
+
+        // BuildEnvironmentBlock's own .NET string ends with exactly one explicit NUL per entry;
+        // Marshal.StringToHGlobalUni (used at the real construction call site) appends its own implicit
+        // terminator on top of that, producing the double-null-terminated native block CREATE_UNICODE_ENVIRONMENT
+        // requires — asserting on the raw pre-marshaling string here, not the native buffer.
+        Assert.EndsWith("\0", block, StringComparison.Ordinal);
+        Assert.False(block.EndsWith("\0\0", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Utf8MultibyteCharacterStraddling64KiBReadBoundaryDecodesCorrectly()
+    {
+        // GH106-R2-F10: a multibyte UTF-8 character split exactly across DrainPipe's 64 KiB read boundary
+        // must decode correctly, not as corrupted/replacement-character fragments, while Truncated stays
+        // false.
+        var options = NewOptions(["utf8-boundary"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+        Assert.False(wait.StdOut.Truncated);
+        string expected = new string('x', 65535) + "€" + "-MARKER-END";
+        Assert.Equal(expected, wait.StdOut.Text);
+    }
+
+    [Fact]
+    public async Task DisposeClosesResourcesInExactTrueReverseAcquisitionOrder()
+    {
+        // GH106-R2-F11: proves the exact close/free trace order for a full normal disposal, not just a
+        // handle-count delta. The stdin write handle is omitted from the expected trace because F6 closes
+        // it during construction, so Dispose's own CloseTracked call for it is a no-op (never recorded).
+        var options = NewOptions(["echo", "out", "err"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+        Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+
+        process.Dispose();
+
+        Assert.Equal(ExpectedFullDisposeOrder, process.TeardownOrderForTests);
+    }
+
+    private static readonly string[] ExpectedFullDisposeOrder =
+    {
+        "process handle",
+        "thread handle",
+        "environment block buffer",
+        "command line buffer",
+        "completion port handle",
+        "job handle",
+        "attribute list buffer",
+        "handle list buffer",
+        "stderr pipe handle",
+        "stdout pipe handle",
+    };
+
+    [Fact]
+    public void PartialConstructionUnwindClosesResourcesInExactTrueReverseAcquisitionOrder()
+    {
+        // GH106-R2-F11: the same exact-reverse-order proof, but for a partial-construction fault (the
+        // unwind Stack<Action>, not Dispose's straight-line sequence) — the checkpoint's own requirement
+        // to cover at least one S0-S3 fault point, not only full normal disposal.
+        var trace = new List<string>();
+        ContainedProcess.UnwindStepObserverForTests = trace.Add;
+        try
+        {
+            var options = NewOptions(["sleep", "1000"]);
+            var result = ContainedProcess.Start(options, ConstructionFaultPoint.AfterProcessCreatedBeforeAssign);
+
+            Assert.False(result.Succeeded);
+            Assert.Equal(ExpectedPartialUnwindOrder, trace);
+        }
+        finally
+        {
+            ContainedProcess.UnwindStepObserverForTests = null;
+        }
+    }
+
+    private static readonly string[] ExpectedPartialUnwindOrder =
+    {
+        "process handle",
+        "thread handle",
+        "environment block buffer",
+        "command line buffer",
+        "completion port handle",
+        "job handle",
+        "attribute list buffer",
+        "handle list buffer",
+        "stderr write handle",
+        "stderr read handle",
+        "stdout write handle",
+        "stdout read handle",
+        "stdin write handle",
+        "stdin read handle",
+    };
+
+    [Fact]
+    public async Task AssignPrecedesResumeProvenByObservableChildReceiptFromItsOwnFirstInstruction()
+    {
+        // GH106-R2-F12: replaces the internal test-hook-only proof above with a genuine, external,
+        // production-code-path receipt — the child itself queries its own job membership (via a plain
+        // P/Invoke in the stub, no unsafe blocks) as the very first thing it does and prints the result,
+        // proving assign-before-resume chronology from the child's own perspective rather than the test
+        // process's.
+        var options = NewOptions(["report-job-membership"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+        Assert.Equal("IN-JOB:True\r\n", wait.StdOut.Text);
     }
 
     // ---- Group 10: active-zero-gated normal disposal --------------------------------------------------
@@ -486,6 +832,10 @@ public sealed class ProcessOwnershipTests
             Environment = environment ?? DefaultEnvironment(),
             DrainTimeout = drainTimeout ?? TimeSpan.FromSeconds(30),
         };
+
+    /// <summary>GH106-R2-F8 helper: an "echo" child whose only purpose is exercising a rejected environment vector.</summary>
+    private static ProcessOwnershipOptions NewOptionsWithEnv(Dictionary<string, string> environment) =>
+        NewOptions(["echo", "out", "err"], environment);
 
     /// <summary>
     /// The minimal explicit, deterministic child environment: only <c>SystemRoot</c> (required for the

@@ -72,19 +72,92 @@ confirmed by the orchestrator reading the actual code before repair began.
 
 | Finding | Severity | Disposition |
 |---|---|---|
-| GH106-R2-F1 — post-construction failure unwind (StartCore lines ~303-324, 480-547) can double-close the 3 child-side pipe handles already closed at lines 498-500, and never cancels/awaits the drain tasks or completion monitor before returning, leaking background work on any assign/hook/resume failure. | High | Repair in progress |
-| GH106-R2-F2 — normal exit records no failure when `ACTIVE_PROCESS_ZERO` is never observed within its bound; the frozen failure table requires `ProcessFailed` when family exit cannot be proven. | High | Repair in progress |
-| GH106-R2-F3 — the timeout/cancellation branch calls `TerminateJobObject` but never awaits `ACTIVE_PROCESS_ZERO` before returning, so `WaitAsync` can return before the terminated family has actually finished exiting. | High | Repair in progress |
-| GH106-R2-F4 — `TerminateJobObject` failures are discarded in both `WaitAsync` and `Terminate()`; no `ProcessFailed` is recorded. | High | Repair in progress |
-| GH106-R2-F5 — `WaitForSingleObject` result `WAIT_FAILED` is mapped identically to `WAIT_TIMEOUT`, so a real wait failure is misreported as `TimedOut` instead of `ProcessFailed` with the captured `Win32Error`. | High | Repair in progress |
-| GH106-R2-F6 — the parent's stdin write handle is retained but never exposed or closed, so a child reading stdin to EOF cannot finish naturally. | High | Repair in progress |
-| GH106-R2-F7 — `Dispose()` can record `TeardownDegraded` internally, but only an internal test-only accessor can observe it; no real caller (including #107) has a way to learn teardown failed. | High | Repair in progress |
-| GH106-R2-F8 — embedded NUL and malformed environment-name entries are not rejected before native marshaling, which can silently truncate them while construction still reports success. | Medium | Repair in progress |
-| GH106-R2-F9 — `BuildEnvironmentBlock` dedups with `StringComparer.Ordinal`, so case-variant Windows environment names (e.g. `Path` vs `PATH`) are not deduplicated despite Windows treating them as the same variable. | Medium | Repair in progress |
-| GH106-R2-F10 — `DrainPipe` decodes each independent 64 KiB read chunk with `Encoding.UTF8.GetString`, so a multibyte UTF-8 sequence split across a read boundary can be corrupted while `Truncated` still reports `false`. | Medium | Repair in progress |
-| GH106-R2-F11 — `Dispose()`'s close order does not match true reverse-acquisition order (job/IOCP close before pipes; command-line/environment buffers close last instead of matching their early acquisition), despite the code comment claiming exact reverse order. | Medium | Repair in progress |
-| GH106-R2-F12 — the assign-before-resume chronology proof uses an in-process test hook plus `IsProcessInJob`, not the observable stub-receipt ordering the checkpoint originally specified. | Medium | Repair in progress |
-| GH106-R2-F13 — the checkpoint's declared invalid-NUL and environment-dedup vectors are not yet exercised by any test. | Medium | Repair in progress (folded into F8/F9 repair) |
+| GH106-R2-F1 — post-construction failure unwind (StartCore lines ~303-324, 480-547) can double-close the 3 child-side pipe handles already closed at lines 498-500, and never cancels/awaits the drain tasks or completion monitor before returning, leaking background work on any assign/hook/resume failure. | High | Fixed |
+| GH106-R2-F2 — normal exit records no failure when `ACTIVE_PROCESS_ZERO` is never observed within its bound; the frozen failure table requires `ProcessFailed` when family exit cannot be proven. | High | Fixed |
+| GH106-R2-F3 — the timeout/cancellation branch calls `TerminateJobObject` but never awaits `ACTIVE_PROCESS_ZERO` before returning, so `WaitAsync` can return before the terminated family has actually finished exiting. | High | Fixed |
+| GH106-R2-F4 — `TerminateJobObject` failures are discarded in both `WaitAsync` and `Terminate()`; no `ProcessFailed` is recorded. | High | Fixed |
+| GH106-R2-F5 — `WaitForSingleObject` result `WAIT_FAILED` is mapped identically to `WAIT_TIMEOUT`, so a real wait failure is misreported as `TimedOut` instead of `ProcessFailed` with the captured `Win32Error`. | High | Fixed |
+| GH106-R2-F6 — the parent's stdin write handle is retained but never exposed or closed, so a child reading stdin to EOF cannot finish naturally. | High | Fixed |
+| GH106-R2-F7 — `Dispose()` can record `TeardownDegraded` internally, but only an internal test-only accessor can observe it; no real caller (including #107) has a way to learn teardown failed. | High | Fixed |
+| GH106-R2-F8 — embedded NUL and malformed environment-name entries are not rejected before native marshaling, which can silently truncate them while construction still reports success. | Medium | Fixed |
+| GH106-R2-F9 — `BuildEnvironmentBlock` dedups with `StringComparer.Ordinal`, so case-variant Windows environment names (e.g. `Path` vs `PATH`) are not deduplicated despite Windows treating them as the same variable. | Medium | Fixed |
+| GH106-R2-F10 — `DrainPipe` decodes each independent 64 KiB read chunk with `Encoding.UTF8.GetString`, so a multibyte UTF-8 sequence split across a read boundary can be corrupted while `Truncated` still reports `false`. | Medium | Fixed |
+| GH106-R2-F11 — `Dispose()`'s close order does not match true reverse-acquisition order (job/IOCP close before pipes; command-line/environment buffers close last instead of matching their early acquisition), despite the code comment claiming exact reverse order. | Medium | Fixed |
+| GH106-R2-F12 — the assign-before-resume chronology proof uses an in-process test hook plus `IsProcessInJob`, not the observable stub-receipt ordering the checkpoint originally specified. | Medium | Fixed |
+| GH106-R2-F13 — the checkpoint's declared invalid-NUL and environment-dedup vectors are not yet exercised by any test. | Medium | Fixed (folded into F8/F9 repair) |
+
+### Repair trace (PR #108, head `3c87e867` → repair round GH106-R2)
+
+All 13 findings repaired on the same branch in one coherent batch (Abood's explicit instruction 1 — no partial
+candidate submitted). Changed paths: `tests/SeqDoc.AcceptanceTests.ProcessOwnershipStub/Program.cs`,
+`tests/SeqDoc.AcceptanceTests/ProcessOwnership.cs`, `tests/SeqDoc.AcceptanceTests/ProcessOwnershipTests.cs`, this
+ledger, and `checkpoint.md`.
+
+- **F1**: the three manual `CloseHandle` calls (S4) and their corresponding unwind closures now share a
+  `CloseIfOpen(ref nint)` guard (zero-after-close), eliminating the double-close hazard. A new unwind entry pushed
+  immediately after `StartDrains`/`StartCompletionMonitor` terminates the process directly and best-effort awaits
+  (5s bound each) the completion monitor and both drain tasks, replacing the two now-redundant inline
+  `_completionMonitorCts?.Cancel()` calls. New `ConstructionFaultPoint.AfterDrainsStartedBeforeAssign` plus a
+  `PostDrainsStartHookForTests` capture seam. Proof:
+  `PostDrainsUnwindFaultCancelsAndAwaitsBackgroundDrainsAndCompletionMonitor`, plus the fault point added to
+  `EachConstructionFaultPointUnwindsOnlyWhatWasAcquired`.
+- **F2**: `WaitAsync`'s `exited == true` branch now records `ProcessFailed` when `!_activeProcessZeroObserved` after
+  `WaitForActiveProcessZero`. New test-only `ActiveProcessZeroBoundForTests` setter and
+  `StopCompletionMonitorForTests()` seam (never reachable from production — no public setter). Proof:
+  `UnprovenActiveProcessZeroOnNormalExitRecordsProcessFailed`. Consequence: the pre-existing
+  `WaitAsyncDirectlyAgainstLiveGrandchildDrainsWithinBoundInsteadOfHanging` test's expected failure class changed
+  from `DrainIncomplete` to `ProcessFailed` — per the frozen precedence table `ProcessFailed` (3) legitimately
+  outranks `DrainIncomplete` (4), and both now-simultaneous facts share the same root cause (the live descendant);
+  first-write-wins correctly surfaces the more fundamental one.
+- **F3**: the `!exited` branch now awaits `WaitForActiveProcessZero(CancellationToken.None)` after forced
+  `TerminateJobObject` (a fresh token, since `linked` is already cancelled at that point) and records `ProcessFailed`
+  if still unproven — never overwriting the already-recorded `TimedOut`/cancellation class. Proof:
+  `TimeoutBranchAwaitsFamilyExitAfterForcedTermination`.
+- **F4**: `TerminateJobObject`'s return value is now checked at all three call sites (`WaitAsync`'s timeout branch,
+  its drain-deadline branch, and `Terminate()`), recording `ProcessFailed` with the captured `Win32Error` on
+  failure. New `TerminateJobObjectOverrideForTests` seam (indirected through `InvokeTerminateJobObject`). Proof:
+  `TerminateJobObjectFailureRecordsProcessFailedWithoutOverwritingEarlierTimedOut`.
+- **F5**: `WaitForSingleProcessExit` now returns `(Exited, WaitFailed, Win32Error)` instead of a bare `bool`,
+  distinguishing `WAIT_OBJECT_0`/`WAIT_TIMEOUT`/`WAIT_FAILED`-or-`WAIT_ABANDONED`. New
+  `WaitForSingleObjectOverrideForTests` seam (indirected through `InvokeWaitForSingleObject`). Proof:
+  `WaitForSingleObjectFailureRecordsProcessFailedDistinctFromGenuineTimeout`.
+- **F6**: the parent's stdin write handle now closes immediately after `CreateProcessW` succeeds (same site as the
+  other unused parent-side handles), giving an immediate EOF to any stdin-reading child; `_parentStdInWrite` stays a
+  Dispose-tracked field but is already zero by construction (no interactive-stdin support in this checkpoint's
+  scope). New stub command `read-stdin-to-eof`. Proof: `StdinIsClosedImmediatelySoChildReadingToEofCompletesWithoutHanging`.
+- **F7**: new public `ContainedProcess.FailureClass` and `TeardownFailures` properties proxy the same internal
+  tracker/list the prior test-only accessors exposed; both old and new accessors are kept. Proof (genuine
+  `CloseHandle` failure, no mock seam needed — the process handle is closed out from under `Dispose()` before it
+  runs): `TeardownDegradedIsObservableThroughPublicSurfaceAfterDispose`.
+- **F8/F13**: new `ValidateVectors` rejects an embedded NUL in the executable path, any argument, or any
+  environment name/value, and rejects `=` in an environment-variable name — called from `Start()` before the
+  rooted/exists check and before `StartCore` (so a rejected input never reaches any native call). Proof:
+  `MalformedVectorsFailClosedBeforeReachingNativeConstruction` (5 vectors).
+- **F9/F13**: `BuildEnvironmentBlock`'s dedup/sort comparer changed from `StringComparer.Ordinal` to
+  `StringComparer.OrdinalIgnoreCase`. Proof (encoding-layer unit test, the least expensive reliable layer for a
+  pure string-transform claim): `EnvironmentBlockDedupIsCaseInsensitiveLastWriteWinsAndWellFormed`.
+- **F10**: `DrainPipe` now holds one `Decoder` (`Encoding.UTF8.GetDecoder()`) across the whole read loop instead of
+  calling `Encoding.UTF8.GetString` independently per 64 KiB chunk, flushing the decoder at EOF. New stub command
+  `utf8-boundary` writes exactly 65535 filler bytes then a 3-byte UTF-8 character, splitting it exactly across the
+  read boundary. Proof: `Utf8MultibyteCharacterStraddling64KiBReadBoundaryDecodesCorrectly`.
+- **F11**: `Dispose()`'s close order corrected to true exact reverse acquisition order: process handle, thread
+  handle, environment-block buffer, command-line buffer, completion port handle, job handle, attribute-list buffer,
+  handle-list buffer, stderr pipe, stdout pipe, stdin pipe (see `checkpoint.md` for the full derivation).
+  `CloseTracked`/`FreeTracked` now record an ordered label trace; a new `UnwindStepObserverForTests` seam records
+  the same trace for the partial-construction unwind path. Proof: `DisposeClosesResourcesInExactTrueReverseAcquisitionOrder`
+  (full disposal) and `PartialConstructionUnwindClosesResourcesInExactTrueReverseAcquisitionOrder` (one S0-S3 fault
+  point, per Abood's explicit requirement to cover partial teardown order too).
+- **F12**: new stub command `report-job-membership` calls a plain (`AllowUnsafeBlocks`-free) `IsProcessInJob`
+  P/Invoke against its own process handle as the very first action `Main` takes, printing `IN-JOB:True`/`False` as
+  its first stdout line — a genuine, external, production-code-path receipt. This supplements (does not replace)
+  the prior in-process `AssignBeforeResumeHookForTests` proof; both are kept. Proof:
+  `AssignPrecedesResumeProvenByObservableChildReceiptFromItsOwnFirstInstruction`.
+
+**Budget exception**: this repair round added 13 new/extended tests (one per finding, `Utf8...`/`MalformedVectors...`
+etc.) against the checkpoint's original ~10-12 grouped-claim soft budget for the whole checkpoint. Reason: Abood's
+review explicitly requested a dedicated proof per finding ("Prove with...") for nearly every item, and each finding
+is a distinct observable failure mode (not a branch/overload/row-count variant of an existing test), so each earns
+its own test under the "risk-based tests... by distinct observable failure mode" rule.
 
 Full finding text: https://github.com/Bilaltariq41/SeqDoc/pull/108 (Abood-essa review comment). Disposition note:
 Abood also flagged that the prior "final gate passed" wording overstated a 5-failures-out-of-75 result without a

@@ -35,6 +35,14 @@ internal enum ConstructionFaultPoint
     AfterAttributeListBuilt,
     AfterJobCreated,
     AfterProcessCreatedBeforeAssign,
+
+    /// <summary>
+    /// GH106-R2-F1: faults after <see cref="ContainedProcess.StartDrains"/>/
+    /// <see cref="ContainedProcess.StartCompletionMonitor"/> have started background work but before
+    /// assign/resume completes, proving the unwind path cancels/awaits that background work instead of
+    /// leaking it.
+    /// </summary>
+    AfterDrainsStartedBeforeAssign,
 }
 
 public sealed class ProcessOwnershipOptions
@@ -201,12 +209,16 @@ internal static class ProcessOwnershipEncoding
     }
 
     /// <summary>
-    /// Sorted (ordinal), deduplicated (last-write-wins on a duplicate key), double-null-terminated
-    /// Unicode environment block for <c>CREATE_UNICODE_ENVIRONMENT</c>.
+    /// Sorted case-insensitively (<c>OrdinalIgnoreCase</c>, matching Windows environment-variable
+    /// semantics), deduplicated (last-write-wins on a case-insensitive duplicate key), double-null-
+    /// terminated Unicode environment block for <c>CREATE_UNICODE_ENVIRONMENT</c>.
     /// </summary>
     internal static string BuildEnvironmentBlock(IReadOnlyDictionary<string, string> environment)
     {
-        var deduped = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        // GH106-R2-F9: Windows environment-variable names are case-insensitive, so dedup/sort must be
+        // OrdinalIgnoreCase (matching Windows environment-block conventions) — not Ordinal, which would
+        // let e.g. "Path" and "PATH" both survive as if they were distinct variables.
+        var deduped = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var pair in environment)
         {
             deduped[pair.Key] = pair.Value;
@@ -237,6 +249,7 @@ public sealed class ContainedProcess : IDisposable
 {
     private readonly FailureClassTracker _failures = new();
     private readonly List<string> _teardownFailures = new();
+    private readonly List<string> _teardownOrderForTests = new();
 
     private nint _processHandle;
     private nint _threadHandle;
@@ -258,6 +271,10 @@ public sealed class ContainedProcess : IDisposable
     private bool _terminateJobObjectCalled;
     private bool _disposed;
 
+    // GH106-R2-F2: production default is 10s; only a test seam may shrink it (never reachable from a
+    // production caller — there is no public setter).
+    private TimeSpan _activeProcessZeroBound = TimeSpan.FromSeconds(10);
+
     private ContainedProcess()
     {
     }
@@ -265,7 +282,38 @@ public sealed class ContainedProcess : IDisposable
     /// <summary>Test-only chronology seam — see the invocation site in <see cref="StartCore"/>.</summary>
     internal static Action<nint, nint>? AssignBeforeResumeHookForTests;
 
+    /// <summary>
+    /// GH106-R2-F1 test-only seam: invoked with the constructed <see cref="ContainedProcess"/> right
+    /// after background drains/completion-monitor work has started, so a test can capture the instance
+    /// even when a subsequent fault point causes <see cref="Start(ProcessOwnershipOptions)"/> to report
+    /// construction failure (which never returns a <see cref="ProcessOwnershipConstructionResult.Process"/>).
+    /// </summary>
+    internal static Action<ContainedProcess>? PostDrainsStartHookForTests;
+
+    /// <summary>
+    /// GH106-R2-F11 test-only seam: invoked with a resource label immediately before each partial-
+    /// construction unwind step runs, proving the unwind stack's actual close/free order.
+    /// </summary>
+    internal static Action<string>? UnwindStepObserverForTests;
+
+    /// <summary>GH106-R2-F4 test-only seam: overrides the real <c>TerminateJobObject</c> call.</summary>
+    internal static Func<nint, uint, bool>? TerminateJobObjectOverrideForTests;
+
+    /// <summary>GH106-R2-F5 test-only seam: overrides the real <c>WaitForSingleObject</c> call.</summary>
+    internal static Func<nint, int, uint>? WaitForSingleObjectOverrideForTests;
+
     public int ProcessId { get; private set; }
+
+    /// <summary>
+    /// GH106-R2-F7: the aggregated failure class, reflecting whatever <see cref="WaitAsync"/> and/or
+    /// <see cref="Dispose"/> have recorded so far (including <see cref="ProcessOwnershipFailureClass.TeardownDegraded"/>
+    /// after disposal) — a real caller's only way to learn teardown degraded, since prior test-only
+    /// accessors are not production surface.
+    /// </summary>
+    public ProcessOwnershipFailureClass FailureClass => _failures.Class;
+
+    /// <summary>GH106-R2-F7: the aggregated teardown failure details recorded during <see cref="Dispose"/>.</summary>
+    public IReadOnlyList<string> TeardownFailures => _teardownFailures;
 
     /// <summary>Test-only observability: never used to gate production semantics.</summary>
     internal bool TerminateJobObjectWasCalled => _terminateJobObjectCalled;
@@ -277,6 +325,21 @@ public sealed class ContainedProcess : IDisposable
     internal nint StdErrChildHandleValueForTests { get; private set; }
 
     internal nint StdInChildHandleValueForTests { get; private set; }
+
+    /// <summary>GH106-R2-F2 test-only seam: shrinks the active-zero proof bound; never used in production.</summary>
+    internal TimeSpan ActiveProcessZeroBoundForTests { set => _activeProcessZeroBound = value; }
+
+    /// <summary>GH106-R2-F2 test-only seam: forces the completion monitor to stop observing ACTIVE_PROCESS_ZERO.</summary>
+    internal void StopCompletionMonitorForTests() => _completionMonitorCts?.Cancel();
+
+    internal Task? CompletionMonitorTaskForTests => _completionMonitor;
+
+    internal Task<(string Text, bool Truncated)>? StdOutDrainTaskForTests => _stdOutDrain;
+
+    internal Task<(string Text, bool Truncated)>? StdErrDrainTaskForTests => _stdErrDrain;
+
+    /// <summary>GH106-R2-F11: ordered trace of every resource label actually closed/freed by <see cref="Dispose"/>.</summary>
+    internal IReadOnlyList<string> TeardownOrderForTests => _teardownOrderForTests;
 
     public static ProcessOwnershipConstructionResult Start(ProcessOwnershipOptions options) =>
         Start(options, ConstructionFaultPoint.None);
@@ -291,6 +354,15 @@ public sealed class ContainedProcess : IDisposable
             return ProcessOwnershipConstructionResult.Failure(
                 "Unsupported platform: this primitive requires Windows x64 (RID-equivalent), matching "
                 + "finalized contract decision 1. No PATH/version-floor fallback is attempted.");
+        }
+
+        // GH106-R2-F8/F13: reject embedded NUL and malformed environment-name vectors before any
+        // filesystem probe or native call — native marshaling would otherwise silently truncate at the
+        // first embedded NUL while construction still reported success.
+        string? vectorError = ValidateVectors(options);
+        if (vectorError is not null)
+        {
+            return ProcessOwnershipConstructionResult.Failure(vectorError);
         }
 
         if (!Path.IsPathRooted(options.ExecutablePath) || !File.Exists(options.ExecutablePath))
@@ -324,20 +396,74 @@ public sealed class ContainedProcess : IDisposable
         }
     }
 
+    /// <summary>GH106-R2-F8/F13: fails closed on embedded-NUL or malformed environment-name vectors.</summary>
+    private static string? ValidateVectors(ProcessOwnershipOptions options)
+    {
+        if (options.ExecutablePath.Contains('\0'))
+        {
+            return "Executable path must not contain an embedded NUL character.";
+        }
+
+        foreach (string argument in options.Arguments)
+        {
+            if (argument.Contains('\0'))
+            {
+                return $"Argument '{argument}' must not contain an embedded NUL character.";
+            }
+        }
+
+        foreach (var pair in options.Environment)
+        {
+            if (pair.Key.Contains('\0') || pair.Value.Contains('\0'))
+            {
+                return $"Environment variable '{pair.Key}' must not contain an embedded NUL character.";
+            }
+
+            if (pair.Key.Contains('='))
+            {
+                return $"Environment variable name '{pair.Key}' must not contain '=' (Windows "
+                    + "environment-block encoding cannot represent this unambiguously).";
+            }
+        }
+
+        return null;
+    }
+
     private static ProcessOwnershipConstructionResult StartCore(
         ProcessOwnershipOptions options, ConstructionFaultPoint faultPoint, Stack<Action> unwind)
     {
+        // GH106-R2-F1: closures below capture these locals by reference. Guarding on non-zero and
+        // zeroing after close means a handle already closed manually (see the S4 std-handle cleanup
+        // below) can never be double-closed by a later unwind pop — the exact "closed-once" idiom
+        // Dispose()'s CloseTracked already uses.
+        static void CloseIfOpen(ref nint handle)
+        {
+            if (handle != nint.Zero)
+            {
+                NativeMethods.CloseHandle(handle);
+                handle = nint.Zero;
+            }
+        }
+
+        // GH106-R2-F11 test-only observability: records the exact label order the unwind stack actually
+        // pops in, without changing production behavior (the observer is null in production).
+        void PushUnwind(string label, Action action) => unwind.Push(() =>
+        {
+            UnwindStepObserverForTests?.Invoke(label);
+            action();
+        });
+
         // --- S1: three std pipes, created non-inheritable by default, then the exact child-side end of
         // each is explicitly marked inheritable (never the parent-side end). ---
         CreatePipePair(out nint stdInRead, out nint stdInWrite);
-        unwind.Push(() => NativeMethods.CloseHandle(stdInRead));
-        unwind.Push(() => NativeMethods.CloseHandle(stdInWrite));
+        PushUnwind("stdin read handle", () => CloseIfOpen(ref stdInRead));
+        PushUnwind("stdin write handle", () => CloseIfOpen(ref stdInWrite));
         CreatePipePair(out nint stdOutRead, out nint stdOutWrite);
-        unwind.Push(() => NativeMethods.CloseHandle(stdOutRead));
-        unwind.Push(() => NativeMethods.CloseHandle(stdOutWrite));
+        PushUnwind("stdout read handle", () => CloseIfOpen(ref stdOutRead));
+        PushUnwind("stdout write handle", () => CloseIfOpen(ref stdOutWrite));
         CreatePipePair(out nint stdErrRead, out nint stdErrWrite);
-        unwind.Push(() => NativeMethods.CloseHandle(stdErrRead));
-        unwind.Push(() => NativeMethods.CloseHandle(stdErrWrite));
+        PushUnwind("stderr read handle", () => CloseIfOpen(ref stdErrRead));
+        PushUnwind("stderr write handle", () => CloseIfOpen(ref stdErrWrite));
 
         SetInheritable(stdInRead);
         SetInheritable(stdOutWrite);
@@ -351,7 +477,7 @@ public sealed class ContainedProcess : IDisposable
         // --- S2: attribute list restricting inheritance to exactly the 3 child-side handles. ---
         nint[] inheritable = [stdInRead, stdOutWrite, stdErrWrite];
         nint handleListBuffer = Marshal.AllocHGlobal(nint.Size * inheritable.Length);
-        unwind.Push(() => Marshal.FreeHGlobal(handleListBuffer));
+        PushUnwind("handle list buffer", () => Marshal.FreeHGlobal(handleListBuffer));
 
         // Finalized contract decision 3: this is the exact unsafe native pointer block — the raw
         // PROC_THREAD_ATTRIBUTE_HANDLE_LIST payload UpdateProcThreadAttribute reads directly out of
@@ -379,7 +505,7 @@ public sealed class ContainedProcess : IDisposable
             throw Win32("CreateJobObjectW");
         }
 
-        unwind.Push(() => NativeMethods.CloseHandle(jobHandle));
+        PushUnwind("job handle", () => NativeMethods.CloseHandle(jobHandle));
 
         var limits = default(NativeMethods.JOBOBJECT_EXTENDED_LIMIT_INFORMATION);
         limits.BasicLimitInformation.LimitFlags = NativeMethods.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -412,7 +538,7 @@ public sealed class ContainedProcess : IDisposable
             throw Win32("CreateIoCompletionPort");
         }
 
-        unwind.Push(() => NativeMethods.CloseHandle(completionPort));
+        PushUnwind("completion port handle", () => NativeMethods.CloseHandle(completionPort));
 
         var associate = new NativeMethods.JOBOBJECT_ASSOCIATE_COMPLETION_PORT
         {
@@ -441,11 +567,11 @@ public sealed class ContainedProcess : IDisposable
         // --- S4: CreateProcessW, suspended, with the restricted attribute list. ---
         string commandLine = ProcessOwnershipEncoding.BuildCommandLine(options.ExecutablePath, options.Arguments);
         nint commandLineBuffer = Marshal.StringToHGlobalUni(commandLine);
-        unwind.Push(() => Marshal.FreeHGlobal(commandLineBuffer));
+        PushUnwind("command line buffer", () => Marshal.FreeHGlobal(commandLineBuffer));
 
         string environmentBlock = ProcessOwnershipEncoding.BuildEnvironmentBlock(options.Environment);
         nint environmentBuffer = Marshal.StringToHGlobalUni(environmentBlock);
-        unwind.Push(() => Marshal.FreeHGlobal(environmentBuffer));
+        PushUnwind("environment block buffer", () => Marshal.FreeHGlobal(environmentBuffer));
 
         var startupInfoEx = default(NativeMethods.STARTUPINFOEXW);
         startupInfoEx.StartupInfo.cb = Marshal.SizeOf<NativeMethods.STARTUPINFOEXW>();
@@ -477,8 +603,8 @@ public sealed class ContainedProcess : IDisposable
             throw Win32("CreateProcessW");
         }
 
-        unwind.Push(() => NativeMethods.CloseHandle(processInformation.hThread));
-        unwind.Push(() =>
+        PushUnwind("thread handle", () => NativeMethods.CloseHandle(processInformation.hThread));
+        PushUnwind("process handle", () =>
         {
             NativeMethods.TerminateProcess(processInformation.hProcess, uint.MaxValue);
             NativeMethods.CloseHandle(processInformation.hProcess);
@@ -494,10 +620,25 @@ public sealed class ContainedProcess : IDisposable
 
         // The child-side pipe ends have been duplicated into the child's handle table by inheritance;
         // the parent no longer needs (and must not keep) them open, or EOF on the parent's read ends
-        // would never be observable once the child itself exits.
-        NativeMethods.CloseHandle(stdInRead);
-        NativeMethods.CloseHandle(stdOutWrite);
-        NativeMethods.CloseHandle(stdErrWrite);
+        // would never be observable once the child itself exits. GH106-R2-F1: zero the locals after
+        // closing (shared "closed-once" state with the unwind closures above, which capture these same
+        // locals by reference) so a later unwind pop can never double-close an already-closed handle.
+        //
+        // GH106-R2-F6: also close the parent's own stdin *write* end immediately. This checkpoint scopes
+        // out interactive stdin input entirely, so closing it here (rather than only in Dispose) gives
+        // any stdin-reading child immediate EOF instead of an unusable, silently-retained handle.
+        //
+        // CloseIfOpen zeroes the ref'd local, so capture the raw handle *values* (still meaningful as
+        // identifiers for the child's inherited handle table entries, even once closed on the parent
+        // side) before closing, for the test-only observability properties below.
+        nint stdOutChildHandleValue = stdOutWrite;
+        nint stdErrChildHandleValue = stdErrWrite;
+        nint stdInChildHandleValue = stdInRead;
+
+        CloseIfOpen(ref stdInRead);
+        CloseIfOpen(ref stdOutWrite);
+        CloseIfOpen(ref stdErrWrite);
+        CloseIfOpen(ref stdInWrite);
 
         var process = new ContainedProcess
         {
@@ -513,9 +654,9 @@ public sealed class ContainedProcess : IDisposable
             _parentStdErrRead = stdErrRead,
             _parentStdInWrite = stdInWrite,
             ProcessId = processInformation.dwProcessId,
-            StdOutChildHandleValueForTests = stdOutWrite,
-            StdErrChildHandleValueForTests = stdErrWrite,
-            StdInChildHandleValueForTests = stdInRead,
+            StdOutChildHandleValueForTests = stdOutChildHandleValue,
+            StdErrChildHandleValueForTests = stdErrChildHandleValue,
+            StdInChildHandleValueForTests = stdInChildHandleValue,
         };
 
         // Reads and the completion-port monitor are both started before ResumeThread returns control to
@@ -524,10 +665,55 @@ public sealed class ContainedProcess : IDisposable
         process.StartDrains(options.DrainTimeout);
         process.StartCompletionMonitor();
 
+        // GH106-R2-F1: a failure past this point (AssignProcessToJobObject, the test hook, or
+        // ResumeThread) must not leak the background drain/completion-monitor tasks just started. This
+        // single unwind entry is the one cleanup mechanism for that background work — terminating the
+        // process directly (rather than relying on pop order against the separately-pushed "process
+        // handle" entry, since Stack<Action> pops most-recently-pushed first and this entry is pushed
+        // after that one) is what actually unblocks a blocked pipe Read() so the bounded awaits below
+        // return quickly instead of running out their full budget.
+        PushUnwind("background drains and completion monitor", () =>
+        {
+            NativeMethods.TerminateProcess(processInformation.hProcess, uint.MaxValue);
+            process._completionMonitorCts?.Cancel();
+            try
+            {
+                process._completionMonitor?.Wait(TimeSpan.FromSeconds(5));
+            }
+            catch
+            {
+                // Expected: the monitor observes its own cancellation.
+            }
+
+            try
+            {
+                process._stdOutDrain?.Wait(TimeSpan.FromSeconds(5));
+            }
+            catch
+            {
+                // Expected: a force-terminated process yields EOF/IOException on the blocked read.
+            }
+
+            try
+            {
+                process._stdErrDrain?.Wait(TimeSpan.FromSeconds(5));
+            }
+            catch
+            {
+                // Expected: a force-terminated process yields EOF/IOException on the blocked read.
+            }
+        });
+
+        PostDrainsStartHookForTests?.Invoke(process);
+
+        if (faultPoint == ConstructionFaultPoint.AfterDrainsStartedBeforeAssign)
+        {
+            throw new InvalidOperationException("fault-injected: AfterDrainsStartedBeforeAssign");
+        }
+
         // --- S5: assign to the job BEFORE first resume — containment precedes any executed instruction. ---
         if (!NativeMethods.AssignProcessToJobObject(jobHandle, processInformation.hProcess))
         {
-            process._completionMonitorCts?.Cancel();
             throw Win32("AssignProcessToJobObject");
         }
 
@@ -539,7 +725,6 @@ public sealed class ContainedProcess : IDisposable
         // --- S6: resume. ---
         if (NativeMethods.ResumeThread(processInformation.hThread) == uint.MaxValue)
         {
-            process._completionMonitorCts?.Cancel();
             throw Win32("ResumeThread");
         }
 
@@ -558,8 +743,18 @@ public sealed class ContainedProcess : IDisposable
         bool exited = false;
         try
         {
-            exited = await Task.Run(() => WaitForSingleProcessExit(linked.Token), CancellationToken.None)
+            var outcome = await Task.Run(() => WaitForSingleProcessExit(linked.Token), CancellationToken.None)
                 .ConfigureAwait(false);
+            exited = outcome.Exited;
+
+            // GH106-R2-F5: a genuine WAIT_FAILED/WAIT_ABANDONED result is a real wait failure, not a
+            // benign timeout — record it distinctly so it is never misreported as TimedOut.
+            if (outcome.WaitFailed)
+            {
+                _failures.Record(
+                    ProcessOwnershipFailureClass.ProcessFailed,
+                    $"WaitForSingleObject failed with Win32 error {outcome.Win32Error}.");
+            }
         }
         catch (OperationCanceledException)
         {
@@ -581,7 +776,27 @@ public sealed class ContainedProcess : IDisposable
             // Dispose's kill-on-close). This also unblocks the concurrent stream drains below by making
             // the child's inherited pipe handles close, which yields EOF on the parent's read ends.
             _terminateJobObjectCalled = true;
-            NativeMethods.TerminateJobObject(_jobHandle, uint.MaxValue);
+            if (!InvokeTerminateJobObject(_jobHandle, uint.MaxValue))
+            {
+                _failures.Record(
+                    ProcessOwnershipFailureClass.ProcessFailed,
+                    $"TerminateJobObject failed with Win32 error {Marshal.GetLastWin32Error()}.");
+            }
+
+            // GH106-R2-F3: terminate AND await family exit — a forced termination without waiting for
+            // proof is only half the checkpoint's "terminate and await" contract. `linked` is already
+            // cancelled here (that is exactly why this branch was reached), so a fresh, uncancelled token
+            // is required for the bound below to genuinely apply rather than returning instantly.
+            await WaitForActiveProcessZero(CancellationToken.None).ConfigureAwait(false);
+            if (!_activeProcessZeroObserved)
+            {
+                // TimedOut/Cancelled was already recorded above and wins by the tracker's first-recorded
+                // precedence (TimedOut legitimately outranks a subsequent unproven-active-zero
+                // ProcessFailed); this still records the real secondary problem for completeness.
+                _failures.Record(
+                    ProcessOwnershipFailureClass.ProcessFailed,
+                    "Family exit could not be proven within the bound after forced termination.");
+            }
         }
         else
         {
@@ -602,6 +817,15 @@ public sealed class ContainedProcess : IDisposable
             // Give the job's completion port a bounded chance to report ACTIVE_PROCESS_ZERO (every
             // process in the job, including descendants, has exited) before declaring the wait complete.
             await WaitForActiveProcessZero(linked.Token).ConfigureAwait(false);
+
+            // GH106-R2-F2: the frozen failure table requires ProcessFailed when family exit cannot be
+            // proven — silently declaring the wait complete without ACTIVE_PROCESS_ZERO is not an option.
+            if (!_activeProcessZeroObserved)
+            {
+                _failures.Record(
+                    ProcessOwnershipFailureClass.ProcessFailed,
+                    "Family exit could not be proven within the bound: ACTIVE_PROCESS_ZERO was not observed.");
+            }
         }
 
         // Bound the drain: DrainPipe's own deadline check only runs between completed reads, so it
@@ -623,7 +847,12 @@ public sealed class ContainedProcess : IDisposable
         if (drainDeadlineForcedTermination && !_terminateJobObjectCalled)
         {
             _terminateJobObjectCalled = true;
-            NativeMethods.TerminateJobObject(_jobHandle, uint.MaxValue);
+            if (!InvokeTerminateJobObject(_jobHandle, uint.MaxValue))
+            {
+                _failures.Record(
+                    ProcessOwnershipFailureClass.ProcessFailed,
+                    $"TerminateJobObject failed with Win32 error {Marshal.GetLastWin32Error()}.");
+            }
         }
 
         var (stdOutText, stdOutTruncated) = await stdOutDrainTask.ConfigureAwait(false);
@@ -668,7 +897,18 @@ public sealed class ContainedProcess : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         _terminateJobObjectCalled = true;
-        return NativeMethods.TerminateJobObject(_jobHandle, uint.MaxValue);
+        bool succeeded = InvokeTerminateJobObject(_jobHandle, uint.MaxValue);
+        if (!succeeded)
+        {
+            // GH106-R2-F4: a termination failure is a real problem, not silence — record it (without
+            // overwriting an earlier, higher-precedence recorded failure) so a later WaitAsync/dispose
+            // result can reflect it.
+            _failures.Record(
+                ProcessOwnershipFailureClass.ProcessFailed,
+                $"TerminateJobObject failed with Win32 error {Marshal.GetLastWin32Error()}.");
+        }
+
+        return succeeded;
     }
 
     public void Dispose()
@@ -691,19 +931,24 @@ public sealed class ContainedProcess : IDisposable
 
         _completionMonitorCts?.Dispose();
 
-        // Reverse acquisition order: process handle, thread handle, job handle, IOCP handle, pipe
-        // handles, attribute-list buffer, environment/command-line buffers.
+        // GH106-R2-F11: exact true reverse acquisition order. StartCore acquires, in order: stdin pipe
+        // pair, stdout pipe pair, stderr pipe pair, handle-list buffer, attribute-list buffer, job
+        // handle, completion port handle, command-line buffer, environment-block buffer, then the
+        // process/thread handles together (process handle treated as the later of the pair, matching the
+        // unwind stack's own pop order for that pair). Reverse: process handle, thread handle,
+        // environment-block buffer, command-line buffer, completion port handle, job handle,
+        // attribute-list buffer, handle-list buffer, stderr pipe, stdout pipe, stdin pipe.
         CloseTracked(ref _processHandle, "process handle");
         CloseTracked(ref _threadHandle, "thread handle");
-        CloseTracked(ref _jobHandle, "job handle");
-        CloseTracked(ref _completionPortHandle, "completion port handle");
-        CloseTracked(ref _parentStdOutRead, "stdout pipe handle");
-        CloseTracked(ref _parentStdErrRead, "stderr pipe handle");
-        CloseTracked(ref _parentStdInWrite, "stdin pipe handle");
-        FreeTracked(ref _attributeListBuffer, "attribute list buffer", deleteAttributeList: true);
-        FreeTracked(ref _handleListBuffer, "handle list buffer", deleteAttributeList: false);
         FreeTracked(ref _environmentBlockBuffer, "environment block buffer", deleteAttributeList: false);
         FreeTracked(ref _commandLineBuffer, "command line buffer", deleteAttributeList: false);
+        CloseTracked(ref _completionPortHandle, "completion port handle");
+        CloseTracked(ref _jobHandle, "job handle");
+        FreeTracked(ref _attributeListBuffer, "attribute list buffer", deleteAttributeList: true);
+        FreeTracked(ref _handleListBuffer, "handle list buffer", deleteAttributeList: false);
+        CloseTracked(ref _parentStdErrRead, "stderr pipe handle");
+        CloseTracked(ref _parentStdOutRead, "stdout pipe handle");
+        CloseTracked(ref _parentStdInWrite, "stdin pipe handle");
 
         if (_teardownFailures.Count > 0)
         {
@@ -727,6 +972,7 @@ public sealed class ContainedProcess : IDisposable
 
         nint toClose = handle;
         handle = nint.Zero;
+        _teardownOrderForTests.Add(label);
         try
         {
             if (!NativeMethods.CloseHandle(toClose))
@@ -749,6 +995,7 @@ public sealed class ContainedProcess : IDisposable
 
         nint toFree = buffer;
         buffer = nint.Zero;
+        _teardownOrderForTests.Add(label);
         try
         {
             if (deleteAttributeList)
@@ -776,6 +1023,13 @@ public sealed class ContainedProcess : IDisposable
             new Microsoft.Win32.SafeHandles.SafeFileHandle(readHandle, ownsHandle: false),
             FileAccess.Read, bufferSize: 65536, isAsync: false);
         var buffer = new byte[65536];
+        var charBuffer = new char[65536];
+
+        // GH106-R2-F10: a single Decoder held across the whole read loop correctly reassembles a
+        // multibyte UTF-8 sequence that straddles two independent 64 KiB reads. Decoding each chunk in
+        // isolation (the prior behavior) corrupts any character split across a read boundary while still
+        // reporting Truncated == false — a real correctness bug, not merely cosmetic.
+        var decoder = Encoding.UTF8.GetDecoder();
         var text = new StringBuilder();
         var deadline = System.Diagnostics.Stopwatch.StartNew();
         while (true)
@@ -798,10 +1052,17 @@ public sealed class ContainedProcess : IDisposable
 
             if (read == 0)
             {
+                int flushedChars = decoder.GetChars(ReadOnlySpan<byte>.Empty, charBuffer, flush: true);
+                if (flushedChars > 0)
+                {
+                    text.Append(charBuffer, 0, flushedChars);
+                }
+
                 return (text.ToString(), false);
             }
 
-            text.Append(Encoding.UTF8.GetString(buffer, 0, read));
+            int charCount = decoder.GetChars(buffer, 0, read, charBuffer, 0);
+            text.Append(charBuffer, 0, charCount);
         }
     }
 
@@ -820,25 +1081,46 @@ public sealed class ContainedProcess : IDisposable
         return await drain.ConfigureAwait(false);
     }
 
-    private bool WaitForSingleProcessExit(CancellationToken cancellationToken)
+    /// <summary>
+    /// GH106-R2-F5: distinguishes a genuine exit (<c>WAIT_OBJECT_0</c>) from a benign timeout
+    /// (<c>WAIT_TIMEOUT</c>, keep polling) from a real wait failure (<c>WAIT_FAILED</c>/
+    /// <c>WAIT_ABANDONED</c>) — the prior implementation collapsed the last two into an identical
+    /// <c>false</c> return, so <see cref="WaitAsync"/> misreported a genuine wait failure as TimedOut.
+    /// </summary>
+    private (bool Exited, bool WaitFailed, int Win32Error) WaitForSingleProcessExit(
+        CancellationToken cancellationToken)
     {
         const int PollMs = 25;
         while (!cancellationToken.IsCancellationRequested)
         {
-            uint result = NativeMethods.WaitForSingleObject(_processHandle, PollMs);
+            uint result = InvokeWaitForSingleObject(_processHandle, PollMs);
             if (result == NativeMethods.WAIT_OBJECT_0)
             {
-                return true;
+                return (true, false, 0);
             }
 
-            if (result != NativeMethods.WAIT_TIMEOUT)
+            if (result == NativeMethods.WAIT_TIMEOUT)
             {
-                return false;
+                continue;
             }
+
+            // WAIT_FAILED or WAIT_ABANDONED: capture the error immediately, before any other Win32 call
+            // on this thread can clobber it.
+            return (false, true, Marshal.GetLastWin32Error());
         }
 
-        return false;
+        return (false, false, 0);
     }
+
+    /// <summary>GH106-R2-F5 seam indirection: real production calls always go through this.</summary>
+    private static uint InvokeWaitForSingleObject(nint handle, int timeoutMs) =>
+        WaitForSingleObjectOverrideForTests?.Invoke(handle, timeoutMs)
+        ?? NativeMethods.WaitForSingleObject(handle, timeoutMs);
+
+    /// <summary>GH106-R2-F4 seam indirection: real production calls always go through this.</summary>
+    private static bool InvokeTerminateJobObject(nint jobHandle, uint exitCode) =>
+        TerminateJobObjectOverrideForTests?.Invoke(jobHandle, exitCode)
+        ?? NativeMethods.TerminateJobObject(jobHandle, exitCode);
 
     private void StartCompletionMonitor()
     {
@@ -870,7 +1152,7 @@ public sealed class ContainedProcess : IDisposable
     {
         var deadline = System.Diagnostics.Stopwatch.StartNew();
         while (!_activeProcessZeroObserved
-            && deadline.Elapsed < TimeSpan.FromSeconds(10)
+            && deadline.Elapsed < _activeProcessZeroBound
             && !cancellationToken.IsCancellationRequested)
         {
             await Task.Delay(25, CancellationToken.None).ConfigureAwait(false);
@@ -908,6 +1190,7 @@ public sealed class ContainedProcess : IDisposable
         nint attributeListBuffer = Marshal.AllocHGlobal(listSize);
         unwind.Push(() =>
         {
+            UnwindStepObserverForTests?.Invoke("attribute list buffer");
             NativeMethods.DeleteProcThreadAttributeList(attributeListBuffer);
             Marshal.FreeHGlobal(attributeListBuffer);
         });
@@ -958,6 +1241,7 @@ internal static unsafe class NativeMethods
     internal const int HANDLE_FLAG_INHERIT = 1;
     internal const uint WAIT_OBJECT_0 = 0x00000000;
     internal const uint WAIT_TIMEOUT = 0x00000102;
+    internal const uint WAIT_FAILED = 0xFFFFFFFF;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     internal struct STARTUPINFOW
