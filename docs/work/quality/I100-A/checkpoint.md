@@ -2,7 +2,7 @@
 
 ## State
 
-`Building`
+`Blocked`
 
 ## Authority and frozen state
 
@@ -327,3 +327,12 @@ Run the existing focused command under isolated SDK `10.0.302`, then run one ind
 at `ReviewRequired` for a future non-author human review; do not run the unfiltered final gate, merge, close GH-106,
 or begin GH-107 without that human review. If focused verification remains red or the Reviewer finds another High
 lifecycle defect, return GH-106 to `Blocked` without another automatic repair.
+
+### Owner redesign v2 result
+
+The forward redesign changed only `ProcessOwnership.cs` and reduced the preserved R3 candidate's focused failures from
+18 to 3. Its isolated-SDK result was `Failed 3, Passed 57, Skipped 0, Total 60`. The remaining failures cover
+live-grandchild failure classification, fail-closed `PeekNamedPipe` prefix preservation, and required terminal-call
+evidence after descendant pipe closure. The implementation also exhausted its work budget before complete self-review.
+The explicit stop condition therefore fired: I100-A is `Blocked`, no Reviewer or final gate ran, and no additional
+repair or GH-107 work is authorized without a new owner disposition and available non-author human review.

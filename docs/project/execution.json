@@ -1,10 +1,10 @@
 {
-  "activeCheckpointId": "I100-A",
-  "activeCheckpointPath": "docs/work/quality/I100-A",
+  "activeCheckpointId": null,
+  "activeCheckpointPath": null,
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
-  "mode": "active",
-  "nextAction": "Design and implement the explicit lifecycle state machine against commit 2e6d3d2's regressions; run focused SDK 10.0.302 verification and independent Reviewer review only.",
+  "mode": "idle",
+  "nextAction": "No work item is selected.",
   "schemaVersion": 1,
-  "sourceId": "GH-106"
+  "sourceId": null
 }

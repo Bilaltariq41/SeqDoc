@@ -287,3 +287,17 @@ unavailable. The decision preserves blocked head `f5ceff4` and all earlier histo
 force-push, rewrite, squash, deletion, test weakening, or scope beyond `ProcessOwnership.cs` and truthful lifecycle
 evidence. Commit `2e6d3d2` remains the executable acceptance contract. The candidate must pass the isolated-SDK
 focused lane and independent Reviewer-agent review, then stop at `ReviewRequired` without the final gate.
+
+## Owner redesign v2 result and block
+
+Two independent read-only designs first converged on a single lifecycle coordinator, one shared terminal operation,
+one shared disposal operation, immutable failure snapshots, drain leases, and construction-specific cleanup. One
+checkpoint-builder then changed only `tests/SeqDoc.AcceptanceTests/ProcessOwnership.cs`.
+
+The isolated-SDK focused lane reported `Failed 3, Passed 57, Skipped 0, Total 60`, improving the preserved R3
+candidate's `18/42` result but not satisfying the frozen green requirement. Remaining failures were live-grandchild
+classification (`None` instead of `ProcessFailed`), missing `SLOW` prefix after injected `PeekNamedPipe` failure, and
+missing expected terminal-call evidence in the descendant pipe-closure scenario. The builder also reached its work
+limit before complete self-review. Orchestrator diff inspection found incomplete/dead implementation structure, so no
+Reviewer or final gate ran. The v2 stop condition fired and canonical state returned to `Blocked`; candidate, history,
+tests, both PRs, and all attribution remain preserved.

@@ -186,6 +186,11 @@ internal sealed class FailureClassTracker
             }
         }
     }
+
+    public void RecordSecondary(string detail)
+    {
+        lock (_gate) { _secondaryFailures.Add(detail); }
+    }
 }
 
 /// <summary>
@@ -311,6 +316,18 @@ internal static class ProcessOwnershipEncoding
 /// </summary>
 public sealed class ContainedProcess : IDisposable
 {
+    private enum LifecycleState
+    {
+        Running,
+        TerminalRequested,
+        TerminalInProgress,
+        FamilyProofCompleted,
+        FamilyProofFailed,
+        DisposalInProgress,
+        Disposed,
+        ConstructionUnwind,
+    }
+
     private readonly FailureClassTracker _failures = new();
     private readonly List<string> _teardownFailures = new();
     private readonly List<string> _teardownOrderForTests = new();
@@ -334,17 +351,21 @@ public sealed class ContainedProcess : IDisposable
     private CancellationTokenSource? _drainCts;
     private volatile bool _activeProcessZeroObserved;
     private bool _terminateJobObjectCalled;
-    private bool _disposed;
+    private LifecycleState _lifecycleState = LifecycleState.Running;
     private readonly object _lifecycleGate = new();
     private Task<bool>? _terminalTask;
+    private Task<bool>? _familyProofTask;
+    private Task? _disposeTask;
     private Task<ProcessOwnershipWaitResult>? _waitTask;
     private readonly ProcessOwnershipNativeCalls _nativeCalls;
-    private int _peekFailureRecorded;
+    private int _stdOutPeekFailureRecorded;
+    private int _stdErrPeekFailureRecorded;
 
     // GH106-R2-F2: production default is 10s; only a test seam may shrink it (never reachable from a
     // production caller — there is no public setter).
     private TimeSpan _activeProcessZeroBound = TimeSpan.FromSeconds(10);
     private TimeSpan _constructionCleanupBound = TimeSpan.FromSeconds(5);
+    private TimeSpan _drainTimeout = TimeSpan.FromSeconds(30);
 
     private ContainedProcess(ProcessOwnershipNativeCalls? nativeCalls)
     {
@@ -379,7 +400,10 @@ public sealed class ContainedProcess : IDisposable
     public ProcessOwnershipFailureClass FailureClass => _failures.Class;
 
     /// <summary>GH106-R2-F7: the aggregated teardown failure details recorded during <see cref="Dispose"/>.</summary>
-    public IReadOnlyList<string> TeardownFailures => _teardownFailures;
+    public IReadOnlyList<string> TeardownFailures
+    {
+        get { lock (_lifecycleGate) { return _teardownFailures.ToArray(); } }
+    }
 
     /// <summary>Test-only observability: never used to gate production semantics.</summary>
     internal bool TerminateJobObjectWasCalled => _terminateJobObjectCalled;
@@ -508,6 +532,7 @@ public sealed class ContainedProcess : IDisposable
         ProcessOwnershipOptions options, ConstructionFaultPoint faultPoint, Stack<Action> unwind,
         List<string> unwindFailures)
     {
+        bool backgroundQuiesced = true;
         // GH106-R2-F1: closures below capture these locals by reference. Guarding on non-zero and
         // zeroing after close means a handle already closed manually (see the S4 std-handle cleanup
         // below) can never be double-closed by a later unwind pop — the exact "closed-once" idiom
@@ -525,6 +550,11 @@ public sealed class ContainedProcess : IDisposable
         // pops in, without changing production behavior (the observer is null in production).
         void PushUnwind(string label, Action action) => unwind.Push(() =>
         {
+            if (!backgroundQuiesced && label != "background drains and completion monitor")
+            {
+                unwindFailures.Add($"{label} retained because background work did not quiesce.");
+                return;
+            }
             try { action(); }
             catch (Exception ex) { unwindFailures.Add($"{label}: {ex.Message}"); }
             finally { UnwindStepObserverForTests?.Invoke(label); }
@@ -777,6 +807,9 @@ public sealed class ContainedProcess : IDisposable
             process.WaitConstructionTask(process._completionMonitor, "completion monitor", unwindFailures);
             process.WaitConstructionTask(process._stdOutDrain, "stdout drain", unwindFailures);
             process.WaitConstructionTask(process._stdErrDrain, "stderr drain", unwindFailures);
+            backgroundQuiesced = (process._completionMonitor is null || process._completionMonitor.IsCompleted)
+                && (process._stdOutDrain is null || process._stdOutDrain.IsCompleted)
+                && (process._stdErrDrain is null || process._stdErrDrain.IsCompleted);
         });
 
         PostDrainsStartHookForTests?.Invoke(process);
@@ -826,7 +859,7 @@ public sealed class ContainedProcess : IDisposable
     {
         lock (_lifecycleGate)
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
+            ObjectDisposedException.ThrowIf(_lifecycleState == LifecycleState.Disposed, this);
             return _waitTask ??= WaitCoreAsync(timeout, cancellationToken);
         }
     }
@@ -880,11 +913,7 @@ public sealed class ContainedProcess : IDisposable
             // Admission table: explicit TerminateJobObject for timeout/cancellation (never deferred to
             // Dispose's kill-on-close). This also unblocks the concurrent stream drains below by making
             // the child's inherited pipe handles close, which yields EOF on the parent's read ends.
-            bool terminationSucceeded = await EnsureTerminalAsync().ConfigureAwait(false);
-            if (!terminationSucceeded)
-            {
-                _drainCts?.Cancel();
-            }
+            await EnsureTerminalAsync().ConfigureAwait(false);
 
             // GH106-R2-F3: terminate AND await family exit — a forced termination without waiting for
             // proof is only half the checkpoint's "terminate and await" contract. `linked` is already
@@ -909,24 +938,11 @@ public sealed class ContainedProcess : IDisposable
 
             // Give the job's completion port a bounded chance to report ACTIVE_PROCESS_ZERO (every
             // process in the job, including descendants, has exited) before declaring the wait complete.
-            Task familyExit = WaitForActiveProcessZero(linked.Token);
-            Task drainsReachedEof = Task.WhenAll(
-                DrainOrTruncate(_stdOutDrain), DrainOrTruncate(_stdErrDrain));
-            await Task.WhenAny(familyExit, drainsReachedEof).ConfigureAwait(false);
-            if (!_activeProcessZeroObserved)
+            Task familyProof = EnsureFamilyProofAsync(CancellationToken.None);
+            Task drainCompletion = Task.WhenAll(DrainOrTruncate(_stdOutDrain), DrainOrTruncate(_stdErrDrain));
+            Task waitDeadline = Task.Delay(Timeout.InfiniteTimeSpan, linked.Token);
+            if (await Task.WhenAny(familyProof, drainCompletion, waitDeadline).ConfigureAwait(false) != familyProof)
             {
-                await Task.WhenAny(familyExit, Task.Delay(TimeSpan.FromMilliseconds(250), CancellationToken.None))
-                    .ConfigureAwait(false);
-            }
-
-            // GH106-R2-F2: the frozen failure table requires ProcessFailed when family exit cannot be
-            // proven — silently declaring the wait complete without ACTIVE_PROCESS_ZERO is not an option.
-            if (!_activeProcessZeroObserved)
-            {
-                _failures.Record(
-                    ProcessOwnershipFailureClass.ProcessFailed,
-                    "Family exit could not be proven within the bound: ACTIVE_PROCESS_ZERO was not observed.");
-
                 await EnsureTerminalAsync().ConfigureAwait(false);
             }
         }
@@ -944,17 +960,17 @@ public sealed class ContainedProcess : IDisposable
         var stdOutDrainTask = DrainOrTruncate(_stdOutDrain);
         var stdErrDrainTask = DrainOrTruncate(_stdErrDrain);
         var drainsTask = Task.WhenAll(stdOutDrainTask, stdErrDrainTask);
-        var deadlineTask = Task.Delay(Timeout.InfiniteTimeSpan, linked.Token);
+        var deadlineTask = Task.Delay(_drainTimeout, linked.Token);
         var raceWinner = await Task.WhenAny(drainsTask, deadlineTask).ConfigureAwait(false);
         bool drainDeadlineForcedTermination = raceWinner == deadlineTask;
-        if (drainDeadlineForcedTermination && !_terminateJobObjectCalled)
+        if (drainDeadlineForcedTermination)
         {
-            bool terminalSucceeded = await EnsureTerminalAsync().ConfigureAwait(false);
-            if (!terminalSucceeded) { _drainCts?.Cancel(); }
+            await EnsureTerminalAsync().ConfigureAwait(false);
+            _drainCts?.Cancel();
         }
 
-        var (stdOutText, stdOutTruncated) = await stdOutDrainTask.ConfigureAwait(false);
-        var (stdErrText, stdErrTruncated) = await stdErrDrainTask.ConfigureAwait(false);
+        var (stdOutText, stdOutTruncated) = await AwaitDrainBounded(stdOutDrainTask).ConfigureAwait(false);
+        var (stdErrText, stdErrTruncated) = await AwaitDrainBounded(stdErrDrainTask).ConfigureAwait(false);
         if (drainDeadlineForcedTermination)
         {
             // Force-closing every job member's handles to unblock a stuck read yields a real, clean EOF
@@ -982,7 +998,7 @@ public sealed class ContainedProcess : IDisposable
             TimedOut = !exited && deadlineExpired && !callerCancelled && !waitFailed,
             Cancelled = !exited && callerCancelled && !waitFailed,
             ActiveProcessZeroObserved = _activeProcessZeroObserved,
-            SecondaryFailures = _failures.SecondaryFailures,
+            SecondaryFailures = _failures.SecondaryFailures.ToArray(),
             StdOut = new ProcessOwnershipStreamResult(stdOutText, stdOutTruncated),
             StdErr = new ProcessOwnershipStreamResult(stdErrText, stdErrTruncated),
         };
@@ -994,7 +1010,7 @@ public sealed class ContainedProcess : IDisposable
     /// <summary>Terminate phase: forcibly ends every process in the job.</summary>
     public bool Terminate()
     {
-        lock (_lifecycleGate) { ObjectDisposedException.ThrowIf(_disposed, this); }
+        lock (_lifecycleGate) { ObjectDisposedException.ThrowIf(_lifecycleState == LifecycleState.Disposed, this); }
         return EnsureTerminalAsync().GetAwaiter().GetResult();
     }
 
@@ -1002,12 +1018,15 @@ public sealed class ContainedProcess : IDisposable
     {
         lock (_lifecycleGate)
         {
-            if (_disposed)
+            if (_lifecycleState == LifecycleState.Disposed)
             {
                 return;
             }
+            _disposeTask ??= Task.Run(DisposeCoreAsync);
         }
 
+        _disposeTask.GetAwaiter().GetResult();
+#if false
         EnsureTerminalAsync().GetAwaiter().GetResult();
         _completionMonitorCts?.Cancel();
         _drainCts?.Cancel();
@@ -1018,7 +1037,7 @@ public sealed class ContainedProcess : IDisposable
         if (_stdOutDrain is null || _stdOutDrain.IsCompleted) { CloseDrainHandles(); }
         if (_stdErrDrain is null || _stdErrDrain.IsCompleted) { CloseDrainHandles(); }
 
-        lock (_lifecycleGate) { _disposed = true; }
+        lock (_lifecycleGate) { _lifecycleState = LifecycleState.Disposed; }
 
         _completionMonitorCts?.Dispose();
         _drainCts?.Dispose();
@@ -1048,6 +1067,53 @@ public sealed class ContainedProcess : IDisposable
                 ProcessOwnershipFailureClass.TeardownDegraded,
                 $"{_teardownFailures.Count} teardown step(s) failed: {string.Join("; ", _teardownFailures)}");
         }
+#endif
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        lock (_lifecycleGate) { _lifecycleState = LifecycleState.DisposalInProgress; }
+        if (!_activeProcessZeroObserved || _terminalTask is not null)
+        {
+            await EnsureTerminalAsync().ConfigureAwait(false);
+        }
+        await EnsureFamilyProofAsync().ConfigureAwait(false);
+        _drainCts?.Cancel();
+        bool drainsComplete = await AwaitTaskBounded(_stdOutDrain, _constructionCleanupBound).ConfigureAwait(false)
+            & await AwaitTaskBounded(_stdErrDrain, _constructionCleanupBound).ConfigureAwait(false);
+        _completionMonitorCts?.Cancel();
+        bool monitorComplete = await AwaitTaskBounded(_completionMonitor, _constructionCleanupBound).ConfigureAwait(false);
+        if (!drainsComplete || !monitorComplete)
+        {
+            _failures.Record(ProcessOwnershipFailureClass.DrainIncomplete,
+                "Managed lifecycle work did not quiesce within the cleanup bound; owned handles were retained.");
+        }
+
+        _completionMonitorCts?.Dispose();
+        _drainCts?.Dispose();
+        CloseTracked(ref _processHandle, "process handle");
+        CloseTracked(ref _threadHandle, "thread handle");
+        FreeTracked(ref _environmentBlockBuffer, "environment block buffer", deleteAttributeList: false);
+        FreeTracked(ref _commandLineBuffer, "command line buffer", deleteAttributeList: false);
+        if (monitorComplete)
+        {
+            CloseTracked(ref _completionPortHandle, "completion port handle");
+            CloseTracked(ref _jobHandle, "job handle");
+        }
+        FreeTracked(ref _attributeListBuffer, "attribute list buffer", deleteAttributeList: true);
+        FreeTracked(ref _handleListBuffer, "handle list buffer", deleteAttributeList: false);
+        if (drainsComplete)
+        {
+            CloseTracked(ref _parentStdErrRead, "stderr pipe handle");
+            CloseTracked(ref _parentStdOutRead, "stdout pipe handle");
+        }
+        CloseTracked(ref _parentStdInWrite, "stdin pipe handle");
+        if (_teardownFailures.Count > 0)
+        {
+            _failures.Record(ProcessOwnershipFailureClass.TeardownDegraded,
+                $"{_teardownFailures.Count} teardown step(s) failed: {string.Join("; ", _teardownFailures)}");
+        }
+        lock (_lifecycleGate) { _lifecycleState = LifecycleState.Disposed; }
     }
 
     private void CloseDrainHandles()
@@ -1066,7 +1132,8 @@ public sealed class ContainedProcess : IDisposable
     {
         lock (_lifecycleGate)
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
+            ObjectDisposedException.ThrowIf(_lifecycleState == LifecycleState.Disposed, this);
+            _lifecycleState = _terminalTask is null ? LifecycleState.TerminalRequested : _lifecycleState;
             return _terminalTask ??= RunTerminalAsync();
         }
     }
@@ -1076,7 +1143,8 @@ public sealed class ContainedProcess : IDisposable
         // Never execute an injected/native call while the lifecycle monitor is held. Apart from avoiding
         // re-entrancy deadlocks, this lets Dispose join the same idempotent terminal operation.
         await Task.Yield();
-        if (_jobHandle == nint.Zero || _activeProcessZeroObserved) { return true; }
+        lock (_lifecycleGate) { _lifecycleState = LifecycleState.TerminalInProgress; }
+        if (_jobHandle == nint.Zero) { return true; }
         _terminateJobObjectCalled = true;
         NativeCallResult result = InvokeTerminateJobObject(_jobHandle, uint.MaxValue);
         if (!result.Succeeded)
@@ -1085,13 +1153,51 @@ public sealed class ContainedProcess : IDisposable
                 $"TerminateJobObject failed with Win32 error {result.Win32Error}.");
         }
 
-        await WaitForActiveProcessZero(CancellationToken.None).ConfigureAwait(false);
-        if (!_activeProcessZeroObserved)
+        await EnsureFamilyProofAsync().ConfigureAwait(false);
+        return result.Succeeded;
+    }
+
+    private Task<bool> EnsureFamilyProofAsync(CancellationToken cancellationToken = default)
+    {
+        lock (_lifecycleGate) { return _familyProofTask ??= RunFamilyProofAsync(cancellationToken); }
+    }
+
+    private async Task<bool> RunFamilyProofAsync(CancellationToken cancellationToken)
+    {
+        await WaitForActiveProcessZero(cancellationToken).ConfigureAwait(false);
+        bool proven = _activeProcessZeroObserved;
+        if (!proven)
         {
             _failures.Record(ProcessOwnershipFailureClass.ProcessFailed,
-                "Family exit could not be proven within the bound after forced termination: ACTIVE_PROCESS_ZERO was not observed.");
+                "Family exit could not be proven within the bound: ACTIVE_PROCESS_ZERO was not observed.");
+            lock (_lifecycleGate) { _lifecycleState = LifecycleState.FamilyProofFailed; }
         }
-        return result.Succeeded;
+        else
+        {
+            lock (_lifecycleGate) { _lifecycleState = LifecycleState.FamilyProofCompleted; }
+        }
+        _completionMonitorCts?.Cancel();
+        return proven;
+    }
+
+    private async Task<(string Text, bool Truncated)> AwaitDrainBounded(Task<(string Text, bool Truncated)> task)
+    {
+        if (await AwaitTaskBounded(task, _drainTimeout).ConfigureAwait(false))
+        {
+            return await task.ConfigureAwait(false);
+        }
+        _failures.Record(ProcessOwnershipFailureClass.DrainIncomplete, "A stream did not reach EOF within the cleanup bound.");
+        return (string.Empty, true);
+    }
+
+    private static async Task<bool> AwaitTaskBounded(Task? task, TimeSpan bound)
+    {
+        if (task is null)
+        {
+            return true;
+        }
+        Task winner = await Task.WhenAny(task, Task.Delay(bound)).ConfigureAwait(false);
+        return winner == task;
     }
 
     private static void WaitBounded(Task? task, TimeSpan bound)
@@ -1193,13 +1299,14 @@ public sealed class ContainedProcess : IDisposable
 
     private void StartDrains(TimeSpan timeout)
     {
+        _drainTimeout = timeout;
         _drainCts = new CancellationTokenSource();
-        _stdOutDrain = Task.Run(() => DrainPipe(_parentStdOutRead, timeout, _drainCts.Token));
-        _stdErrDrain = Task.Run(() => DrainPipe(_parentStdErrRead, timeout, _drainCts.Token));
+        _stdOutDrain = Task.Run(() => DrainPipe(_parentStdOutRead, timeout, false, _drainCts.Token));
+        _stdErrDrain = Task.Run(() => DrainPipe(_parentStdErrRead, timeout, true, _drainCts.Token));
     }
 
     private (string Text, bool Truncated) DrainPipe(
-        nint readHandle, TimeSpan timeout, CancellationToken cancellationToken)
+        nint readHandle, TimeSpan timeout, bool standardError, CancellationToken cancellationToken)
     {
         using var stream = new FileStream(
             new Microsoft.Win32.SafeHandles.SafeFileHandle(readHandle, ownsHandle: false),
@@ -1229,15 +1336,22 @@ public sealed class ContainedProcess : IDisposable
                 NativeCallResult<uint> peek = InvokePeekNamedPipe(readHandle);
                 if (!peek.Succeeded)
                 {
-                    if (Interlocked.Exchange(ref _peekFailureRecorded, 1) == 0)
+                    ref int failureRecorded = ref (standardError
+                        ? ref _stdErrPeekFailureRecorded
+                        : ref _stdOutPeekFailureRecorded);
+                    if (Interlocked.Exchange(ref failureRecorded, 1) == 0)
                     {
-                        _failures.Record(ProcessOwnershipFailureClass.DrainIncomplete,
-                            $"PeekNamedPipe failed with Win32 error {peek.Win32Error}.");
+                        _failures.RecordSecondary($"PeekNamedPipe failed with Win32 error {peek.Win32Error}.");
                     }
-                    // The byte count is unavailable, but a read still preserves bytes already written.
-                    // It is also what lets a failed probe retain a truthful prefix instead of silently
-                    // discarding output; forced job termination remains the outer bound for a blocked read.
                     peekFailed = true;
+                    // A failed probe does not establish that a synchronous read is safe. Preserve the
+                    // prefix already obtained, and wait for the family proof; only then can buffered
+                    // bytes be drained without risking an unbounded read against a live descendant.
+                    if (!_activeProcessZeroObserved)
+                    {
+                        Thread.Sleep(10);
+                        continue;
+                    }
                     available = (uint)buffer.Length;
                 }
                 else
@@ -1247,8 +1361,15 @@ public sealed class ContainedProcess : IDisposable
 
                 if (available == 0)
                 {
-                    Thread.Sleep(10);
-                    continue;
+                    if (_activeProcessZeroObserved)
+                    {
+                        available = (uint)buffer.Length;
+                    }
+                    else
+                    {
+                        Thread.Sleep(10);
+                        continue;
+                    }
                 }
 
                 read = stream.Read(buffer, 0, (int)Math.Min((uint)buffer.Length, available));
