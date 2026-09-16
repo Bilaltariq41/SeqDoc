@@ -2,7 +2,7 @@
 
 ## State
 
-`Building`
+`Blocked`
 
 ## Authority and frozen state
 
@@ -352,3 +352,12 @@ scope. The existing 60-test focused lane under isolated SDK `10.0.302` must pass
 Reviewer-agent review and only concrete in-scope repairs. Stop at `ReviewRequired` for Ahmad; do not run the final
 gate, merge, close GH-106, or begin GH-107. Any remaining focused failure or unresolved Reviewer High finding returns
 GH-106 to `Blocked` permanently pending human technical direction.
+
+### Owner targeted repair v3 result
+
+The targeted candidate changed only `ProcessOwnership.cs`, removed the dead disposal block and obsolete helpers, fixed
+live-grandchild failure classification, and preserved prefix/error evidence after injected `PeekNamedPipe` failure.
+Its isolated-SDK result was `Failed 1, Passed 59, Skipped 0, Total 60`. The descendant pipe-closure scenario still did
+not retain the required terminal-operation evidence. The permanent stop condition therefore fired: I100-A is
+`Blocked`, no Reviewer or final gate ran, and no additional automatic repair is authorized pending human technical
+direction and non-author review availability.

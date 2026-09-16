@@ -309,3 +309,14 @@ remaining focused behaviors—live-grandchild failure classification, fail-close
 `PeekNamedPipe` failure, and descendant pipe-closure terminal evidence—plus removal of dead/incomplete lifecycle code
 and complete self-review. Tests remain frozen. The candidate must pass 60/60 under isolated SDK `10.0.302`, pass one
 independent Reviewer-agent review, and stop at `ReviewRequired` without the final gate.
+
+## Owner targeted repair v3 result and permanent block
+
+A read-only diagnosis isolated the three remaining control-flow defects before one checkpoint-builder changed only
+`tests/SeqDoc.AcceptanceTests/ProcessOwnership.cs`. The candidate removed the dead `#if false` disposal block and
+obsolete helpers, repaired live-grandchild classification, and preserved fail-closed `PeekNamedPipe` prefix/error
+evidence. Its isolated-SDK focused lane reported `Failed 1, Passed 59, Skipped 0, Total 60`; the descendant pipe-closure
+case still lacked required terminal-operation evidence. Orchestrator diff inspection found timing-derived lifecycle
+coordination that was not ready for independent review. Under the frozen v3 condition, canonical state returned to
+`Blocked` permanently pending human technical direction. No Reviewer or final gate ran; candidate, tests, history,
+both PRs, and attribution remain preserved.

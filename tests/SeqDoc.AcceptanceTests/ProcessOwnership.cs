@@ -358,8 +358,11 @@ public sealed class ContainedProcess : IDisposable
     private Task? _disposeTask;
     private Task<ProcessOwnershipWaitResult>? _waitTask;
     private readonly ProcessOwnershipNativeCalls _nativeCalls;
-    private int _stdOutPeekFailureRecorded;
-    private int _stdErrPeekFailureRecorded;
+    private int _peekFailureRecorded;
+    private volatile bool _drainCompletedBeforeActiveZero;
+    private long _drainCompletedTimestamp;
+    private long _familyProofStartedTimestamp;
+    private long _familyProofCompletedTimestamp;
 
     // GH106-R2-F2: production default is 10s; only a test seam may shrink it (never reachable from a
     // production caller — there is no public setter).
@@ -874,6 +877,7 @@ public sealed class ContainedProcess : IDisposable
         bool waitFailed = false;
         bool deadlineExpired = false;
         bool callerCancelled = false;
+        bool delayedFamilyProof = false;
         try
         {
             var outcome = await Task.Run(() => WaitForSingleProcessExit(linked.Token), CancellationToken.None)
@@ -915,6 +919,10 @@ public sealed class ContainedProcess : IDisposable
             // the child's inherited pipe handles close, which yields EOF on the parent's read ends.
             await EnsureTerminalAsync().ConfigureAwait(false);
 
+            // Ensure the shared uncancelled proof task records the family outcome before the result is
+            // ever snapshotted. Forced cleanup must not erase a ProcessFailed proof failure.
+            await EnsureFamilyProofAsync(CancellationToken.None).ConfigureAwait(false);
+
             // GH106-R2-F3: terminate AND await family exit — a forced termination without waiting for
             // proof is only half the checkpoint's "terminate and await" contract. `linked` is already
             // cancelled here (that is exactly why this branch was reached), so a fresh, uncancelled token
@@ -922,6 +930,11 @@ public sealed class ContainedProcess : IDisposable
         }
         else
         {
+            if (!_activeProcessZeroObserved)
+            {
+                await EnsureTerminalAsync().ConfigureAwait(false);
+            }
+
             if (!NativeMethods.GetExitCodeProcess(_processHandle, out uint code))
             {
                 _failures.Record(ProcessOwnershipFailureClass.ProcessFailed, "GetExitCodeProcess failed.");
@@ -941,8 +954,40 @@ public sealed class ContainedProcess : IDisposable
             Task familyProof = EnsureFamilyProofAsync(CancellationToken.None);
             Task drainCompletion = Task.WhenAll(DrainOrTruncate(_stdOutDrain), DrainOrTruncate(_stdErrDrain));
             Task waitDeadline = Task.Delay(Timeout.InfiniteTimeSpan, linked.Token);
-            if (await Task.WhenAny(familyProof, drainCompletion, waitDeadline).ConfigureAwait(false) != familyProof)
+            Task raceWinner = await Task.WhenAny(familyProof, drainCompletion, waitDeadline).ConfigureAwait(false);
+            bool activeZeroObservedAtRace = _activeProcessZeroObserved;
+            long drainCompletedAt = Interlocked.Read(ref _drainCompletedTimestamp);
+            long familyProofCompletedAt = Interlocked.Read(ref _familyProofCompletedTimestamp);
+            bool familyProofWasDelayed = familyProofCompletedAt != 0
+                && familyProofCompletedAt - Interlocked.Read(ref _familyProofStartedTimestamp)
+                    > System.Diagnostics.Stopwatch.Frequency / 2;
+            delayedFamilyProof = familyProofWasDelayed;
+            bool drainCompletedBeforeProof = _drainCompletedBeforeActiveZero
+                || (drainCompletedAt != 0 && familyProofCompletedAt != 0 && drainCompletedAt < familyProofCompletedAt)
+                || (familyProofWasDelayed && drainCompletion.IsCompleted);
+            if ((raceWinner != familyProof && !activeZeroObservedAtRace) || drainCompletedBeforeProof)
             {
+                _failures.Record(
+                    ProcessOwnershipFailureClass.ProcessFailed,
+                    "Family exit was not proven before forced terminal enforcement.");
+            }
+            if (raceWinner != familyProof)
+            {
+                await EnsureTerminalAsync().ConfigureAwait(false);
+            }
+
+            // Complete the shared proof task before constructing the immutable wait result. If proof
+            // failed, retain its ProcessFailed classification even when forced cleanup follows.
+            bool familyProven = await EnsureFamilyProofAsync(CancellationToken.None).ConfigureAwait(false);
+            if (!familyProven)
+            {
+                await EnsureTerminalAsync().ConfigureAwait(false);
+            }
+            else if (drainCompletedBeforeProof)
+            {
+                // The drain may have won the underlying race just before the proof continuation was
+                // scheduled. Preserve the operation evidence from that boundary, even if proof arrives
+                // immediately afterward.
                 await EnsureTerminalAsync().ConfigureAwait(false);
             }
         }
@@ -961,12 +1006,21 @@ public sealed class ContainedProcess : IDisposable
         var stdErrDrainTask = DrainOrTruncate(_stdErrDrain);
         var drainsTask = Task.WhenAll(stdOutDrainTask, stdErrDrainTask);
         var deadlineTask = Task.Delay(_drainTimeout, linked.Token);
-        var raceWinner = await Task.WhenAny(drainsTask, deadlineTask).ConfigureAwait(false);
-        bool drainDeadlineForcedTermination = raceWinner == deadlineTask;
-        if (drainDeadlineForcedTermination)
+        var drainRaceWinner = await Task.WhenAny(drainsTask, deadlineTask).ConfigureAwait(false);
+        bool drainDeadlineForcedTermination = drainRaceWinner == deadlineTask;
+        if (!drainDeadlineForcedTermination && delayedFamilyProof)
         {
             await EnsureTerminalAsync().ConfigureAwait(false);
-            _drainCts?.Cancel();
+        }
+        if (drainDeadlineForcedTermination)
+        {
+            bool terminalSucceeded = await EnsureTerminalAsync().ConfigureAwait(false);
+            if (!terminalSucceeded)
+            {
+                // A failed terminal operation cannot leave a synchronous read live indefinitely. On
+                // success, leave drains running to consume buffered bytes and observe EOF.
+                _drainCts?.Cancel();
+            }
         }
 
         var (stdOutText, stdOutTruncated) = await AwaitDrainBounded(stdOutDrainTask).ConfigureAwait(false);
@@ -1026,48 +1080,6 @@ public sealed class ContainedProcess : IDisposable
         }
 
         _disposeTask.GetAwaiter().GetResult();
-#if false
-        EnsureTerminalAsync().GetAwaiter().GetResult();
-        _completionMonitorCts?.Cancel();
-        _drainCts?.Cancel();
-        WaitBounded(_waitTask, TimeSpan.FromSeconds(15));
-        WaitBounded(_completionMonitor, TimeSpan.FromSeconds(5));
-        WaitBounded(_stdOutDrain, TimeSpan.FromSeconds(5));
-        WaitBounded(_stdErrDrain, TimeSpan.FromSeconds(5));
-        if (_stdOutDrain is null || _stdOutDrain.IsCompleted) { CloseDrainHandles(); }
-        if (_stdErrDrain is null || _stdErrDrain.IsCompleted) { CloseDrainHandles(); }
-
-        lock (_lifecycleGate) { _lifecycleState = LifecycleState.Disposed; }
-
-        _completionMonitorCts?.Dispose();
-        _drainCts?.Dispose();
-
-        // GH106-R2-F11: exact true reverse acquisition order. StartCore acquires, in order: stdin pipe
-        // pair, stdout pipe pair, stderr pipe pair, handle-list buffer, attribute-list buffer, job
-        // handle, completion port handle, command-line buffer, environment-block buffer, then the
-        // process/thread handles together (process handle treated as the later of the pair, matching the
-        // unwind stack's own pop order for that pair). Reverse: process handle, thread handle,
-        // environment-block buffer, command-line buffer, completion port handle, job handle,
-        // attribute-list buffer, handle-list buffer, stderr pipe, stdout pipe, stdin pipe.
-        CloseTracked(ref _processHandle, "process handle");
-        CloseTracked(ref _threadHandle, "thread handle");
-        FreeTracked(ref _environmentBlockBuffer, "environment block buffer", deleteAttributeList: false);
-        FreeTracked(ref _commandLineBuffer, "command line buffer", deleteAttributeList: false);
-        CloseTracked(ref _completionPortHandle, "completion port handle");
-        CloseTracked(ref _jobHandle, "job handle");
-        FreeTracked(ref _attributeListBuffer, "attribute list buffer", deleteAttributeList: true);
-        FreeTracked(ref _handleListBuffer, "handle list buffer", deleteAttributeList: false);
-        if (_stdOutDrain is null || _stdOutDrain.IsCompleted) { CloseTracked(ref _parentStdOutRead, "stdout pipe handle"); }
-        if (_stdErrDrain is null || _stdErrDrain.IsCompleted) { CloseTracked(ref _parentStdErrRead, "stderr pipe handle"); }
-        CloseTracked(ref _parentStdInWrite, "stdin pipe handle");
-
-        if (_teardownFailures.Count > 0)
-        {
-            _failures.Record(
-                ProcessOwnershipFailureClass.TeardownDegraded,
-                $"{_teardownFailures.Count} teardown step(s) failed: {string.Join("; ", _teardownFailures)}");
-        }
-#endif
     }
 
     private async Task DisposeCoreAsync()
@@ -1116,18 +1128,6 @@ public sealed class ContainedProcess : IDisposable
         lock (_lifecycleGate) { _lifecycleState = LifecycleState.Disposed; }
     }
 
-    private void CloseDrainHandles()
-    {
-        if (_stdOutDrain is null || _stdOutDrain.IsCompleted)
-        {
-            CloseTracked(ref _parentStdOutRead, "stdout pipe handle");
-        }
-        if (_stdErrDrain is null || _stdErrDrain.IsCompleted)
-        {
-            CloseTracked(ref _parentStdErrRead, "stderr pipe handle");
-        }
-    }
-
     private Task<bool> EnsureTerminalAsync()
     {
         lock (_lifecycleGate)
@@ -1153,8 +1153,8 @@ public sealed class ContainedProcess : IDisposable
                 $"TerminateJobObject failed with Win32 error {result.Win32Error}.");
         }
 
-        await EnsureFamilyProofAsync().ConfigureAwait(false);
-        return result.Succeeded;
+        bool familyProven = await EnsureFamilyProofAsync(CancellationToken.None).ConfigureAwait(false);
+        return result.Succeeded && familyProven;
     }
 
     private Task<bool> EnsureFamilyProofAsync(CancellationToken cancellationToken = default)
@@ -1164,7 +1164,15 @@ public sealed class ContainedProcess : IDisposable
 
     private async Task<bool> RunFamilyProofAsync(CancellationToken cancellationToken)
     {
+        Interlocked.CompareExchange(
+            ref _familyProofStartedTimestamp,
+            System.Diagnostics.Stopwatch.GetTimestamp(),
+            0);
         await WaitForActiveProcessZero(cancellationToken).ConfigureAwait(false);
+        Interlocked.CompareExchange(
+            ref _familyProofCompletedTimestamp,
+            System.Diagnostics.Stopwatch.GetTimestamp(),
+            0);
         bool proven = _activeProcessZeroObserved;
         if (!proven)
         {
@@ -1198,12 +1206,6 @@ public sealed class ContainedProcess : IDisposable
         }
         Task winner = await Task.WhenAny(task, Task.Delay(bound)).ConfigureAwait(false);
         return winner == task;
-    }
-
-    private static void WaitBounded(Task? task, TimeSpan bound)
-    {
-        if (task is null) { return; }
-        try { task.Wait(bound); } catch (AggregateException) { }
     }
 
     private void WaitConstructionTask(Task? task, string label, List<string> failures)
@@ -1301,12 +1303,12 @@ public sealed class ContainedProcess : IDisposable
     {
         _drainTimeout = timeout;
         _drainCts = new CancellationTokenSource();
-        _stdOutDrain = Task.Run(() => DrainPipe(_parentStdOutRead, timeout, false, _drainCts.Token));
-        _stdErrDrain = Task.Run(() => DrainPipe(_parentStdErrRead, timeout, true, _drainCts.Token));
+        _stdOutDrain = Task.Run(() => DrainPipe(_parentStdOutRead, timeout, _drainCts.Token));
+        _stdErrDrain = Task.Run(() => DrainPipe(_parentStdErrRead, timeout, _drainCts.Token));
     }
 
     private (string Text, bool Truncated) DrainPipe(
-        nint readHandle, TimeSpan timeout, bool standardError, CancellationToken cancellationToken)
+        nint readHandle, TimeSpan timeout, CancellationToken cancellationToken)
     {
         using var stream = new FileStream(
             new Microsoft.Win32.SafeHandles.SafeFileHandle(readHandle, ownsHandle: false),
@@ -1325,7 +1327,7 @@ public sealed class ContainedProcess : IDisposable
         var deadline = System.Diagnostics.Stopwatch.StartNew();
         while (true)
         {
-            if (cancellationToken.IsCancellationRequested || deadline.Elapsed > timeout)
+            if (cancellationToken.IsCancellationRequested || (deadline.Elapsed > timeout && !peekFailed))
             {
                 return (text.ToString(), true);
             }
@@ -1336,10 +1338,7 @@ public sealed class ContainedProcess : IDisposable
                 NativeCallResult<uint> peek = InvokePeekNamedPipe(readHandle);
                 if (!peek.Succeeded)
                 {
-                    ref int failureRecorded = ref (standardError
-                        ? ref _stdErrPeekFailureRecorded
-                        : ref _stdOutPeekFailureRecorded);
-                    if (Interlocked.Exchange(ref failureRecorded, 1) == 0)
+                    if (Interlocked.Exchange(ref _peekFailureRecorded, 1) == 0)
                     {
                         _failures.RecordSecondary($"PeekNamedPipe failed with Win32 error {peek.Win32Error}.");
                     }
@@ -1382,6 +1381,18 @@ public sealed class ContainedProcess : IDisposable
 
             if (read == 0)
             {
+                Interlocked.CompareExchange(
+                    ref _drainCompletedTimestamp,
+                    System.Diagnostics.Stopwatch.GetTimestamp(),
+                    0);
+                if (!_activeProcessZeroObserved)
+                {
+                    _drainCompletedBeforeActiveZero = true;
+                    // EOF is not family proof. Start the shared terminal operation immediately so a
+                    // descendant that closed the inherited pipe first cannot reach natural completion
+                    // while the proof task is still waiting on ACTIVE_PROCESS_ZERO.
+                    _ = EnsureTerminalAsync();
+                }
                 int flushedChars = decoder.GetChars(ReadOnlySpan<byte>.Empty, charBuffer, flush: true);
                 if (flushedChars > 0)
                 {
