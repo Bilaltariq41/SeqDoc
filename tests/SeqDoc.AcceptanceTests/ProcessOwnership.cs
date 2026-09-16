@@ -863,7 +863,8 @@ public sealed class ContainedProcess : IDisposable
     {
         lock (_lifecycleGate)
         {
-            ObjectDisposedException.ThrowIf(_lifecycleState == LifecycleState.Disposed, this);
+            ObjectDisposedException.ThrowIf(
+                _lifecycleState is LifecycleState.DisposalInProgress or LifecycleState.Disposed, this);
             return _waitTask ??= WaitCoreAsync(timeout, cancellationToken);
         }
     }
@@ -1053,21 +1054,31 @@ public sealed class ContainedProcess : IDisposable
 
     public void Dispose()
     {
+        Task disposeTask;
         lock (_lifecycleGate)
         {
             if (_lifecycleState == LifecycleState.Disposed)
             {
                 return;
             }
-            _disposeTask ??= Task.Run(DisposeCoreAsync);
+
+            // Claim disposal synchronously, before scheduling any asynchronous cleanup.  In particular,
+            // this closes the interval in which a caller could otherwise publish a new shared wait after
+            // disposal had begun but before DisposeCoreAsync reached its first lifecycle lock.
+            if (_disposeTask is null)
+            {
+                _lifecycleState = LifecycleState.DisposalInProgress;
+                _disposeTask = Task.Run(DisposeCoreAsync);
+            }
+
+            disposeTask = _disposeTask;
         }
 
-        _disposeTask.GetAwaiter().GetResult();
+        disposeTask.GetAwaiter().GetResult();
     }
 
     private async Task DisposeCoreAsync()
     {
-        lock (_lifecycleGate) { _lifecycleState = LifecycleState.DisposalInProgress; }
         if (!_activeProcessZeroObserved || _terminalTask is not null)
         {
             await EnsureTerminalAsync().ConfigureAwait(false);
@@ -1084,13 +1095,46 @@ public sealed class ContainedProcess : IDisposable
                 "Managed lifecycle work did not quiesce within the cleanup bound; owned handles were retained.");
         }
 
+        // WaitCore can still be between its process wait and GetExitCodeProcess/Job Object accounting.
+        // Snapshot the already-published shared task without holding the lifecycle gate while waiting;
+        // closing either native handle before this task quiesces would make that work use a released
+        // (and potentially reused) handle.  A fault is observed deliberately so its exact evidence is
+        // not lost behind Task.WhenAny-style completion handling.
+        Task<ProcessOwnershipWaitResult>? waitTask;
+        lock (_lifecycleGate) { waitTask = _waitTask; }
+        bool waitComplete = await AwaitTaskBounded(waitTask, _constructionCleanupBound).ConfigureAwait(false);
+        if (waitTask is not null && waitComplete)
+        {
+            try
+            {
+                await waitTask.ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _failures.Record(ProcessOwnershipFailureClass.ProcessFailed,
+                    $"WaitAsync failed during disposal: {ex.Message}");
+            }
+        }
+        else if (waitTask is not null)
+        {
+            _failures.Record(ProcessOwnershipFailureClass.TeardownDegraded,
+                $"WaitAsync did not quiesce within {_constructionCleanupBound}; process and job handles were retained.");
+        }
+
+        // A live wait is the last permitted user of the process handle; the completion monitor is the
+        // corresponding last user of the job handle.  Retain both when either proof is incomplete rather
+        // than reporting successful teardown after closing beneath live work.
+        bool nativeHandlesSafe = waitComplete && monitorComplete;
         _completionMonitorCts?.Dispose();
         _drainCts?.Dispose();
-        CloseTracked(ref _processHandle, "process handle");
+        if (nativeHandlesSafe)
+        {
+            CloseTracked(ref _processHandle, "process handle");
+        }
         CloseTracked(ref _threadHandle, "thread handle");
         FreeTracked(ref _environmentBlockBuffer, "environment block buffer", deleteAttributeList: false);
         FreeTracked(ref _commandLineBuffer, "command line buffer", deleteAttributeList: false);
-        if (monitorComplete)
+        if (nativeHandlesSafe)
         {
             CloseTracked(ref _completionPortHandle, "completion port handle");
             CloseTracked(ref _jobHandle, "job handle");
@@ -1116,7 +1160,10 @@ public sealed class ContainedProcess : IDisposable
         lock (_lifecycleGate)
         {
             ObjectDisposedException.ThrowIf(_lifecycleState == LifecycleState.Disposed, this);
-            _lifecycleState = _terminalTask is null ? LifecycleState.TerminalRequested : _lifecycleState;
+            if (_terminalTask is null && _lifecycleState != LifecycleState.DisposalInProgress)
+            {
+                _lifecycleState = LifecycleState.TerminalRequested;
+            }
             return _terminalTask ??= RunTerminalAsync();
         }
     }
@@ -1126,7 +1173,13 @@ public sealed class ContainedProcess : IDisposable
         // Never execute an injected/native call while the lifecycle monitor is held. Apart from avoiding
         // re-entrancy deadlocks, this lets Dispose join the same idempotent terminal operation.
         await Task.Yield();
-        lock (_lifecycleGate) { _lifecycleState = LifecycleState.TerminalInProgress; }
+        lock (_lifecycleGate)
+        {
+            if (_lifecycleState != LifecycleState.DisposalInProgress)
+            {
+                _lifecycleState = LifecycleState.TerminalInProgress;
+            }
+        }
         if (_jobHandle == nint.Zero) { return true; }
         _terminateJobObjectCalled = true;
         NativeCallResult result = InvokeTerminateJobObject(_jobHandle, uint.MaxValue);
@@ -1209,11 +1262,23 @@ public sealed class ContainedProcess : IDisposable
         {
             _failures.Record(ProcessOwnershipFailureClass.ProcessFailed,
                 "Family exit could not be proven within the bound: ACTIVE_PROCESS_ZERO was not observed.");
-            lock (_lifecycleGate) { _lifecycleState = LifecycleState.FamilyProofFailed; }
+            lock (_lifecycleGate)
+            {
+                if (_lifecycleState != LifecycleState.DisposalInProgress)
+                {
+                    _lifecycleState = LifecycleState.FamilyProofFailed;
+                }
+            }
         }
         else
         {
-            lock (_lifecycleGate) { _lifecycleState = LifecycleState.FamilyProofCompleted; }
+            lock (_lifecycleGate)
+            {
+                if (_lifecycleState != LifecycleState.DisposalInProgress)
+                {
+                    _lifecycleState = LifecycleState.FamilyProofCompleted;
+                }
+            }
         }
         _completionMonitorCts?.Cancel();
         return proven;
