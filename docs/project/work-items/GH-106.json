@@ -13,7 +13,7 @@
   "nextAction": "Repair the frozen GH-106 completion outcomes on the takeover branch; run isolated-SDK focused verification and worker/self-review; stop at ReviewRequired for Abood-essa latest-head review.",
   "number": 106,
   "owner": "ahmad",
-  "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/108",
+  "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/109",
   "schemaVersion": 1,
   "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/106",
