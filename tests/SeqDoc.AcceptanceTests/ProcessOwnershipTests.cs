@@ -953,6 +953,261 @@ public sealed class ProcessOwnershipTests
         }
     }
 
+    // ---- Owner recovery R3: serialized lifecycle, drain, family proof, unwind, evidence, and SDK ----
+
+    [Fact]
+    public async Task TerminateAndDisposeRaceHasOneSerializedTerminalSequenceAndNoPostReleaseNativeCall()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int terminationCalls = 0;
+        bool nativeAfterRelease = false;
+        nint handleSeen = nint.Zero;
+        ContainedProcess? process = null;
+        var options = NewOptions(["sleep", "5000"], nativeCalls: new ProcessOwnershipNativeCalls
+        {
+            TerminateJobObject = (handle, _) =>
+            {
+                Interlocked.Increment(ref terminationCalls);
+                handleSeen = handle;
+                nativeAfterRelease |= process?.TeardownOrderForTests.Contains("job handle") == true;
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+                return NativeCallResult.Success();
+            },
+        });
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        process = result.Process!;
+
+        Task terminate = Task.Run(() => process.Terminate());
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Task dispose = Task.Run(process.Dispose);
+        await Task.WhenAny(dispose, Task.Delay(TimeSpan.FromMilliseconds(250)));
+        release.SetResult();
+
+        await Task.WhenAll(terminate, dispose).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, terminationCalls);
+        Assert.NotEqual(nint.Zero, handleSeen);
+        Assert.False(nativeAfterRelease);
+        process.Dispose();
+    }
+
+    [Fact]
+    public async Task FailedTerminationWaitsForBothDrainsBeforeClosingPipeHandlesAndMarksIncompleteOutput()
+    {
+        var releases = new List<(string Label, bool StdOutComplete, bool StdErrComplete, bool MonitorComplete)>();
+        ContainedProcess? observedProcess = null;
+        var options = NewOptions(["sleep", "5000"], nativeCalls: new ProcessOwnershipNativeCalls
+        {
+            TerminateJobObject = (_, _) => NativeCallResult.Failure(7001),
+        });
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        observedProcess = result.Process!;
+        var releaseObserver = FindInstanceTestSeam("ResourceReleaseObserverForTests", typeof(Action<string>));
+        Assert.True(releaseObserver is not null,
+            "Expected per-process resource-release observer seam is not implemented yet.");
+        releaseObserver!.SetValue(observedProcess, (Action<string>)(label => releases.Add((
+            label,
+            observedProcess.StdOutDrainTaskForTests?.IsCompleted ?? true,
+            observedProcess.StdErrDrainTaskForTests?.IsCompleted ?? true,
+            observedProcess.CompletionMonitorTaskForTests?.IsCompleted ?? true))));
+        try
+        {
+            observedProcess.ActiveProcessZeroBoundForTests = TimeSpan.FromMilliseconds(100);
+            var wait = await observedProcess.WaitAsync(TimeSpan.FromMilliseconds(250), CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Contains(wait.SecondaryFailures, evidence => evidence.Contains("7001", StringComparison.Ordinal));
+            Assert.True(wait.StdOut.Truncated || wait.StdErr.Truncated ||
+                wait.SecondaryFailures.Any(evidence => evidence.Contains("Drain", StringComparison.OrdinalIgnoreCase)));
+
+            observedProcess.Dispose();
+            var stdoutReleases = releases.Where(release => release.Label == "stdout pipe handle").ToArray();
+            var stderrReleases = releases.Where(release => release.Label == "stderr pipe handle").ToArray();
+            Assert.NotEmpty(stdoutReleases);
+            Assert.NotEmpty(stderrReleases);
+            Assert.All(stdoutReleases.Concat(stderrReleases),
+                release => Assert.True(release.StdOutComplete && release.StdErrComplete,
+                    $"{release.Label} was released while a drain was live."));
+        }
+        finally
+        {
+            observedProcess.Dispose();
+            releaseObserver.SetValue(observedProcess, null);
+        }
+    }
+
+    [Theory]
+    [InlineData("terminate")]
+    [InlineData("dispose")]
+    public async Task ExplicitTerminationAndDisposalWithoutWaitProveFamilyExitForLiveDescendant(string operation)
+    {
+        string markerPath = Path.Combine(Path.GetTempPath(), $"seqdoc-i100a-r3-family-{Guid.NewGuid():N}.marker");
+        var result = ContainedProcess.Start(NewOptions(["spawn-grandchild", markerPath, "8000"]));
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        try
+        {
+            await WaitForFileToExistAsync(markerPath, TimeSpan.FromSeconds(5));
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            if (operation == "terminate")
+            {
+                Assert.True(process.Terminate());
+            }
+            else
+            {
+                process.Dispose();
+            }
+
+            stopwatch.Stop();
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(6), $"{operation} took {stopwatch.Elapsed}.");
+            Assert.True(process.HasObservedActiveProcessZero(), "Family release was not proven before the terminal operation returned.");
+        }
+        finally
+        {
+            process.Dispose();
+            File.Delete(markerPath);
+            File.Delete(markerPath + ".completed");
+        }
+    }
+
+    [Fact]
+    public void ConstructionUnwindRetainsTerminationAndWaitFailuresAndDoesNotReleaseLiveDrainResources()
+    {
+        var cleanupBound = FindInstanceTestSeam("ConstructionCleanupBoundForTests", typeof(TimeSpan));
+        Assert.True(cleanupBound is not null,
+            "Expected per-instance construction cleanup-bound seam is not implemented yet.");
+        ContainedProcess? captured = null;
+        var releases = new List<(string Label, bool StdOutComplete, bool StdErrComplete, bool MonitorComplete)>();
+        ContainedProcess.UnwindStepObserverForTests = label => releases.Add((
+            label,
+            captured?.StdOutDrainTaskForTests?.IsCompleted ?? true,
+            captured?.StdErrDrainTaskForTests?.IsCompleted ?? true,
+            captured?.CompletionMonitorTaskForTests?.IsCompleted ?? true));
+        ContainedProcess.PostDrainsStartHookForTests = process =>
+        {
+            captured = process;
+            cleanupBound!.SetValue(process, TimeSpan.FromMilliseconds(100));
+        };
+        try
+        {
+            var result = ContainedProcess.Start(
+                NewOptions(["sleep", "5000"], nativeCalls: new ProcessOwnershipNativeCalls
+                {
+                    TerminateProcess = (_, _) => NativeCallResult.Failure(7101),
+                    WaitForSingleObject = (_, _) => NativeWaitResult.Failed(7102),
+                }),
+                ConstructionFaultPoint.AfterDrainsStartedBeforeAssign);
+
+            Assert.False(result.Succeeded);
+            Assert.NotNull(captured);
+            Assert.Contains("7101", result.Detail, StringComparison.Ordinal);
+            Assert.Contains("7102", result.Detail, StringComparison.Ordinal);
+            Assert.All(releases, release => Assert.True(
+                release.StdOutComplete && release.StdErrComplete && release.MonitorComplete,
+                $"{release.Label} released resources while owned work was live."));
+        }
+        finally
+        {
+            ContainedProcess.UnwindStepObserverForTests = null;
+            ContainedProcess.PostDrainsStartHookForTests = null;
+        }
+    }
+
+    [Fact]
+    public async Task PeekNamedPipeFailurePreservesPrefixAndIncompleteEvidenceWithoutChangingPrimaryClass()
+    {
+        var seam = FindInstanceTestSeam("PeekNamedPipe", typeof(Func<nint, NativeCallResult<uint>>));
+        Assert.True(seam is not null, "Expected per-instance PeekNamedPipe native seam is not implemented yet.");
+        var nativeCalls = new ProcessOwnershipNativeCalls();
+        seam!.SetValue(nativeCalls, (Func<nint, NativeCallResult<uint>>)(_ => NativeCallResult<uint>.Failure(7301)));
+        var result = ContainedProcess.Start(NewOptions(["slow-bulk", "50", "100"],
+            drainTimeout: TimeSpan.FromMilliseconds(150), nativeCalls: nativeCalls));
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        var wait = await process.WaitAsync(TimeSpan.FromMilliseconds(250), CancellationToken.None);
+
+        Assert.Equal(ProcessOwnershipFailureClass.TimedOut, wait.FailureClass);
+        Assert.StartsWith("SLOW", wait.StdOut.Text, StringComparison.Ordinal);
+        Assert.True(wait.StdOut.Truncated || wait.StdErr.Truncated);
+        Assert.Equal(1, wait.SecondaryFailures.Count(evidence => evidence.Contains("PeekNamedPipe", StringComparison.Ordinal)
+            && evidence.Contains("7301", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task SecondaryEvidenceIsOrderedAndPreviouslyReturnedSnapshotsRemainImmutable()
+    {
+        var result = ContainedProcess.Start(NewOptions(["exitcode", "7"], nativeCalls: new ProcessOwnershipNativeCalls
+        {
+            TerminateJobObject = (_, _) => NativeCallResult.Failure(7202),
+        }));
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(ProcessOwnershipFailureClass.ProcessFailed, wait.FailureClass);
+        var snapshot = wait.SecondaryFailures.ToArray();
+        Assert.Empty(snapshot);
+        Assert.Equal(snapshot, wait.SecondaryFailures);
+        var currentEvidence = FindReadableInstanceProperty("SecondaryFailures", typeof(IReadOnlyList<string>));
+        Assert.True(currentEvidence is not null,
+            "Expected immutable current-process SecondaryFailures snapshot is not implemented yet.");
+
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task terminal = Task.Run(() =>
+        {
+            start.Task.GetAwaiter().GetResult();
+            process.Terminate();
+        });
+        Task enumerate = Task.Run(() =>
+        {
+            start.Task.GetAwaiter().GetResult();
+            _ = ((IReadOnlyList<string>)currentEvidence!.GetValue(process)!).ToArray();
+            _ = wait.SecondaryFailures.ToArray();
+        });
+        start.SetResult();
+        await Task.WhenAll(terminal, enumerate).WaitAsync(TimeSpan.FromSeconds(5));
+        var currentSnapshot = (IReadOnlyList<string>)currentEvidence.GetValue(process)!;
+        Assert.Contains(currentSnapshot, evidence => evidence.Contains("7202", StringComparison.Ordinal));
+        Assert.Equal(snapshot, wait.SecondaryFailures);
+        process.Dispose();
+    }
+
+    [Fact]
+    public async Task ExplicitRuntimeRootLaunchProvesPinnedSdkWithoutPathOrAmbientInheritance()
+    {
+        string runtimeDirectory = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
+        DirectoryInfo? root = new DirectoryInfo(runtimeDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "dotnet.exe")))
+        {
+            root = root.Parent;
+        }
+
+        string? sdkRoot = root?.FullName;
+        Assert.False(string.IsNullOrWhiteSpace(sdkRoot),
+            $"Official SDK 10.0.302 runtime root was unavailable; runtime directory was '{runtimeDirectory}'.");
+        string dotnet = Path.Combine(sdkRoot!, OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet");
+        Assert.True(File.Exists(dotnet), $"Official SDK 10.0.302 executable was unavailable at '{dotnet}'.");
+
+        var environment = DefaultEnvironment();
+        environment["DOTNET_ROOT"] = sdkRoot!;
+        environment["DOTNET_ROOT_X64"] = sdkRoot!;
+        var result = ContainedProcess.Start(new ProcessOwnershipOptions
+        {
+            ExecutablePath = dotnet,
+            Arguments = ["--version"],
+            Environment = environment,
+            DrainTimeout = TimeSpan.FromSeconds(10),
+        });
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+        Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+        Assert.Equal("10.0.302\r\n", wait.StdOut.Text);
+        Assert.DoesNotContain("PATH", environment.Keys, StringComparer.OrdinalIgnoreCase);
+    }
+
     // ---- shared helpers --------------------------------------------------------------------------------
 
     private static ProcessOwnershipOptions NewOptions(
@@ -974,8 +1229,9 @@ public sealed class ProcessOwnershipTests
         NewOptions(["echo", "out", "err"], environment);
 
     /// <summary>
-    /// The minimal explicit, deterministic child environment: only <c>SystemRoot</c> (required for the
-    /// .NET apphost/CLR to resolve system DLLs), copied deliberately rather than inherited wholesale.
+    /// The explicit deterministic child environment includes <c>SystemRoot</c> (required for the .NET
+    /// apphost/CLR), plus runtime-discovery roots derived from the executing runtime. PATH and all other
+    /// ambient variables remain deliberately excluded.
     /// </summary>
     private static Dictionary<string, string> DefaultEnvironment()
     {
@@ -986,7 +1242,50 @@ public sealed class ProcessOwnershipTests
             env["SystemRoot"] = systemRoot;
         }
 
+        DirectoryInfo? dotnetRoot = new DirectoryInfo(
+            System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory());
+        while (dotnetRoot is not null && !File.Exists(Path.Combine(dotnetRoot.FullName, "dotnet.exe")))
+        {
+            dotnetRoot = dotnetRoot.Parent;
+        }
+
+        if (dotnetRoot is not null)
+        {
+            env["DOTNET_ROOT"] = dotnetRoot.FullName;
+            env["DOTNET_ROOT_X64"] = dotnetRoot.FullName;
+        }
+
         return env;
+    }
+
+    private static System.Reflection.PropertyInfo? FindInstanceTestSeam(string name, Type type)
+    {
+        var property = typeof(ContainedProcess).GetProperty(
+            name,
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic);
+        if (property is not null && property.PropertyType == type && property.CanWrite)
+        {
+            return property;
+        }
+
+        property = typeof(ProcessOwnershipNativeCalls).GetProperty(
+            name,
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic);
+        return property is not null && property.PropertyType == type && property.CanWrite ? property : null;
+    }
+
+    private static System.Reflection.PropertyInfo? FindReadableInstanceProperty(string name, Type type)
+    {
+        var property = typeof(ContainedProcess).GetProperty(
+            name,
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic);
+        return property is not null && property.PropertyType == type && property.CanRead ? property : null;
     }
 
     private static string ResolveStubExecutablePath()
