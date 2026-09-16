@@ -336,3 +336,16 @@ the process and job handles while the shared wait task still calls `GetExitCodeP
 `QueryInformationJobObject`. The focused lane was 60/60 but did not cover this handle-lifetime signature. The finding
 is accepted for one deterministic barrier-based regression and the smallest lifecycle repair; no final gate is
 authorized.
+
+## v4 repair and Reviewer result
+
+Head `08733dd` passed the isolated-SDK focused lane 60/60 after replacing drain/completion timing heuristics with
+atomic drain state and authoritative Job Object `ActiveProcesses` evidence. Independent review found one High
+WaitAsync/Dispose handle-lifetime race. One deterministic barrier regression was added and produced the intended red
+result: `Failed 1, Passed 60, Skipped 0, Total 61` at `11267b9`.
+
+Repair `37b7f71` publishes `DisposalInProgress` synchronously, rejects new waits, joins an existing shared wait before
+native handle release, observes wait faults, and retains process/job handles on bounded quiescence failure. The
+isolated-SDK focused lane then passed `61/61`, and the complete Reviewer rerun reported `PASS - NO ISSUES DETECTED`;
+the prior High finding is Fixed. No final gate ran. Exact head
+`37b7f71597c2a4bbd4effc87df70fad18519cc89` is ready for Ahmad's latest-head human review.

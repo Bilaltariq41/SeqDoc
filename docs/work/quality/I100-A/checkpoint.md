@@ -2,7 +2,7 @@
 
 ## State
 
-`ResolvingFindings`
+`ReviewRequired`
 
 ## Authority and frozen state
 
@@ -383,3 +383,13 @@ regression expands the v4 test allowance by exactly one deterministic barrier-ba
 the in-flight wait before releasing its native handles, without holding the lifecycle lock across waits/native calls
 or deadlocking terminal/drain coordination. Focused verification and a new complete Reviewer pass are required before
 `ReviewRequired`.
+
+### v4 repair result
+
+The final race fix at `08733dd` replaced timing inference with lifecycle-gated drain completion plus authoritative
+`QueryInformationJobObject(JobObjectBasicAccountingInformation)` evidence. The isolated-SDK focused lane passed
+60/60. Independent review then found one High Wait/Dispose handle-lifetime gap. A deterministic barrier regression
+failed 1/61 at `11267b9`; repair `37b7f71` synchronously claims disposal, blocks new waits, and quiesces or safely
+retains handles for an existing wait before release. The isolated-SDK focused lane passed 61/61, and the complete
+Reviewer rerun reported `PASS - NO ISSUES DETECTED`, marking the prior High finding Fixed. The checkpoint is ready for
+Ahmad's latest-head human review at exact head `37b7f71597c2a4bbd4effc87df70fad18519cc89`; the final gate remains withheld.
