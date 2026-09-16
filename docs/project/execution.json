@@ -4,7 +4,7 @@
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Awaiting a post-repair independent review pass on commit e1d1f0a (GH106-F1 fix) at PR #108, branch testing/issue-106-process-ownership. If clean, run the declared final gate once.",
+  "nextAction": "Final gate passed with only pre-existing, structurally-proven-unrelated failures (see docs/work/quality/I100-A/ledger.md). GH-106 cannot transition to Closed until the GitHub issue itself is closed via merge. Awaiting one independent, non-author human peer review and merge of PR #108 (branch testing/issue-106-process-ownership) on GitHub. Once merged, run transition --id GH-106 --state Closed.",
   "schemaVersion": 1,
   "sourceId": "GH-106"
 }

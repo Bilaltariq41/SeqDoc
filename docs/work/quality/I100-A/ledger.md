@@ -34,3 +34,33 @@ post-`Ready` T2 amendment.
 | GH106-F1 — `WaitAsync`'s exited-process drain path has no real bound against a live descendant silently holding a pipe write handle open; `DrainPipe`'s synchronous `Read` (line ~755) is only checked for its deadline *between* reads, not during an in-flight blocked read, so a caller invoking `WaitAsync` directly (without first calling `Terminate()`) against such a descendant can hang indefinitely, contradicting the checkpoint's own "drains stdout and stderr concurrently within explicit bounds" objective and its native API admission table's "bounded by the same timeout token" claim. | High | Repair in progress | Independent review at PR #108; confirmed by the orchestrator's own reading of `ProcessOwnership.cs:586-611,737-776`. |
 
 Repair trace recorded in `docs/project/delegated-contribution-workflow.md` once verified.
+
+## Final gate
+
+Run once by the orchestrator after the post-repair review passed clean:
+
+```
+dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release
+```
+
+Result: Failed 5, Passed 70, Skipped 0, Total 75, Duration 20m15s. All 28 `ProcessOwnershipTests` are among the 70
+passed (0 failures in that class). The 5 failures are pre-existing and unrelated to this checkpoint:
+
+- `CorpusMediatRTests.OrderingDraftRouteReachesExactMediatRHandlerWithoutPipelineClaim` — `SD1102` multi-SDK
+  MSBuildLocator conflict (MSBuild 10.0.302 already registered vs. SDK 10.0.400), the same pre-existing signature
+  documented repeatedly in `docs/project/delegated-contribution-workflow.md` (QHTTP-B repair traces) and
+  `docs/work/services/I54/checkpoint.md`.
+- `ServiceClientExternalCorpusTests.PositiveLaneWordingIsEvidenceBoundedAndCredentialSafe`,
+  `PositiveLanesRenderTheJoinedOutboundClientMessageExactlyOnce`,
+  `ConfiguredRootsResolveAndProduceTheAcceptedDocumentSet` — external-corpus drift (`SD4011` malformed/unknown
+  frozen `MethodId`, empty wording collections), the same pre-existing external-corpus-unavailable/drifted class
+  documented in the same QHTTP-B history.
+- `PersistenceAcceptanceTests.GetMeaningPersistenceFactsReachDiagramAndMarkdownDeterministically` — an MSBuild
+  incremental-cache file collision inside the reused, non-isolated `tests/fixtures/BehaviorDocumentation/GetMeaning/obj-custom/`
+  directory this test's own `BuildAsync` helper writes to; a local fixture-build artifact unrelated to this
+  checkpoint's files.
+
+Structural proof of non-causation: `git diff --name-only ab6e3e1..HEAD -- src/ tests/` touches zero `src/**` files
+and only `tests/SeqDoc.AcceptanceTests.ProcessOwnershipStub/**`, `tests/SeqDoc.AcceptanceTests/ProcessOwnership.cs`,
+`tests/SeqDoc.AcceptanceTests/ProcessOwnershipTests.cs`, and `tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj`
+— none of the 3 failing test files this checkpoint could plausibly affect.
