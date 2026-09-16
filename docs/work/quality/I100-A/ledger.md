@@ -301,3 +301,11 @@ missing expected terminal-call evidence in the descendant pipe-closure scenario.
 limit before complete self-review. Orchestrator diff inspection found incomplete/dead implementation structure, so no
 Reviewer or final gate ran. The v2 stop condition fired and canonical state returned to `Blocked`; candidate, history,
 tests, both PRs, and all attribution remain preserved.
+
+## Owner targeted repair v3 authorization
+
+Abood separately authorized one final targeted repair from blocked head `839dd8e`. Scope is limited to the three
+remaining focused behaviors—live-grandchild failure classification, fail-closed prefix preservation after
+`PeekNamedPipe` failure, and descendant pipe-closure terminal evidence—plus removal of dead/incomplete lifecycle code
+and complete self-review. Tests remain frozen. The candidate must pass 60/60 under isolated SDK `10.0.302`, pass one
+independent Reviewer-agent review, and stop at `ReviewRequired` without the final gate.

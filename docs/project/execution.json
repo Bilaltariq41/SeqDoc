@@ -1,10 +1,10 @@
 {
-  "activeCheckpointId": null,
-  "activeCheckpointPath": null,
+  "activeCheckpointId": "I100-A",
+  "activeCheckpointPath": "docs/work/quality/I100-A",
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
-  "mode": "idle",
-  "nextAction": "No work item is selected.",
+  "mode": "active",
+  "nextAction": "Repair the three exact focused failures without changing tests; complete self-review, focused 60/60, and independent Reviewer review, then stop at ReviewRequired.",
   "schemaVersion": 1,
-  "sourceId": null
+  "sourceId": "GH-106"
 }

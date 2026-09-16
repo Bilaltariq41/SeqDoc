@@ -2,7 +2,7 @@
 
 ## State
 
-`Blocked`
+`Building`
 
 ## Authority and frozen state
 
@@ -336,3 +336,19 @@ live-grandchild failure classification, fail-closed `PeekNamedPipe` prefix prese
 evidence after descendant pipe closure. The implementation also exhausted its work budget before complete self-review.
 The explicit stop condition therefore fired: I100-A is `Blocked`, no Reviewer or final gate ran, and no additional
 repair or GH-107 work is authorized without a new owner disposition and available non-author human review.
+
+## Owner targeted repair v3
+
+Abood separately authorized one final targeted repair from blocked head `839dd8e`. All commits, authorship, review
+evidence, PR #108, and PR #109 remain preserved; no rewrite, force-push, squash, deletion, or test weakening is
+authorized. The only implementation outcomes are: retain `ProcessFailed` for the live-grandchild wait; preserve the
+evidenced prefix while treating `PeekNamedPipe` failure as incomplete with exact error evidence; restore required
+terminal-operation evidence for descendant pipe closure; and remove dead/incomplete lifecycle code before complete
+self-review.
+
+Only `tests/SeqDoc.AcceptanceTests/ProcessOwnership.cs` and truthful I100-A lifecycle records may change. Tests, stub,
+build/package/configuration, `src/**`, GH-107, I18/PR #103, ARM64, external corpus, and unrelated changes remain out of
+scope. The existing 60-test focused lane under isolated SDK `10.0.302` must pass 60/60, followed by one independent
+Reviewer-agent review and only concrete in-scope repairs. Stop at `ReviewRequired` for Ahmad; do not run the final
+gate, merge, close GH-106, or begin GH-107. Any remaining focused failure or unresolved Reviewer High finding returns
+GH-106 to `Blocked` permanently pending human technical direction.
