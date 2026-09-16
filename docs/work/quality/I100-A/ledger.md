@@ -31,7 +31,7 @@ post-`Ready` T2 amendment.
 
 | Finding | Severity | Disposition | Evidence |
 |---|---|---|---|
-| GH106-F1 — `WaitAsync`'s exited-process drain path has no real bound against a live descendant silently holding a pipe write handle open; `DrainPipe`'s synchronous `Read` (line ~755) is only checked for its deadline *between* reads, not during an in-flight blocked read, so a caller invoking `WaitAsync` directly (without first calling `Terminate()`) against such a descendant can hang indefinitely, contradicting the checkpoint's own "drains stdout and stderr concurrently within explicit bounds" objective and its native API admission table's "bounded by the same timeout token" claim. | High | Repair in progress | Independent review at PR #108; confirmed by the orchestrator's own reading of `ProcessOwnership.cs:586-611,737-776`. |
+| GH106-F1 — `WaitAsync`'s exited-process drain path has no real bound against a live descendant silently holding a pipe write handle open; `DrainPipe`'s synchronous `Read` (line ~755) is only checked for its deadline *between* reads, not during an in-flight blocked read, so a caller invoking `WaitAsync` directly (without first calling `Terminate()`) against such a descendant can hang indefinitely, contradicting the checkpoint's own "drains stdout and stderr concurrently within explicit bounds" objective and its native API admission table's "bounded by the same timeout token" claim. | High | Fixed (commit e1d1f0a) | Independent review at PR #108; confirmed by the orchestrator's own reading of `ProcessOwnership.cs:586-611,737-776`. |
 
 Repair trace recorded in `docs/project/delegated-contribution-workflow.md` once verified.
 
@@ -72,19 +72,19 @@ confirmed by the orchestrator reading the actual code before repair began.
 
 | Finding | Severity | Disposition |
 |---|---|---|
-| GH106-R2-F1 — post-construction failure unwind (StartCore lines ~303-324, 480-547) can double-close the 3 child-side pipe handles already closed at lines 498-500, and never cancels/awaits the drain tasks or completion monitor before returning, leaking background work on any assign/hook/resume failure. | High | Fixed |
-| GH106-R2-F2 — normal exit records no failure when `ACTIVE_PROCESS_ZERO` is never observed within its bound; the frozen failure table requires `ProcessFailed` when family exit cannot be proven. | High | Fixed |
-| GH106-R2-F3 — the timeout/cancellation branch calls `TerminateJobObject` but never awaits `ACTIVE_PROCESS_ZERO` before returning, so `WaitAsync` can return before the terminated family has actually finished exiting. | High | Fixed |
-| GH106-R2-F4 — `TerminateJobObject` failures are discarded in both `WaitAsync` and `Terminate()`; no `ProcessFailed` is recorded. | High | Fixed |
-| GH106-R2-F5 — `WaitForSingleObject` result `WAIT_FAILED` is mapped identically to `WAIT_TIMEOUT`, so a real wait failure is misreported as `TimedOut` instead of `ProcessFailed` with the captured `Win32Error`. | High | Fixed |
-| GH106-R2-F6 — the parent's stdin write handle is retained but never exposed or closed, so a child reading stdin to EOF cannot finish naturally. | High | Fixed |
-| GH106-R2-F7 — `Dispose()` can record `TeardownDegraded` internally, but only an internal test-only accessor can observe it; no real caller (including #107) has a way to learn teardown failed. | High | Fixed |
-| GH106-R2-F8 — embedded NUL and malformed environment-name entries are not rejected before native marshaling, which can silently truncate them while construction still reports success. | Medium | Fixed |
-| GH106-R2-F9 — `BuildEnvironmentBlock` dedups with `StringComparer.Ordinal`, so case-variant Windows environment names (e.g. `Path` vs `PATH`) are not deduplicated despite Windows treating them as the same variable. | Medium | Fixed |
-| GH106-R2-F10 — `DrainPipe` decodes each independent 64 KiB read chunk with `Encoding.UTF8.GetString`, so a multibyte UTF-8 sequence split across a read boundary can be corrupted while `Truncated` still reports `false`. | Medium | Fixed |
-| GH106-R2-F11 — `Dispose()`'s close order does not match true reverse-acquisition order (job/IOCP close before pipes; command-line/environment buffers close last instead of matching their early acquisition), despite the code comment claiming exact reverse order. | Medium | Fixed |
-| GH106-R2-F12 — the assign-before-resume chronology proof uses an in-process test hook plus `IsProcessInJob`, not the observable stub-receipt ordering the checkpoint originally specified. | Medium | Fixed |
-| GH106-R2-F13 — the checkpoint's declared invalid-NUL and environment-dedup vectors are not yet exercised by any test. | Medium | Fixed (folded into F8/F9 repair) |
+| GH106-R2-F1 — post-construction failure unwind (StartCore lines ~303-324, 480-547) can double-close the 3 child-side pipe handles already closed at lines 498-500, and never cancels/awaits the drain tasks or completion monitor before returning, leaking background work on any assign/hook/resume failure. | High | Fixed (commit 1c23f9b) |
+| GH106-R2-F2 — normal exit records no failure when `ACTIVE_PROCESS_ZERO` is never observed within its bound; the frozen failure table requires `ProcessFailed` when family exit cannot be proven. | High | Fixed (commit 1c23f9b) |
+| GH106-R2-F3 — the timeout/cancellation branch calls `TerminateJobObject` but never awaits `ACTIVE_PROCESS_ZERO` before returning, so `WaitAsync` can return before the terminated family has actually finished exiting. | High | Fixed (commit 1c23f9b) |
+| GH106-R2-F4 — `TerminateJobObject` failures are discarded in both `WaitAsync` and `Terminate()`; no `ProcessFailed` is recorded. | High | Fixed (commit 1c23f9b) |
+| GH106-R2-F5 — `WaitForSingleObject` result `WAIT_FAILED` is mapped identically to `WAIT_TIMEOUT`, so a real wait failure is misreported as `TimedOut` instead of `ProcessFailed` with the captured `Win32Error`. | High | Fixed (commit 1c23f9b) |
+| GH106-R2-F6 — the parent's stdin write handle is retained but never exposed or closed, so a child reading stdin to EOF cannot finish naturally. | High | Fixed (commit 1c23f9b) |
+| GH106-R2-F7 — `Dispose()` can record `TeardownDegraded` internally, but only an internal test-only accessor can observe it; no real caller (including #107) has a way to learn teardown failed. | High | Fixed (commit 1c23f9b) |
+| GH106-R2-F8 — embedded NUL and malformed environment-name entries are not rejected before native marshaling, which can silently truncate them while construction still reports success. | Medium | Fixed (commit 1c23f9b) |
+| GH106-R2-F9 — `BuildEnvironmentBlock` dedups with `StringComparer.Ordinal`, so case-variant Windows environment names (e.g. `Path` vs `PATH`) are not deduplicated despite Windows treating them as the same variable. | Medium | Fixed (commit 1c23f9b) |
+| GH106-R2-F10 — `DrainPipe` decodes each independent 64 KiB read chunk with `Encoding.UTF8.GetString`, so a multibyte UTF-8 sequence split across a read boundary can be corrupted while `Truncated` still reports `false`. | Medium | Fixed (commit 1c23f9b) |
+| GH106-R2-F11 — `Dispose()`'s close order does not match true reverse-acquisition order (job/IOCP close before pipes; command-line/environment buffers close last instead of matching their early acquisition), despite the code comment claiming exact reverse order. | Medium | Fixed (commit 1c23f9b) |
+| GH106-R2-F12 — the assign-before-resume chronology proof uses an in-process test hook plus `IsProcessInJob`, not the observable stub-receipt ordering the checkpoint originally specified. | Medium | Fixed (commit 1c23f9b) |
+| GH106-R2-F13 — the checkpoint's declared invalid-NUL and environment-dedup vectors are not yet exercised by any test. | Medium | Fixed (commit 1c23f9b) |
 
 ### Repair trace (PR #108, head `3c87e867` → repair round GH106-R2)
 
@@ -167,3 +167,36 @@ Full finding text: https://github.com/Bilaltariq41/SeqDoc/pull/108 (Abood-essa r
 Abood also flagged that the prior "final gate passed" wording overstated a 5-failures-out-of-75 result without a
 frozen accepted-failure baseline or independent peer disposition; going forward the orchestrator will record the
 final gate's literal outcome (exact counts) without characterizing a nonzero-failure run as "passed."
+
+## Post-repair independent review rounds
+
+Three additional independent review passes ran after the F1-F13 repair, each independently reconfirmed by the
+orchestrator (not just trusted from the delegate report):
+
+1. **`reviewer-medium` against complete repaired head `1c23f9b`.** Verdict: substantively sound. Independently
+   re-derived (not merely re-read) the reverse-acquisition order (F11), the unwind pop-order reasoning (F1), the
+   failure-precedence first-write-wins semantics (F2/F3), and test-seam isolation (F4/F5/F7) directly from the code.
+   One finding: the new F10 boundary test's "exactly at the 64 KiB boundary" claim was not actually guaranteed by
+   construction (`CreatePipe` used the Win32 default buffer size, far smaller than 64 KiB, so the real split point
+   was governed by uncontrolled OS pipe buffering/scheduling) — not a production defect, a test-precision gap.
+2. **Follow-up repair, commit `9192152`.** Added a test-only `PipeBufferSizeOverrideForTests` seam on
+   `CreatePipePair` (default unchanged, `internal static`, same-assembly-only) so the boundary test can force a
+   large enough pipe buffer to make the split land deterministically at the intended offset; documented the new
+   `WaitAsync` worst-case `~X + 10s` latency ceiling introduced by the F3 repair in `checkpoint.md`.
+3. **`reviewer-medium` against commit `9192152`.** Verdict: fix correct, documentation accurate, but the stub's
+   `RunUtf8Boundary` still issued three *separate* `stdout.Write` calls (filler, then the multibyte character, then
+   a marker) — not jointly atomic, leaving a narrow (though very low-probability) window where a concurrent reader
+   could still observe a partial write and silently miss the boundary condition the test exists to prove. The
+   underlying production fix (persistent `Decoder` in `DrainPipe`) remained correct regardless.
+4. **Follow-up repair, commit `bd6440c`** (mechanical-tier, since fully specified): combined the three writes into
+   one `byte[]` payload issued via a single `stdout.Write` call, making a partial-payload read structurally
+   impossible rather than merely unlikely.
+5. **`reviewer-low` against commit `bd6440c`.** Verdict: PASS, no issues. Independently checked the `Buffer.BlockCopy`
+   offset arithmetic and confirmed payload content/ordering unchanged.
+
+Final verification after all repairs (independently rerun by the orchestrator, not just reported by any delegate):
+`dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~ProcessOwnershipTests"` — **46 passed, 0 failed, 0 skipped**. The `Utf8MultibyteCharacterStraddling64KiBReadBoundaryDecodesCorrectly` test specifically reconfirmed stable across 5+3+1 = 9 total runs across the repair/review chain.
+
+No test-only seam (`...ForTests`, `internal static Action/Func` override) is reachable from any production call path;
+`ContainedProcess` has no `src/**` consumer in this checkpoint. Scope confirmed clean throughout: no `src/**`,
+GH-93, GH-18/I18, PR #99, or PR #103 paths touched by any commit in this repair chain.

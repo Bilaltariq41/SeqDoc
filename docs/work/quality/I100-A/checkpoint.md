@@ -2,7 +2,7 @@
 
 ## State
 
-`ResolvingFindings`
+`ReviewRequired`
 
 ## Authority and frozen state
 

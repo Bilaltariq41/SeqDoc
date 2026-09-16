@@ -4,7 +4,7 @@
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Repair GH106-R2-F1 through F13 (Abood-essa's PR #108 request-changes review against head 3c87e867) as one coherent batch. Update docs/project/delegated-contribution-workflow.md with the full repair trace, rerun focused ProcessOwnershipTests with exact counts, run the worker Reviewer agent against the complete repaired head, then request one latest-head non-author human review before the final gate.",
+  "nextAction": "All 13 of Abood-essa's PR #108 findings (plus two follow-up precision fixes found during post-repair review) are repaired and independently reverified across four review rounds. Requesting one latest-head non-author human review of commit bd6440c before the final gate.",
   "schemaVersion": 1,
   "sourceId": "GH-106"
 }
