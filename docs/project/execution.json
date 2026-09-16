@@ -1,10 +1,10 @@
 {
-  "activeCheckpointId": null,
-  "activeCheckpointPath": null,
+  "activeCheckpointId": "I100-A",
+  "activeCheckpointPath": "docs/work/quality/I100-A",
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
-  "mode": "idle",
-  "nextAction": "No work item is selected.",
+  "mode": "active",
+  "nextAction": "Add and establish the seven grouped red regressions, then repair the serialized process lifecycle without broadening scope; stop at ReviewRequired for Ahmad.",
   "schemaVersion": 1,
-  "sourceId": null
+  "sourceId": "GH-106"
 }

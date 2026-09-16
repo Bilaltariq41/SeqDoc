@@ -2,7 +2,7 @@
 
 ## State
 
-`Blocked`
+`Building`
 
 ## Authority and frozen state
 
@@ -256,3 +256,41 @@ and disposal, and ignored false timed waits during construction unwind. Three Me
 error overclaim, unsynchronized mutable secondary evidence, and an isolated-runtime test/evidence contradiction.
 Under the frozen takeover stop rule, no further automatic repair or final gate is permitted. See `ledger.md` for the
 finding table.
+
+## Owner recovery R3
+
+Authority: [PR #109 owner-recovery decision](https://github.com/Bilaltariq41/SeqDoc/pull/109#issuecomment-5703147045)
+and Ahmad's lease-release acknowledgment. Frozen repair base:
+`952e681d2d60eecc53dfd40d81eec11b053c9f3c`. Abood owns and coordinates this one bounded recovery;
+Ahmad remains the latest-head independent human reviewer and does not implement it. Qais's and Ahmad's commits,
+authorship, evidence, PR #108, and PR #109 remain preserved.
+
+Writable implementation/test paths are `tests/SeqDoc.AcceptanceTests/ProcessOwnership.cs`,
+`tests/SeqDoc.AcceptanceTests/ProcessOwnershipTests.cs`, and, only when an observable child scenario requires it,
+`tests/SeqDoc.AcceptanceTests.ProcessOwnershipStub/Program.cs`. This checkpoint, its ledger, the GH-106 work-item
+record, generated execution projection, and the existing delegated-contribution trace may change only as needed for
+truthful lifecycle and repair evidence. Any other path requires a recorded scope amendment before editing.
+
+Non-goals are GH-107 implementation, I18/PR #103, `src/**`, packages, build/SDK/repository configuration, external
+corpus work, ARM64, global/name-based or PID-only killing, unrelated refactoring, and new process-management
+capability.
+
+The repair must resolve all seven accepted findings together: serialized `Terminate`/`Dispose` handle ownership;
+drain completion before pipe release; bounded family-zero proof for explicit termination and disposal; checked and
+retained construction-unwind termination/wait failures; fail-closed `PeekNamedPipe` evidence; synchronized immutable
+secondary evidence; and a real explicit isolated-SDK launch proof. Primary risks are handle reuse, deadlock,
+background reads against released handles, descendant escape, failure-evidence loss, output-completeness overclaim,
+test seam leakage, and hidden machine-registration dependence.
+
+Existing focused coverage is 52 passing tests at the frozen base, but the prior review found the seven gaps above and
+rejected its isolated-runtime proof. Add or materially strengthen approximately seven grouped tests, one per distinct
+observable, reusing existing tests rather than mirroring implementation branches. The focused command remains:
+
+```powershell
+dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~ProcessOwnershipTests
+```
+
+Run the worker Reviewer only after the complete focused candidate passes, then stop at `ReviewRequired` for Ahmad.
+The unfiltered Acceptance final gate remains the command at lines 177-179 and must not run until Ahmad's findings are
+resolved. If this candidate retains any High ownership, cleanup, family-exit, handle-isolation, or unrelated-process
+safety defect, preserve the branch, return GH-106 to `Blocked`, and stop without another automatic repair.

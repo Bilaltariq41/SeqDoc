@@ -257,3 +257,13 @@ The worker Reviewer inspected the complete local takeover candidate after the 52
 
 Scope remained inside the takeover allowlist. The worktree and both PR histories are preserved; PR #108 and Qais's
 branch remain untouched. GH-107 stays blocked on an accepted contained-process contract.
+
+## Owner recovery R3 activation
+
+Abood's [owner-recovery decision](https://github.com/Bilaltariq41/SeqDoc/pull/109#issuecomment-5703147045)
+authorized one bounded seven-finding recovery from frozen head
+`952e681d2d60eecc53dfd40d81eec11b053c9f3c`. Ahmad released the implementation/path lease and accepted the
+latest-head independent-review role. Canonical state transitioned `Blocked` → `Ready` → `Active`; ownership moved to
+`abood`, PR #109 remained the integration branch, and I100-A was selected for tests-first execution. The transition
+tool does not expose an owner-field option, so the canonical owner field was updated directly before lifecycle and
+execution projections were generated and validated through `work_state.py`.
