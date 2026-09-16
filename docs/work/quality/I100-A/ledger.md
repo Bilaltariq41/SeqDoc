@@ -200,3 +200,35 @@ Final verification after all repairs (independently rerun by the orchestrator, n
 No test-only seam (`...ForTests`, `internal static Action/Func` override) is reachable from any production call path;
 `ContainedProcess` has no `src/**` consumer in this checkpoint. Scope confirmed clean throughout: no `src/**`,
 GH-93, GH-18/I18, PR #99, or PR #103 paths touched by any commit in this repair chain.
+
+## Final gate, post-repair (literal result, not characterized)
+
+Run once by the orchestrator after all 13 findings plus two follow-up precision fixes were repaired and
+independently reverified across four review rounds:
+
+```
+dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release
+```
+
+**Failed 4, Passed 89, Skipped 0, Total 93, Duration 4m21s.** All 46 `ProcessOwnershipTests` are among the 89
+passed; the failure list contains no `ProcessOwnershipTests` entries. The 4 failures are the same pre-existing,
+structurally-unrelated signatures recorded on the earlier final-gate run in this file:
+`CorpusMediatRTests.OrderingDraftRouteReachesExactMediatRHandlerWithoutPipelineClaim` (`SD1102` multi-SDK
+MSBuildLocator conflict) and 3 `ServiceClientExternalCorpusTests` tests (external-corpus `SD4011`/empty-wording
+drift). The structural proof recorded earlier in this file (`git diff --name-only ab6e3e1..HEAD -- src/ tests/`
+touching zero `src/**` files and none of these failing tests' own files) still applies unchanged — this repair
+chain only ever touched `ProcessOwnership.cs`, `ProcessOwnershipTests.cs`, and the stub `Program.cs`.
+
+Observation, not a claim either way: the earlier final-gate run on this branch also showed a 5th failure,
+`PersistenceAcceptanceTests.GetMeaningPersistenceFactsReachDiagramAndMarkdownDeterministically` (an MSBuild
+incremental-cache collision inside a reused local fixture-build directory this checkpoint's files do not touch).
+That failure did not recur on this run — consistent with a transient local-build artifact rather than a
+deterministic regression, but recorded plainly rather than asserted with certainty.
+
+Total test count in this project rose from 75 (prior final-gate run) to 93 (this run), a difference of exactly 18 —
+matching `ProcessOwnershipTests` growing from 28 to 46 (also +18) through the F1-F13 repair. No other test in the
+project changed count.
+
+This result is not characterized as "passed" — 4 of 93 tests failed. The disposition is that those 4 failures are
+pre-existing and unrelated to this checkpoint, evidenced structurally and by matching documented precedent, not
+that the gate command exited cleanly.
