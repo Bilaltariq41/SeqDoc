@@ -232,3 +232,28 @@ project changed count.
 This result is not characterized as "passed" — 4 of 93 tests failed. The disposition is that those 4 failures are
 pre-existing and unrelated to this checkpoint, evidenced structurally and by matching documented precedent, not
 that the gate command exited cleanly.
+
+## GH-106 takeover focused evidence
+
+The declared focused command completed with literal result: `Failed 0, Passed 52, Skipped 0, Total 52` on resolved
+SDK `10.0.302`. The isolated-runtime test uses only explicit `DOTNET_ROOT_X64`/`DOTNET_ROOT` values and excludes
+`PATH` from the child environment. The evidence shell reported `DOTNET_ROOT=` and `DOTNET_ROOT_X64=`. No final
+unfiltered gate, commit, push, lifecycle transition, or independent-review claim was made.
+
+## GH-106 takeover review and block
+
+The worker Reviewer inspected the complete local takeover candidate after the 52/52 focused result. Verdict:
+`BLOCK` under the frozen takeover stop rule. No final gate ran and no further automatic repair is authorized.
+
+| Finding | Severity | Disposition |
+|---|---|---|
+| I100-A-F1 — `Terminate()` is outside the lifecycle lock and can race `Dispose()` while the job handle is released or reused. | High | Unresolved; blocked. |
+| I100-A-F2 — failed-termination and disposal paths close drain handles while managed drain tasks may still use them. | High | Unresolved; blocked. |
+| I100-A-F3 — explicit `Terminate()` and disposal without `WaitAsync` do not establish bounded `ACTIVE_PROCESS_ZERO` evidence before returning or releasing resources. | High | Unresolved; blocked. |
+| I100-A-F4 — construction unwind ignores false timed `Task.Wait` results and can continue releasing resources while background work remains live. | High | Unresolved; blocked. |
+| I100-A-F5 — `PeekNamedPipe` failure is represented as clean EOF rather than incomplete output with native evidence. | Medium | Unresolved. |
+| I100-A-F6 — failure tracking and the returned secondary-evidence list are mutable and unsynchronized across wait, terminate, and dispose races. | Medium | Unresolved. |
+| I100-A-F7 — the runtime test does not prove an isolated official SDK/runtime launch, and its nonempty-root precondition conflicts with the recorded empty shell variables. | Medium | Unresolved; the 52/52 result is not accepted as proof of outcome 10. |
+
+Scope remained inside the takeover allowlist. The worktree and both PR histories are preserved; PR #108 and Qais's
+branch remain untouched. GH-107 stays blocked on an accepted contained-process contract.

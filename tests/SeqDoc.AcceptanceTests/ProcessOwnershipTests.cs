@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using RuntimeArchitecture = System.Runtime.InteropServices.Architecture;
 using Xunit;
 
@@ -275,6 +276,80 @@ public sealed class ProcessOwnershipTests
         }
     }
 
+    [Fact]
+    public async Task ParentExitWithDescendantPipeClosureStillTerminatesFamilyAndProvesActiveZero()
+    {
+        string markerPath = Path.Combine(Path.GetTempPath(), $"seqdoc-i100a-closepipes-{Guid.NewGuid():N}.marker");
+        var result = ContainedProcess.Start(NewOptions(["spawn-grandchild-closes-pipes", markerPath, "8000"]));
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        try
+        {
+            await WaitForFileToExistAsync(markerPath, TimeSpan.FromSeconds(5));
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+
+            Assert.True(process.TerminateJobObjectWasCalled,
+                "EOF from the descendant must not be mistaken for family exit.");
+            Assert.True(wait.ActiveProcessZeroObserved);
+            Assert.False(File.Exists(markerPath + ".completed"));
+        }
+        finally
+        {
+            File.Delete(markerPath);
+            File.Delete(markerPath + ".completed");
+        }
+    }
+
+    [Fact]
+    public async Task FailedTerminationWithOpenPipeIsBoundedAndRetainsOrderedSecondaryEvidence()
+    {
+        var options = NewOptions(
+            ["sleep", "8000"],
+            nativeCalls: new ProcessOwnershipNativeCalls
+            {
+                TerminateJobObject = (_, _) => NativeCallResult.Failure(5),
+            });
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        process.ActiveProcessZeroBoundForTests = TimeSpan.FromMilliseconds(100);
+
+        Task<ProcessOwnershipWaitResult> waitTask = process.WaitAsync(TimeSpan.FromMilliseconds(300), CancellationToken.None);
+        try
+        {
+            Task completed = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(6)));
+            Assert.Same(waitTask, completed);
+            var wait = await waitTask;
+            Assert.Equal(ProcessOwnershipFailureClass.TimedOut, wait.FailureClass);
+            Assert.True(wait.StdOut.Truncated || wait.StdErr.Truncated);
+            int terminateEvidence = IndexOfEvidence(wait.SecondaryFailures, "TerminateJobObject", "5");
+            int familyEvidence = IndexOfEvidence(wait.SecondaryFailures, "ACTIVE_PROCESS_ZERO");
+            Assert.True(terminateEvidence >= 0);
+            Assert.True(familyEvidence > terminateEvidence);
+        }
+        finally { process.Terminate(); }
+    }
+
+    [Fact]
+    public async Task DisposeCoordinatesWithConcurrentWaitAndIsIdempotent()
+    {
+        var result = ContainedProcess.Start(NewOptions(["sleep", "5000"]));
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        Task<ProcessOwnershipWaitResult> waitTask = process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        process.Dispose();
+        process.Dispose();
+
+        Task completed = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(10)));
+        Assert.Same(waitTask, completed);
+        var wait = await waitTask;
+        Assert.True(wait.ActiveProcessZeroObserved);
+        Assert.All(new[] { process.StdOutDrainTaskForTests, process.StdErrDrainTaskForTests, process.CompletionMonitorTaskForTests },
+            task => Assert.True(task is null || task.IsCompleted));
+        process.Dispose();
+    }
+
     // ---- Group 6: complete concurrent stdout/stderr drain under load ---------------------------------
 
     [Fact]
@@ -505,12 +580,14 @@ public sealed class ProcessOwnershipTests
         // TerminateJobObject call, so the sleeping child is never actually terminated during WaitAsync
         // itself — WaitAsync's own drain-await only unblocks once the child exits naturally, so a
         // deliberately short sleep (well past the 300ms timeout, but not 10s) keeps this test fast.
-        var options = NewOptions(["sleep", "2000"]);
+        var options = NewOptions(["sleep", "2000"], nativeCalls: new ProcessOwnershipNativeCalls
+        {
+            TerminateJobObject = (_, _) => NativeCallResult.Failure(5),
+        });
         var result = ContainedProcess.Start(options);
         Assert.True(result.Succeeded, result.Detail);
         using var process = result.Process!;
 
-        ContainedProcess.TerminateJobObjectOverrideForTests = (_, _) => false;
         try
         {
             var wait = await process.WaitAsync(TimeSpan.FromMilliseconds(300), CancellationToken.None);
@@ -520,8 +597,6 @@ public sealed class ProcessOwnershipTests
         }
         finally
         {
-            ContainedProcess.TerminateJobObjectOverrideForTests = null;
-
             // The override made every in-band TerminateJobObject call a no-op, so the sleeping child is
             // still alive; clean it up for real now that the override is cleared.
             process.Terminate();
@@ -532,22 +607,100 @@ public sealed class ProcessOwnershipTests
     public async Task WaitForSingleObjectFailureRecordsProcessFailedDistinctFromGenuineTimeout()
     {
         // GH106-R2-F5: WAIT_FAILED/WAIT_ABANDONED must not be misreported as TimedOut.
-        var options = NewOptions(["sleep", "5000"]);
+        var options = NewOptions(["sleep", "5000"], nativeCalls: new ProcessOwnershipNativeCalls
+        {
+            WaitForSingleObject = (_, _) => NativeWaitResult.Failed(1234),
+        });
         var result = ContainedProcess.Start(options);
         Assert.True(result.Succeeded, result.Detail);
         using var process = result.Process!;
 
-        ContainedProcess.WaitForSingleObjectOverrideForTests = (_, _) => NativeMethods.WAIT_FAILED;
         try
         {
             var wait = await process.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
 
             Assert.Equal(ProcessOwnershipFailureClass.ProcessFailed, wait.FailureClass);
+            Assert.False(wait.TimedOut);
+            Assert.False(wait.Cancelled);
+            Assert.Contains("1234", wait.Detail, StringComparison.Ordinal);
         }
-        finally
+        finally { }
+    }
+
+    [Fact]
+    public void ConstructionPhaseFailuresLeaveObservableEvidenceWithoutAbandonedTasks()
+    {
+        foreach (var mode in new[] { "assign", "resume-or-await" })
         {
-            ContainedProcess.WaitForSingleObjectOverrideForTests = null;
+            var options = NewOptions(["sleep", "1000"], nativeCalls: new ProcessOwnershipNativeCalls
+            {
+                AssignProcessToJobObject = mode == "assign"
+                    ? (_, _) => NativeCallResult.Failure(87)
+                    : null,
+                ResumeThread = mode == "resume-or-await"
+                    ? _ => NativeCallResult<uint>.Failure(995)
+                    : null,
+                TerminateJobObject = (_, _) => NativeCallResult.Failure(5),
+                WaitForSingleObject = (_, _) => NativeWaitResult.Failed(6),
+            });
+            var result = ContainedProcess.Start(options);
+            Assert.False(result.Succeeded);
+            Assert.Equal(ProcessOwnershipFailureClass.ProcessConstructionFailed, result.FailureClass);
+            Assert.NotNull(result.Detail);
         }
+    }
+
+    [Fact]
+    public async Task LaterCleanupFailureDoesNotReplacePrimaryFailureAndIsOrdered()
+    {
+        var options = NewOptions(["sleep", "5000"], nativeCalls: new ProcessOwnershipNativeCalls
+        {
+            TerminateJobObject = (_, _) => NativeCallResult.Failure(4321),
+        });
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        try
+        {
+            var wait = await process.WaitAsync(TimeSpan.FromMilliseconds(100), CancellationToken.None);
+            Assert.Equal(ProcessOwnershipFailureClass.TimedOut, wait.FailureClass);
+            Assert.True(IndexOfEvidence(wait.SecondaryFailures, "4321") >= 0);
+        }
+        finally { }
+    }
+
+    [Fact]
+    public async Task ExplicitRuntimeDiscoveryVariablesArePassedWithoutAmbientLeakage()
+    {
+        var environment = DefaultEnvironment();
+        string? rootX64 = Environment.GetEnvironmentVariable("DOTNET_ROOT_X64");
+        string? root = Environment.GetEnvironmentVariable("DOTNET_ROOT");
+        Assert.True(!string.IsNullOrWhiteSpace(rootX64) || !string.IsNullOrWhiteSpace(root),
+            "The official isolated SDK 10.0.302 lane must provide DOTNET_ROOT_X64 and/or DOTNET_ROOT.");
+        if (rootX64 is not null)
+        {
+            environment["DOTNET_ROOT_X64"] = rootX64;
+        }
+
+        if (root is not null)
+        {
+            environment["DOTNET_ROOT"] = root;
+        }
+        string variable = rootX64 is not null ? "DOTNET_ROOT_X64" : "DOTNET_ROOT";
+        string expected = environment[variable];
+        var result = ContainedProcess.Start(NewOptions(["print-env", variable], environment));
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+        Assert.Equal(expected, wait.StdOut.Text);
+        Assert.DoesNotContain("PATH", environment.Keys, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Utf8DecoderReassemblesACharacterAcrossControlledChunks()
+    {
+        Assert.Equal("prefix€suffix", ProcessOwnershipEncoding.DecodeUtf8Chunks(
+            [Encoding.UTF8.GetBytes("prefix"), [0xE2], [0x82, 0xAC, .. Encoding.UTF8.GetBytes("suffix")]]));
     }
 
     [Fact]
@@ -644,36 +797,6 @@ public sealed class ProcessOwnershipTests
         // requires — asserting on the raw pre-marshaling string here, not the native buffer.
         Assert.EndsWith("\0", block, StringComparison.Ordinal);
         Assert.False(block.EndsWith("\0\0", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task Utf8MultibyteCharacterStraddling64KiBReadBoundaryDecodesCorrectly()
-    {
-        // GH106-R2-F10 follow-up: a non-overlapped anonymous-pipe ReadFile returns as soon as any data is
-        // available, not only once a full 64 KiB buffer fills, so the byte offset any given DrainPipe
-        // Read() call actually returns at is governed by the OS pipe's own buffer size/scheduling — not by
-        // the stub's chosen 65535-byte filler length — unless the pipe buffer is made large enough to hold
-        // the whole payload atomically. Force that here so the split is guaranteed, by construction, to
-        // land exactly at the stub's chosen offset, straddling DrainPipe's 64 KiB read boundary.
-        ContainedProcess.PipeBufferSizeOverrideForTests = 80000;
-        try
-        {
-            var options = NewOptions(["utf8-boundary"]);
-            var result = ContainedProcess.Start(options);
-            Assert.True(result.Succeeded, result.Detail);
-            using var process = result.Process!;
-
-            var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
-
-            Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
-            Assert.False(wait.StdOut.Truncated);
-            string expected = new string('x', 65535) + "€" + "-MARKER-END";
-            Assert.Equal(expected, wait.StdOut.Text);
-        }
-        finally
-        {
-            ContainedProcess.PipeBufferSizeOverrideForTests = null;
-        }
     }
 
     [Fact]
@@ -835,13 +958,15 @@ public sealed class ProcessOwnershipTests
     private static ProcessOwnershipOptions NewOptions(
         IReadOnlyList<string> arguments,
         Dictionary<string, string>? environment = null,
-        TimeSpan? drainTimeout = null) =>
+        TimeSpan? drainTimeout = null,
+        ProcessOwnershipNativeCalls? nativeCalls = null) =>
         new()
         {
             ExecutablePath = StubExecutablePath,
             Arguments = arguments,
             Environment = environment ?? DefaultEnvironment(),
             DrainTimeout = drainTimeout ?? TimeSpan.FromSeconds(30),
+            NativeCalls = nativeCalls,
         };
 
     /// <summary>GH106-R2-F8 helper: an "echo" child whose only purpose is exercising a rejected environment vector.</summary>
@@ -906,6 +1031,7 @@ public sealed class ProcessOwnershipTests
         return stubPath;
     }
 
+
     private static Task WaitForFileToExistAsync(string path, TimeSpan timeout) =>
         WaitForConditionOrThrowAsync(() => File.Exists(path), timeout);
 
@@ -934,5 +1060,18 @@ public sealed class ProcessOwnershipTests
         }
 
         return count;
+    }
+
+    private static int IndexOfEvidence(IReadOnlyList<string> evidence, params string[] fragments)
+    {
+        for (int i = 0; i < evidence.Count; i++)
+        {
+            if (fragments.All(fragment => evidence[i].Contains(fragment, StringComparison.Ordinal)))
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 }

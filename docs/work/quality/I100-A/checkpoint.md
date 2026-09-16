@@ -2,7 +2,7 @@
 
 ## State
 
-`ResolvingFindings`
+`Blocked`
 
 ## Authority and frozen state
 
@@ -240,3 +240,19 @@ finding-by-finding root cause and proof:
 Stop rather than broaden scope if safe assignment-before-resume cannot be proved, output cannot be drained without
 deadlock, containment would affect unrelated processes, required behavior needs production/build/configuration
 changes, or the supported Windows x64 lane is unavailable.
+
+## Takeover focused evidence
+
+The declared focused command completed with literal result: `Failed 0, Passed 52, Skipped 0, Total 52` on resolved
+SDK `10.0.302`. The isolated-runtime test uses only explicit `DOTNET_ROOT_X64`/`DOTNET_ROOT` values and excludes
+`PATH` from the child environment. The evidence shell reported `DOTNET_ROOT=` and `DOTNET_ROOT_X64=`; no machine
+path is recorded. The final unfiltered gate was not run.
+
+## Takeover review result
+
+The complete candidate received a `BLOCK` verdict. Four High findings remain: unsynchronized `Terminate()` versus
+resource release, drain handles closed beneath live tasks, missing bounded family-zero proof in explicit termination
+and disposal, and ignored false timed waits during construction unwind. Three Medium findings cover `PeekNamedPipe`
+error overclaim, unsynchronized mutable secondary evidence, and an isolated-runtime test/evidence contradiction.
+Under the frozen takeover stop rule, no further automatic repair or final gate is permitted. See `ledger.md` for the
+finding table.

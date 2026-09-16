@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace SeqDoc.AcceptanceTests.ProcessOwnershipStub;
 
@@ -48,12 +47,14 @@ internal static class Program
                     return RunSleepWithMarker(args);
                 case "spawn-grandchild":
                     return RunSpawnGrandchild(args);
+                case "spawn-grandchild-closes-pipes":
+                    return RunSpawnGrandchildClosesPipes(args);
+                case "close-pipes-and-sleep":
+                    return RunClosePipesAndSleep(args);
                 case "print-env":
                     return RunPrintEnv(args);
                 case "read-stdin-to-eof":
                     return RunReadStdinToEof();
-                case "utf8-boundary":
-                    return RunUtf8Boundary();
                 case "exitcode":
                     return int.Parse(args[1]);
                 default:
@@ -92,33 +93,6 @@ internal static class Program
         string all = Console.In.ReadToEnd();
         Console.Out.Write($"READ-COMPLETE:{all.Length}");
         Console.Out.Flush();
-        return 0;
-    }
-
-    // utf8-boundary — GH106-R2-F10: writes a single atomic payload comprising exactly 65535 single-byte
-    // filler bytes, followed by a 3-byte UTF-8 character (so its first byte lands at offset 65535), followed
-    // by a trailing marker. The caller (see ContainedProcess.PipeBufferSizeOverrideForTests in
-    // ProcessOwnershipTests.cs) forces the pipe's buffer large enough to hold this whole payload atomically,
-    // so the split is guaranteed, by construction, to land exactly at that offset, straddling DrainPipe's
-    // real 64 KiB read boundary.
-    private static int RunUtf8Boundary()
-    {
-        using var stdout = Console.OpenStandardOutput();
-        var filler = new byte[65535];
-        Array.Fill(filler, (byte)'x');
-
-        byte[] straddling = Encoding.UTF8.GetBytes("€");
-        byte[] marker = Encoding.UTF8.GetBytes("-MARKER-END");
-
-        // Combine all three parts into a single payload for atomicity.
-        byte[] payload = new byte[filler.Length + straddling.Length + marker.Length];
-        Buffer.BlockCopy(filler, 0, payload, 0, filler.Length);
-        Buffer.BlockCopy(straddling, 0, payload, filler.Length, straddling.Length);
-        Buffer.BlockCopy(marker, 0, payload, filler.Length + straddling.Length, marker.Length);
-
-        // Issue a single write call for the entire payload, making partial-payload reads structurally impossible.
-        stdout.Write(payload, 0, payload.Length);
-        stdout.Flush();
         return 0;
     }
 
@@ -250,4 +224,42 @@ internal static class Program
         Console.Out.Flush();
         return 0;
     }
+
+    // Parent exits after starting a descendant which closes both inherited output handles but remains
+    // alive.  This separates pipe EOF from family exit and makes the ownership assertion deterministic.
+    private static int RunSpawnGrandchildClosesPipes(string[] args)
+    {
+        string markerPath = args[1];
+        string milliseconds = args[2];
+        string selfPath = Environment.ProcessPath
+            ?? throw new InvalidOperationException("Environment.ProcessPath is unavailable.");
+
+        var startInfo = new ProcessStartInfo(selfPath) { UseShellExecute = false };
+        startInfo.ArgumentList.Add("close-pipes-and-sleep");
+        startInfo.ArgumentList.Add(markerPath);
+        startInfo.ArgumentList.Add(milliseconds);
+        using var grandchild = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Could not start grandchild.");
+
+        Console.Out.WriteLine("parent-exited");
+        Console.Out.Flush();
+        return 0;
+    }
+
+    private static int RunClosePipesAndSleep(string[] args)
+    {
+        File.WriteAllText(args[1], Environment.ProcessId.ToString());
+        CloseHandle(GetStdHandle(-11));
+        CloseHandle(GetStdHandle(-12));
+        Thread.Sleep(int.Parse(args[2]));
+        File.WriteAllText(args[1] + ".completed", Environment.ProcessId.ToString());
+        return 0;
+    }
+
+    [DllImport("kernel32.dll")]
+    private static extern nint GetStdHandle(int standardHandle);
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(nint handle);
 }
