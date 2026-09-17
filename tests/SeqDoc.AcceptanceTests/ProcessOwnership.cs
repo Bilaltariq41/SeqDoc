@@ -89,6 +89,7 @@ internal sealed class ProcessOwnershipNativeCalls
     internal Func<nint, uint, NativeCallResult>? TerminateProcess { get; init; }
     internal Func<nint, NativeCallResult<uint>>? PeekNamedPipe { get; init; }
     internal Func<nint, NativeCallResult>? CloseHandle { get; init; }
+    internal Func<nint, NativeCallResult>? InitializeProcThreadAttributeList { get; init; }
 }
 
 public sealed class ProcessOwnershipConstructionResult
@@ -328,6 +329,7 @@ public sealed class ContainedProcess : IDisposable
         FamilyProofCompleted,
         FamilyProofFailed,
         DisposalInProgress,
+        FamilyResourcesRetained,
         Disposed,
         ConstructionUnwind,
     }
@@ -362,6 +364,10 @@ public sealed class ContainedProcess : IDisposable
     private bool _drainCompletionEvaluated;
     private bool _terminalRequiredByDrainCompletion;
     private bool _terminateJobObjectCalled;
+    private bool _familyProofFailureRecorded;
+    private bool _familyRetentionEvidenceRecorded;
+    private bool _managedLifecycleFailureRecorded;
+    private bool _teardownSummaryRecorded;
     private LifecycleState _lifecycleState = LifecycleState.Running;
     private readonly object _lifecycleGate = new();
     private readonly object _teardownEvidenceGate = new();
@@ -422,6 +428,22 @@ public sealed class ContainedProcess : IDisposable
     internal bool TerminateJobObjectWasCalled => _terminateJobObjectCalled;
 
     internal nint ProcessHandleForTests => _processHandle;
+
+    internal bool HasRetainedFamilyResourcesForTests
+    {
+        get
+        {
+            lock (_lifecycleGate)
+            {
+                return _lifecycleState == LifecycleState.FamilyResourcesRetained
+                    && _processHandle != nint.Zero
+                    && _completionPortHandle != nint.Zero
+                    && _jobHandle != nint.Zero;
+            }
+        }
+    }
+
+    internal static Action<nint>? AttributeListDeleteObserverForTests { get; set; }
 
     internal nint StdOutChildHandleValueForTests { get; private set; }
 
@@ -694,10 +716,11 @@ public sealed class ContainedProcess : IDisposable
         Marshal.WriteIntPtr(jobListBuffer, jobHandle);
         PushUnwind("job list buffer", () => Marshal.FreeHGlobal(jobListBuffer));
 
-        nint attributeListBuffer = BuildAttributeList(handleListBuffer, inheritable.Length, jobListBuffer, unwind);
+        nint attributeListBuffer = BuildAttributeList(
+            handleListBuffer, inheritable.Length, jobListBuffer, unwind, options.NativeCalls);
         PushUnwind("attribute list buffer", () =>
         {
-            NativeMethods.DeleteProcThreadAttributeList(attributeListBuffer);
+            DeleteAttributeList(attributeListBuffer);
             Marshal.FreeHGlobal(attributeListBuffer);
         });
 
@@ -1092,7 +1115,14 @@ public sealed class ContainedProcess : IDisposable
             // disposal had begun but before DisposeCoreAsync reached its first lifecycle lock.
             if (_disposeTask is null)
             {
+                bool retryRetainedProof = _lifecycleState == LifecycleState.FamilyResourcesRetained;
                 _lifecycleState = LifecycleState.DisposalInProgress;
+                if (retryRetainedProof)
+                {
+                    // The previous bounded proof attempt is no longer authoritative: a completion
+                    // notification may have arrived while the retained state was idle.
+                    _familyProofTask = null;
+                }
                 _disposeTask = Task.Run(DisposeCoreAsync);
             }
 
@@ -1108,16 +1138,28 @@ public sealed class ContainedProcess : IDisposable
         {
             await EnsureTerminalAsync().ConfigureAwait(false);
         }
-        await EnsureFamilyProofAsync().ConfigureAwait(false);
+        bool familyProven = await EnsureFamilyProofAsync().ConfigureAwait(false);
         _drainCts?.Cancel();
         bool drainsComplete = await AwaitTaskBounded(_stdOutDrain, _constructionCleanupBound).ConfigureAwait(false)
             & await AwaitTaskBounded(_stdErrDrain, _constructionCleanupBound).ConfigureAwait(false);
-        _completionMonitorCts?.Cancel();
+        if (familyProven)
+        {
+            _completionMonitorCts?.Cancel();
+        }
         bool monitorComplete = await AwaitTaskBounded(_completionMonitor, _constructionCleanupBound).ConfigureAwait(false);
         if (!drainsComplete || !monitorComplete)
         {
-            _failures.Record(ProcessOwnershipFailureClass.DrainIncomplete,
-                "Managed lifecycle work did not quiesce within the cleanup bound; owned handles were retained.");
+            bool recordLifecycleFailure;
+            lock (_lifecycleGate)
+            {
+                recordLifecycleFailure = !_managedLifecycleFailureRecorded;
+                _managedLifecycleFailureRecorded = true;
+            }
+            if (recordLifecycleFailure)
+            {
+                _failures.Record(ProcessOwnershipFailureClass.DrainIncomplete,
+                    "Managed lifecycle work did not quiesce within the cleanup bound; owned handles were retained.");
+            }
         }
 
         // WaitCore can still be between its process wait and GetExitCodeProcess/Job Object accounting.
@@ -1142,27 +1184,55 @@ public sealed class ContainedProcess : IDisposable
         }
         else if (waitTask is not null)
         {
-            _failures.Record(ProcessOwnershipFailureClass.TeardownDegraded,
-                $"WaitAsync did not quiesce within {_constructionCleanupBound}; process and job handles were retained.");
+            bool recordWaitFailure;
+            lock (_lifecycleGate)
+            {
+                recordWaitFailure = !_managedLifecycleFailureRecorded;
+                _managedLifecycleFailureRecorded = true;
+            }
+            if (recordWaitFailure)
+            {
+                _failures.Record(ProcessOwnershipFailureClass.TeardownDegraded,
+                    $"WaitAsync did not quiesce within {_constructionCleanupBound}; process and job handles were retained.");
+            }
         }
 
         // A live wait is the last permitted user of the process handle; the completion monitor is the
         // corresponding last user of the job handle.  Retain both when either proof is incomplete rather
         // than reporting successful teardown after closing beneath live work.
-        bool familyProven = await EnsureFamilyProofAsync(CancellationToken.None).ConfigureAwait(false);
+        familyProven = await EnsureFamilyProofAsync(CancellationToken.None).ConfigureAwait(false);
         bool nativeHandlesSafe = familyProven && waitComplete && monitorComplete;
         if (!familyProven)
         {
-            lock (_teardownEvidenceGate)
+            bool recordRetention;
+            lock (_lifecycleGate)
             {
-                _teardownFailures.Add(
+                recordRetention = !_familyRetentionEvidenceRecorded;
+                _familyRetentionEvidenceRecorded = true;
+            }
+            if (recordRetention)
+            {
+                lock (_teardownEvidenceGate)
+                {
+                    _teardownFailures.Add(
+                        "ACTIVE_PROCESS_ZERO was not proven; retained process handle, completion port handle, and job handle.");
+                }
+                _failures.Record(ProcessOwnershipFailureClass.TeardownDegraded,
                     "ACTIVE_PROCESS_ZERO was not proven; retained process handle, completion port handle, and job handle.");
             }
-            _failures.Record(ProcessOwnershipFailureClass.TeardownDegraded,
-                "ACTIVE_PROCESS_ZERO was not proven; retained process handle, completion port handle, and job handle.");
         }
-        _completionMonitorCts?.Dispose();
-        _drainCts?.Dispose();
+        if (familyProven && monitorComplete)
+        {
+            CancellationTokenSource? completionMonitorCts = _completionMonitorCts;
+            _completionMonitorCts = null;
+            completionMonitorCts?.Dispose();
+        }
+        if (drainsComplete)
+        {
+            CancellationTokenSource? drainCts = _drainCts;
+            _drainCts = null;
+            drainCts?.Dispose();
+        }
         if (nativeHandlesSafe)
         {
             CloseTracked(ref _processHandle, "process handle");
@@ -1188,10 +1258,26 @@ public sealed class ContainedProcess : IDisposable
         lock (_teardownEvidenceGate) { teardownFailures = _teardownFailures.ToArray(); }
         if (teardownFailures.Length > 0)
         {
-            _failures.Record(ProcessOwnershipFailureClass.TeardownDegraded,
-                $"{teardownFailures.Length} teardown step(s) failed: {string.Join("; ", teardownFailures)}");
+            bool recordSummary;
+            lock (_lifecycleGate)
+            {
+                recordSummary = !_teardownSummaryRecorded;
+                _teardownSummaryRecorded = true;
+            }
+            if (recordSummary)
+            {
+                _failures.Record(ProcessOwnershipFailureClass.TeardownDegraded,
+                    $"{teardownFailures.Length} teardown step(s) failed: {string.Join("; ", teardownFailures)}");
+            }
         }
-        lock (_lifecycleGate) { _lifecycleState = LifecycleState.Disposed; }
+        lock (_lifecycleGate)
+        {
+            bool familyHandlesRetained = !nativeHandlesSafe;
+            _lifecycleState = familyHandlesRetained
+                ? LifecycleState.FamilyResourcesRetained
+                : LifecycleState.Disposed;
+            _disposeTask = null;
+        }
     }
 
     private Task<bool> EnsureTerminalAsync()
@@ -1299,14 +1385,20 @@ public sealed class ContainedProcess : IDisposable
         bool proven = _activeProcessZeroObserved && !_completionObservationStoppedForTests;
         if (!proven)
         {
-            _failures.Record(ProcessOwnershipFailureClass.ProcessFailed,
-                "Family exit could not be proven within the bound: ACTIVE_PROCESS_ZERO was not observed.");
+            bool recordFailure;
             lock (_lifecycleGate)
             {
+                recordFailure = !_familyProofFailureRecorded;
+                _familyProofFailureRecorded = true;
                 if (_lifecycleState != LifecycleState.DisposalInProgress)
                 {
                     _lifecycleState = LifecycleState.FamilyProofFailed;
                 }
+            }
+            if (recordFailure)
+            {
+                _failures.Record(ProcessOwnershipFailureClass.ProcessFailed,
+                    "Family exit could not be proven within the bound: ACTIVE_PROCESS_ZERO was not observed.");
             }
         }
         else
@@ -1319,7 +1411,12 @@ public sealed class ContainedProcess : IDisposable
                 }
             }
         }
-        _completionMonitorCts?.Cancel();
+        if (proven)
+        {
+            // Once ACTIVE_PROCESS_ZERO is proven, no later completion notification is needed.
+            // On failure, retain the monitor so a later retained-state retry can still observe it.
+            _completionMonitorCts?.Cancel();
+        }
         return proven;
     }
 
@@ -1436,7 +1533,7 @@ public sealed class ContainedProcess : IDisposable
         {
             if (deleteAttributeList)
             {
-                NativeMethods.DeleteProcThreadAttributeList(toFree);
+                DeleteAttributeList(toFree);
             }
 
             Marshal.FreeHGlobal(toFree);
@@ -1730,17 +1827,25 @@ public sealed class ContainedProcess : IDisposable
     }
 
     private static nint BuildAttributeList(
-        nint handleListBuffer, int handleCount, nint jobListBuffer, Stack<Action> unwind)
+        nint handleListBuffer, int handleCount, nint jobListBuffer, Stack<Action> unwind,
+        ProcessOwnershipNativeCalls? nativeCalls)
     {
         nint listSize = nint.Zero;
         NativeMethods.InitializeProcThreadAttributeList(nint.Zero, 2, 0, ref listSize);
         nint attributeListBuffer = Marshal.AllocHGlobal(listSize);
+        bool initialized = false;
         try
         {
-            if (!NativeMethods.InitializeProcThreadAttributeList(attributeListBuffer, 2, 0, ref listSize))
+            NativeCallResult initialization = nativeCalls?.InitializeProcThreadAttributeList is { } initialize
+                ? initialize(attributeListBuffer)
+                : NativeMethods.InitializeProcThreadAttributeList(attributeListBuffer, 2, 0, ref listSize)
+                    ? NativeCallResult.Success()
+                    : NativeCallResult.Failure(Marshal.GetLastWin32Error());
+            if (!initialization.Succeeded)
             {
-                throw Win32("InitializeProcThreadAttributeList");
+                throw Win32("InitializeProcThreadAttributeList", initialization.Win32Error);
             }
+            initialized = true;
 
             if (!NativeMethods.UpdateProcThreadAttribute(
                 attributeListBuffer, 0, NativeMethods.PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
@@ -1756,10 +1861,19 @@ public sealed class ContainedProcess : IDisposable
         }
         catch
         {
-            NativeMethods.DeleteProcThreadAttributeList(attributeListBuffer);
+            if (initialized)
+            {
+                DeleteAttributeList(attributeListBuffer);
+            }
             Marshal.FreeHGlobal(attributeListBuffer);
             throw;
         }
+    }
+
+    private static void DeleteAttributeList(nint attributeList)
+    {
+        AttributeListDeleteObserverForTests?.Invoke(attributeList);
+        NativeMethods.DeleteProcThreadAttributeList(attributeList);
     }
 
     private static Win32Exception Win32(string apiName) =>
