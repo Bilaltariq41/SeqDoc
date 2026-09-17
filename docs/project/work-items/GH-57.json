@@ -3,26 +3,115 @@
   "branch": "feature/issue-57-transactional-project-operations",
   "checkpointId": "G57-TPO",
   "checkpointPath": "docs/work/governance/G57-TPO",
+  "claims": [
+    {
+      "kind": "exclusive",
+      "value": "execution"
+    },
+    {
+      "kind": "exclusive",
+      "value": "github-projection"
+    },
+    {
+      "kind": "exclusive",
+      "value": "registry"
+    },
+    {
+      "kind": "governance-tool",
+      "value": "tools/governance/work_state.py"
+    },
+    {
+      "kind": "path",
+      "value": ".github/workflows/work-state.yml"
+    },
+    {
+      "kind": "path",
+      "value": "agents.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/delegated-contribution-workflow.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/execution.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/issue-readiness.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/project-operations.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/work-items/gh-57.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/work-state.schema.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/workflow.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/readme.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/work/governance/g57-tpo/checkpoint.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/work/governance/g57-tpo/ledger.md"
+    },
+    {
+      "kind": "path",
+      "value": "tests/governance/test_work_state.py"
+    },
+    {
+      "kind": "path",
+      "value": "tools/governance/work_state.py"
+    }
+  ],
   "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
   "dependencies": [],
+  "executionId": "GH-57:G57-TPO",
   "expectedGithubState": "OPEN",
   "id": "GH-57",
   "kind": "github-issue",
-  "lifecycle": "Blocked",
-  "lifecycleLabel": "blocked",
-  "nextAction": "Repository owner posts the exact Issue #57 takeover authorization marker for the blocked commit; then run authenticated resume.",
+  "lifecycle": "ResolvingFindings",
+  "lifecycleLabel": "resolving-findings",
+  "nextAction": "Run focused verification and independent complete-candidate rereview; do not run the final gate until all findings are resolved.",
   "number": 57,
   "owner": "ahmad",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
   "schemaVersion": 1,
-  "selectedForExecution": false,
+  "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
-  "statusReason": "Authenticated owner authorization is required before the bounded takeover can resume. Await an exact owner-authored Issue #57 authorization marker bound to the next start head.",
+  "statusReason": "Abood-essa and Qhatahet authorized the bounded maintainer takeover through exact authenticated Issue #57 receipts.",
   "takeover": {
-    "authorizationReceipt": "owner-conversation-2026-09-17:GH-57:bounded-maintainer-takeover",
-    "reason": "Owner authorized bounded maintainer takeover and transactional resume.",
-    "startHead": "d3110626d011b46729f8fcf3c4c33e359341a4d5"
+    "authorizationHead": "07319b35ad2d7c1d2ee12f6c1438ad0e13e7afde",
+    "authorizationReceipts": [
+      {
+        "authorizationDigest": "afdfae732f342f9552df4e4148e205ca2e507b89761f31087bada5588774d27d",
+        "authorizedBy": "Abood-essa",
+        "url": "https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5713964023"
+      },
+      {
+        "authorizationDigest": "ef811c949096f6c0101920d33a45186a001a62179390de033d970d5f9c808348",
+        "authorizedBy": "Qhatahet",
+        "url": "https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5714397001"
+      }
+    ],
+    "mode": "two-peer",
+    "reason": "Abood-essa and Qhatahet authorized the bounded maintainer takeover through exact authenticated Issue #57 receipts.",
+    "startHead": "5ab1b19027339aabfd8175317b31e0afe5e9cc3d"
   },
   "title": "[Governance] Transactional project operations and repository-native handoff",
-  "track": "governance"
+  "track": "governance",
+  "worktreeId": "feature-issue-57-transactional-ops"
 }
