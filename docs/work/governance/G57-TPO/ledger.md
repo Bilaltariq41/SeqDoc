@@ -135,3 +135,10 @@ gate is claimed.
   computing actions; malformed or missing comments abort before any write subprocess, while empty and unrelated valid
   lists remain actionable.
 - These are repair dispositions only; no rereview or final gate is claimed.
+
+## Rereview finding repair (F11)
+
+- F11: **Fixed** — canonical binding validates source repository and issue number, and PR repository independently;
+  positive PR numbers are not required to equal issue numbers. Authenticated PR observation separately validates its
+  observed number against the PR URL, while all repository, receipt, and fail-closed checks remain intact.
+- This is a repair disposition only; no rereview or final gate is claimed.

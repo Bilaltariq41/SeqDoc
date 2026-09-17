@@ -90,7 +90,7 @@
   ],
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Resolve G57-TPO-F8 through F10 in one batch; rerun focused verification and independent rereview; do not run the final gate.",
+  "nextAction": "Resolve F11 with realistic Issue #57 and PR #110 coverage; rerun focused verification and independent rereview; do not run the final gate.",
   "schemaVersion": 2,
   "sourceId": "GH-57"
 }

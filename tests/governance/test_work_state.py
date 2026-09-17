@@ -183,7 +183,7 @@ class WorkStateTests(unittest.TestCase):
             item_path = candidate / "docs/project/work-items/A.json"
             item = json.loads(item_path.read_text(encoding="utf-8"))
             item.update(kind="github-issue", number=57, owner="assigned-collaborator", sourceUrl="https://github.com/repo-owner/r/issues/57",
-                        pr="https://github.com/repo-owner/r/pull/57",
+                        pr="https://github.com/repo-owner/r/pull/110",
                         expectedGithubState="OPEN", lifecycle="Blocked", lifecycleLabel="blocked")
             item["statusReason"] = "pending authorization"
             item_path.write_text(ws.dump(item), encoding="utf-8")
@@ -199,6 +199,23 @@ class WorkStateTests(unittest.TestCase):
                   "\nOperation: bounded maintainer takeover\n")
         authorization = {"html_url":receipt_url, "issue_url":"https://api.github.com/repos/repo-owner/r/issues/57",
                          "user":{"login":"Repo-Owner"}, "author_association":"OWNER", "body":marker.rstrip("\n")}
+        for source_url, pr_url, repository in (("https://github.com/repo-owner/r/issues/56", "https://github.com/repo-owner/r/pull/110", "repo-owner/r"),
+                                               ("https://github.com/repo-owner/r/issues/57", "https://github.com/other/r/pull/110", "repo-owner/r"),
+                                               ("https://github.com/other/r/issues/57", "https://github.com/other/r/pull/110", "repo-owner/r"),
+                                               ("https://github.com/repo-owner/r/issues/57", "https://github.com/repo-owner/r/pull/110", "other/r")):
+            bad_root, bad_original = blocked_root()
+            bad_path = bad_root / "docs/project/work-items/A.json"
+            bad_item = json.loads(bad_path.read_text(encoding="utf-8")); bad_item.update(sourceUrl=source_url, pr=pr_url)
+            bad_path.write_text(ws.dump(bad_item), encoding="utf-8")
+            before = {p:p.read_bytes() for p in bad_root.rglob("*") if p.is_file()}
+            with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)), \
+                 patch("subprocess.run", return_value=type("R",(),{"stdout":json.dumps(authorization)})()):
+                self.assertNotEqual(self.operation(bad_root, "resume", id="A", execution_id="takeover-1", worktree_id="resume-a",
+                                                   expected_baseline=bad_original["baseline"], current_head=start_head,
+                                                   current_branch="feature/a", clean=True, start_head=start_head, claim="repair.py",
+                                                   authorization_receipt=receipt_url, repository=repository,
+                                                   reason="resume", next_action="verify")[0], 0)
+            self.assertEqual(before, {p:p.read_bytes() for p in before})
         authorization_head = "07319b35ad2d7c1d2ee12f6c1438ad0e13e7afde"
         peer_urls = ["https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5713964023",
                      "https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5714397001"]
@@ -213,7 +230,7 @@ class WorkStateTests(unittest.TestCase):
                     (f"SEQDOC PEER TAKEOVER DECISION v1\nItem: A\nCheckpoint: A\nExecution: takeover-1\n"
                      f"Baseline: {'a'*40}\nBlocked head: {authorization_head}\nPeer: {login}\n"
                      "Decision: authorize bounded maintainer takeover\n")}
-        peer_pr = {"number":57, "url":"https://github.com/Bilaltariq41/SeqDoc/pull/57", "state":"OPEN", "isDraft":False,
+        peer_pr = {"number":110, "url":"https://github.com/Bilaltariq41/SeqDoc/pull/110", "state":"OPEN", "isDraft":False,
                    "author":{"login":"actual-pr-author", "id":"U_pr", "is_bot":False, "name":"PR Author"},
                    "headRefOid":start_head, "mergeCommit":None, "reviewDecision":None}
         def peer_run(command, *args, **kwargs):
@@ -229,7 +246,7 @@ class WorkStateTests(unittest.TestCase):
         peer_item_path = peer_root / "docs/project/work-items/A.json"
         peer_item = json.loads(peer_item_path.read_text(encoding="utf-8"))
         peer_item.update(sourceUrl="https://github.com/Bilaltariq41/SeqDoc/issues/57",
-                         pr="https://github.com/Bilaltariq41/SeqDoc/pull/57")
+                         pr="https://github.com/Bilaltariq41/SeqDoc/pull/110")
         peer_item_path.write_text(ws.dump(peer_item), encoding="utf-8")
         peer_values = {"id":"A", "execution_id":"takeover-1", "worktree_id":"resume-peer",
                        "expected_baseline":peer_original["baseline"], "current_head":start_head,
@@ -256,7 +273,7 @@ class WorkStateTests(unittest.TestCase):
         crlf_root, crlf_original = blocked_root()
         crlf_item_path = crlf_root / "docs/project/work-items/A.json"
         crlf_item = json.loads(crlf_item_path.read_text(encoding="utf-8")); crlf_item.update(
-            sourceUrl="https://github.com/Bilaltariq41/SeqDoc/issues/57", pr="https://github.com/Bilaltariq41/SeqDoc/pull/57")
+            sourceUrl="https://github.com/Bilaltariq41/SeqDoc/issues/57", pr="https://github.com/Bilaltariq41/SeqDoc/pull/110")
         crlf_item_path.write_text(ws.dump(crlf_item), encoding="utf-8")
         with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)), \
              patch("subprocess.run", side_effect=crlf_run):
@@ -265,7 +282,7 @@ class WorkStateTests(unittest.TestCase):
             bad_root, bad_original = blocked_root()
             bad_item_path = bad_root / "docs/project/work-items/A.json"
             bad_item = json.loads(bad_item_path.read_text(encoding="utf-8")); bad_item.update(
-                sourceUrl="https://github.com/Bilaltariq41/SeqDoc/issues/57", pr="https://github.com/Bilaltariq41/SeqDoc/pull/57")
+                sourceUrl="https://github.com/Bilaltariq41/SeqDoc/issues/57", pr="https://github.com/Bilaltariq41/SeqDoc/pull/110")
             bad_item_path.write_text(ws.dump(bad_item), encoding="utf-8")
             def bad_run(command, *args, **kwargs):
                 text = " ".join(command)
@@ -934,7 +951,7 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(ws.validate(root), 0)
         self.assertEqual(self.activate(root, execution_id="a", claim="src/a")[0], 0)
         h1, h2, h3 = "d"*40, "e"*40, "f"*40
-        pr = {"number":1,"url":"https://github.com/o/r/pull/1","state":"OPEN","isDraft":False,
+        pr = {"number":110,"url":"https://github.com/o/r/pull/110","state":"OPEN","isDraft":False,
               "author":{"login":"actual-author", "id":"U_kgDODXRwzA", "is_bot":False,
                          "name":"Actual Author", "url":"https://github.com/actual-author"},
               "headRefOid":h1,"mergeCommit":None,"reviewDecision":"APPROVED"}
@@ -954,7 +971,7 @@ class WorkStateTests(unittest.TestCase):
                 return type("R",(),{"stdout":json.dumps(reviews if "reviews" in text else view)})()
             return run
         with patch("subprocess.run", side_effect=gh_view(head=h1, review_head=h1)) as run:
-            handoff_code, _ = self.operation(root, "handoff", id="A", execution_id="a", pr="https://github.com/o/r/pull/1",
+            handoff_code, _ = self.operation(root, "handoff", id="A", execution_id="a", pr="https://github.com/o/r/pull/110",
                                              head=h1, observed_head="spoofed", observed_author="spoofed",
                                              peer="reviewer", epoch="1", finding=["Fixed: focused verification receipt"])
         self.assertEqual(handoff_code, 0)
@@ -976,33 +993,33 @@ class WorkStateTests(unittest.TestCase):
             with patch("subprocess.run", side_effect=gh_view(**variant)):
                 rejected, _ = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
                                                focused_receipt="focused", final_receipt="final", attribution="actual-author",
-                                              pr="https://github.com/o/r/pull/1", head=caller_head,
+                                              pr="https://github.com/o/r/pull/110", head=caller_head,
                                               observed_head="spoofed", peer="reviewer", merge_sha="a"*40)
             self.assertNotEqual(rejected, 0, variant)
         for field in ("number", "state", "isDraft", "author", "headRefOid", "mergeCommit", "reviewDecision"):
             with patch("subprocess.run", side_effect=gh_view(merged=True, omit=(field,))):
                 rejected, _ = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
                                               focused_receipt="focused", final_receipt="final", attribution="actual-author",
-                                              pr="https://github.com/o/r/pull/1", head=h2,
+                                              pr="https://github.com/o/r/pull/110", head=h2,
                                               observed_head="spoofed", peer="reviewer", merge_sha="a"*40)
             self.assertNotEqual(rejected, 0, field)
         with patch("subprocess.run", side_effect=gh_view(merged=True)):
             rejected, _ = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
                                           focused_receipt="focused", final_receipt="final", attribution="actual-author",
-                                          repository="other/r", pr="https://github.com/o/r/pull/1", head=h2,
+                                          repository="other/r", pr="https://github.com/o/r/pull/110", head=h2,
                                           observed_head="spoofed", peer="reviewer", merge_sha="a"*40)
         self.assertNotEqual(rejected, 0)
         with patch("subprocess.run", side_effect=gh_view(merged=True)):
             close_code, close_packet = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
                                                     focused_receipt="focused", final_receipt="final", attribution="actual-author",
-                                                   pr="https://github.com/o/r/pull/1", head=h2,
+                                                    pr="https://github.com/o/r/pull/110", head=h2,
                                                    observed_head="spoofed", peer="reviewer", merge_sha="a" * 40)
         self.assertEqual(close_code, 0, close_packet)
         self.assertNotRegex(close_packet, r"(?i)([A-Z]:\\|/Users/|/home/|token|password|session|timestamp|2026-)")
         dependent = json.loads((root / "docs/project/work-items/B.json").read_text(encoding="utf-8"))
         closed = json.loads((root / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
         self.assertEqual(closed.get("claims"), [])
-        self.assertEqual(closed["closeout"], {"executionId":"a", "pr":"https://github.com/o/r/pull/1",
+        self.assertEqual(closed["closeout"], {"executionId":"a", "pr":"https://github.com/o/r/pull/110",
                                                "head":h2, "mergeSha":"a"*40, "focused":"focused",
                                                 "final":"final", "attribution":"actual-author", "findings":["resolved"]})
         self.assertNotEqual(dependent.get("lifecycle"), "Active")

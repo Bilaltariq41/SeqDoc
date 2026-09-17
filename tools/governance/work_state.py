@@ -588,7 +588,9 @@ def canonical_repository_binding(item, repository):
         raise ValueError("canonical repository identity mismatch")
     if (pr_match.group(1).casefold(), pr_match.group(2).casefold()) != (source_match.group(1).casefold(), source_match.group(2).casefold()):
         raise ValueError("canonical repository identity mismatch")
-    if source_match.group(3) != str(item.get("number")) or pr_match.group(3) != source_match.group(3):
+    if (not source_match.group(3).isdigit() or int(source_match.group(3)) <= 0 or
+            not pr_match.group(3).isdigit() or int(pr_match.group(3)) <= 0 or
+            source_match.group(3) != str(item.get("number"))):
         raise ValueError("canonical issue identity mismatch")
     return int(source_match.group(3))
 
