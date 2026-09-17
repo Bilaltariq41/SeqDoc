@@ -1549,7 +1549,6 @@ public sealed class ContainedProcess : IDisposable
 
         nint toFree = buffer;
         buffer = nint.Zero;
-        ResourceReleaseObserverForTests?.Invoke(label);
         try
         {
             if (deleteAttributeList)
@@ -1567,6 +1566,15 @@ public sealed class ContainedProcess : IDisposable
                 _teardownOrderForTests.Add(label);
                 _teardownFailures.Add($"Free({label}) threw: {ex.Message}");
             }
+        }
+
+        try
+        {
+            ResourceReleaseObserverForTests?.Invoke(label);
+        }
+        catch
+        {
+            // Test-only release notifications are non-authoritative and must not affect cleanup.
         }
     }
 
