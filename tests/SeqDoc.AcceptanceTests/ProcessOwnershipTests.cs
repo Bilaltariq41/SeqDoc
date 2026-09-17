@@ -157,20 +157,15 @@ public sealed class ProcessOwnershipTests
     // ---- Group 4: creation-time containment and construction unwind -------------------------------
 
     [Fact]
-    public async Task CreationTimeJobAdmissionContainsSuspendedChildAndPostCreateAssignIsNotUsed()
+    public async Task CreationTimeJobListAdmissionContainsSuspendedChild()
     {
-        // Keep the historical hook explicitly disabled; creation-time admission supersedes it.
+        // Compile compatibility only: the authorized implementation repair will remove this stale field.
         ContainedProcess.AssignBeforeResumeHookForTests = null;
         bool? observedWhileSuspended = null;
         nint duplicatedProcess = nint.Zero;
         var observer = FindStaticTestSeam("PostCreateProcessObserverForTests", typeof(Action<nint, nint>));
         Assert.True(observer is not null,
             "Expected post-CreateProcess observer seam receiving job/process handles while suspended.");
-        var nativeCalls = new ProcessOwnershipNativeCalls
-        {
-            AssignProcessToJobObject = (_, _) => throw new InvalidOperationException(
-                "post-create AssignProcessToJobObject must not be used after creation-time admission"),
-        };
 
         try
         {
@@ -182,7 +177,7 @@ public sealed class ProcessOwnershipTests
                     NativeMethods.GetCurrentProcess(), proc,
                     NativeMethods.GetCurrentProcess(), out duplicatedProcess, 0, false, 0x00000002));
             }));
-            var options = NewOptions(["sleep", "50"], nativeCalls: nativeCalls);
+            var options = NewOptions(["sleep", "50"]);
             var result = ContainedProcess.Start(options);
             Assert.True(result.Succeeded, result.Detail);
             using var process = result.Process!;
@@ -205,39 +200,67 @@ public sealed class ProcessOwnershipTests
     }
 
     [Fact]
-    public void CreationFaultWithFailedTerminateStillClosesKillOnCloseJobAroundSuspendedChild()
+    public void CreationFaultWithFailedTerminateStillProvesJobFamilyExitAroundSuspendedChild()
     {
         nint duplicatedProcess = nint.Zero;
+        nint duplicatedJob = nint.Zero;
+        int terminateJobCalls = 0;
         var observer = FindStaticTestSeam("PostCreateProcessObserverForTests", typeof(Action<nint, nint>));
         Assert.True(observer is not null,
             "Expected post-CreateProcess observer seam receiving job/process handles while suspended.");
         try
         {
-            observer!.SetValue(null, (Action<nint, nint>)((_, process) =>
+            observer!.SetValue(null, (Action<nint, nint>)((job, process) =>
             {
-                Assert.True(NativeMethods.DuplicateHandle(
-                    NativeMethods.GetCurrentProcess(), process,
-                    NativeMethods.GetCurrentProcess(), out duplicatedProcess, 0, false, 0x00000002));
+                DuplicateCurrentHandle(process, out duplicatedProcess);
+                DuplicateCurrentHandle(job, out duplicatedJob);
             }));
             var result = ContainedProcess.Start(
                 NewOptions(["sleep", "5000"], nativeCalls: new ProcessOwnershipNativeCalls
                 {
                     TerminateProcess = (_, _) => NativeCallResult.Failure(8101),
+                    WaitForSingleObject = (_, _) => NativeWaitResult.Failed(8102),
+                    TerminateJobObject = (job, exitCode) =>
+                    {
+                        Interlocked.Increment(ref terminateJobCalls);
+                        return NativeMethods.TerminateJobObject(job, exitCode)
+                            ? NativeCallResult.Success()
+                            : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+                    },
                 }),
                 ConstructionFaultPoint.AfterProcessCreatedBeforeAssign);
 
             Assert.False(result.Succeeded);
+            Assert.Equal(ProcessOwnershipFailureClass.ProcessConstructionFailed, result.FailureClass);
             Assert.Contains("8101", result.Detail, StringComparison.Ordinal);
+            Assert.Contains("8102", result.Detail, StringComparison.Ordinal);
+            Assert.Null(GetRequiredPublicCleanupOwner(result));
+            Assert.True(terminateJobCalls >= 1, "Construction unwind must explicitly terminate the job family.");
             Assert.NotEqual(nint.Zero, duplicatedProcess);
+            Assert.NotEqual(nint.Zero, duplicatedJob);
             Assert.Equal(NativeMethods.WAIT_OBJECT_0,
                 NativeMethods.WaitForSingleObject(duplicatedProcess, 5000));
+            Assert.Equal(0u, QueryJobActiveProcesses(duplicatedJob));
         }
         finally
         {
             observer?.SetValue(null, null);
+            if (duplicatedJob != nint.Zero && QueryJobActiveProcesses(duplicatedJob) > 0)
+            {
+                NativeMethods.TerminateJobObject(duplicatedJob, uint.MaxValue);
+                uint waitResult = NativeMethods.WaitForSingleObject(duplicatedProcess, 5000);
+                if (waitResult == NativeMethods.WAIT_FAILED)
+                {
+                    _ = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                }
+            }
             if (duplicatedProcess != nint.Zero)
             {
                 NativeMethods.CloseHandle(duplicatedProcess);
+            }
+            if (duplicatedJob != nint.Zero)
+            {
+                NativeMethods.CloseHandle(duplicatedJob);
             }
         }
     }
@@ -640,8 +663,8 @@ public sealed class ProcessOwnershipTests
     [Fact]
     public void PostDrainsUnwindFaultCancelsAndAwaitsBackgroundDrainsAndCompletionMonitor()
     {
-        // GH106-R2-F1: a failure between StartDrains/StartCompletionMonitor and AssignProcessToJobObject/
-        // ResumeThread must not leak the background drain/completion-monitor tasks. The construction-
+        // GH106-R2-F1: a failure after StartDrains/StartCompletionMonitor and before ResumeThread must
+        // not leak the background drain/completion-monitor tasks. The construction-
         // fault hook captures the internal ContainedProcess reference (never returned to a caller on a
         // failed Start) so this test can prove those tasks are genuinely completed, not merely abandoned.
         ContainedProcess? captured = null;
@@ -777,8 +800,8 @@ public sealed class ProcessOwnershipTests
     [Fact]
     public void ConstructionPhaseFailuresLeaveObservableEvidenceWithoutAbandonedTasks()
     {
-        // JOB_LIST admits the child during CreateProcess; there is no post-create assignment failure
-        // mode to exercise. Retain the resume/unwind failure, which still proves cleanup evidence.
+        // JOB_LIST admits the child during CreateProcess; retain the resume/unwind failure, which still
+        // proves cleanup evidence after creation-time JOB_LIST admission.
         var options = NewOptions(["sleep", "1000"], nativeCalls: new ProcessOwnershipNativeCalls
         {
             ResumeThread = _ => NativeCallResult<uint>.Failure(995),
@@ -1487,22 +1510,47 @@ public sealed class ProcessOwnershipTests
     }
 
     [Fact]
-    public void ConstructionUnwindRetainsTerminationAndWaitFailuresAndDoesNotReleaseLiveDrainResources()
+    public void ConstructionUnwindProvesFamilyExitBeforeReleasingDrainResources()
     {
         var cleanupBound = FindInstanceTestSeam("ConstructionCleanupBoundForTests", typeof(TimeSpan));
         Assert.True(cleanupBound is not null,
             "Expected per-instance construction cleanup-bound seam is not implemented yet.");
         ContainedProcess? captured = null;
-        var releases = new List<(string Label, bool StdOutComplete, bool StdErrComplete, bool MonitorComplete)>();
-        ContainedProcess.UnwindStepObserverForTests = label => releases.Add((
-            label,
-            captured?.StdOutDrainTaskForTests?.IsCompleted ?? true,
-            captured?.StdErrDrainTaskForTests?.IsCompleted ?? true,
-            captured?.CompletionMonitorTaskForTests?.IsCompleted ?? true));
+        nint duplicatedProcess = nint.Zero;
+        nint duplicatedJob = nint.Zero;
+        int terminateJobCalls = 0;
+        var releases = new System.Collections.Concurrent.ConcurrentQueue<(
+            string Label, uint? ActiveProcesses, string? QueryError, bool StdOutComplete, bool StdErrComplete, bool MonitorComplete)>();
+        var releaseObserver = FindInstanceTestSeam("ResourceReleaseObserverForTests", typeof(Action<string>));
+        Assert.True(releaseObserver is not null, "Expected per-instance resource-release observer seam.");
+        var postCreate = FindStaticTestSeam("PostCreateProcessObserverForTests", typeof(Action<nint, nint>));
+        Assert.True(postCreate is not null, "Expected post-CreateProcess observer seam.");
+        postCreate!.SetValue(null, (Action<nint, nint>)((job, process) =>
+        {
+            DuplicateCurrentHandle(process, out duplicatedProcess);
+            DuplicateCurrentHandle(job, out duplicatedJob);
+        }));
         ContainedProcess.PostDrainsStartHookForTests = process =>
         {
             captured = process;
             cleanupBound!.SetValue(process, TimeSpan.FromMilliseconds(100));
+            releaseObserver!.SetValue(process, (Action<string>)(label =>
+            {
+                try
+                {
+                    releases.Enqueue((label, QueryJobActiveProcesses(duplicatedJob), null,
+                        process.StdOutDrainTaskForTests?.IsCompleted ?? true,
+                        process.StdErrDrainTaskForTests?.IsCompleted ?? true,
+                        process.CompletionMonitorTaskForTests?.IsCompleted ?? true));
+                }
+                catch (Exception ex)
+                {
+                    releases.Enqueue((label, null, ex.Message,
+                        process.StdOutDrainTaskForTests?.IsCompleted ?? true,
+                        process.StdErrDrainTaskForTests?.IsCompleted ?? true,
+                        process.CompletionMonitorTaskForTests?.IsCompleted ?? true));
+                }
+            }));
         };
         try
         {
@@ -1511,6 +1559,13 @@ public sealed class ProcessOwnershipTests
                 {
                     TerminateProcess = (_, _) => NativeCallResult.Failure(7101),
                     WaitForSingleObject = (_, _) => NativeWaitResult.Failed(7102),
+                    TerminateJobObject = (job, exitCode) =>
+                    {
+                        Interlocked.Increment(ref terminateJobCalls);
+                        return NativeMethods.TerminateJobObject(job, exitCode)
+                            ? NativeCallResult.Success()
+                            : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+                    },
                 }),
                 ConstructionFaultPoint.AfterDrainsStartedBeforeAssign);
 
@@ -1518,14 +1573,154 @@ public sealed class ProcessOwnershipTests
             Assert.NotNull(captured);
             Assert.Contains("7101", result.Detail, StringComparison.Ordinal);
             Assert.Contains("7102", result.Detail, StringComparison.Ordinal);
-            Assert.All(releases, release => Assert.True(
+            Assert.Null(GetRequiredPublicCleanupOwner(result));
+            Assert.True(terminateJobCalls >= 1);
+            Assert.Equal(NativeMethods.WAIT_OBJECT_0,
+                NativeMethods.WaitForSingleObject(duplicatedProcess, 5000));
+            Assert.Equal(0u, QueryJobActiveProcesses(duplicatedJob));
+            Assert.NotEmpty(releases);
+            Assert.All(releases, release =>
+            {
+                Assert.Null(release.QueryError);
+                Assert.Equal(0u, release.ActiveProcesses);
+                Assert.True(
                 release.StdOutComplete && release.StdErrComplete && release.MonitorComplete,
-                $"{release.Label} released resources while owned work was live."));
+                $"{release.Label} released resources while owned work was live.");
+            });
         }
         finally
         {
-            ContainedProcess.UnwindStepObserverForTests = null;
             ContainedProcess.PostDrainsStartHookForTests = null;
+            postCreate.SetValue(null, null);
+            if (captured is not null)
+            {
+                releaseObserver!.SetValue(captured, null);
+            }
+            if (duplicatedJob != nint.Zero && QueryJobActiveProcesses(duplicatedJob) > 0)
+            {
+                NativeMethods.TerminateJobObject(duplicatedJob, uint.MaxValue);
+                uint waitResult = NativeMethods.WaitForSingleObject(duplicatedProcess, 5000);
+                if (waitResult == NativeMethods.WAIT_FAILED)
+                {
+                    _ = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                }
+            }
+            if (duplicatedProcess != nint.Zero)
+            {
+                NativeMethods.CloseHandle(duplicatedProcess);
+            }
+            if (duplicatedJob != nint.Zero)
+            {
+                NativeMethods.CloseHandle(duplicatedJob);
+            }
+        }
+    }
+
+    [Fact]
+    public void ConstructionUnwindRetainsCleanupOwnerUntilRetryCanProveFamilyExit()
+    {
+        var cleanupBound = FindInstanceTestSeam("ConstructionCleanupBoundForTests", typeof(TimeSpan));
+        Assert.NotNull(cleanupBound);
+        var releaseObserver = FindInstanceTestSeam("ResourceReleaseObserverForTests", typeof(Action<string>));
+        Assert.NotNull(releaseObserver);
+        nint duplicatedProcess = nint.Zero;
+        nint duplicatedJob = nint.Zero;
+        ContainedProcess? captured = null;
+        int terminateJobCalls = 0;
+        var releases = new System.Collections.Concurrent.ConcurrentQueue<(
+            string Label, uint? ActiveProcesses, string? QueryError)>();
+        var postCreate = FindStaticTestSeam("PostCreateProcessObserverForTests", typeof(Action<nint, nint>));
+        Assert.NotNull(postCreate);
+        postCreate!.SetValue(null, (Action<nint, nint>)((job, process) =>
+        {
+            DuplicateCurrentHandle(process, out duplicatedProcess);
+            DuplicateCurrentHandle(job, out duplicatedJob);
+        }));
+        ContainedProcess.PostDrainsStartHookForTests = process =>
+        {
+            captured = process;
+            cleanupBound!.SetValue(process, TimeSpan.FromMilliseconds(100));
+            releaseObserver!.SetValue(process, (Action<string>)(label =>
+            {
+                try { releases.Enqueue((label, QueryJobActiveProcesses(duplicatedJob), null)); }
+                catch (Exception ex) { releases.Enqueue((label, null, ex.Message)); }
+            }));
+        };
+        try
+        {
+            var result = ContainedProcess.Start(
+                NewOptions(["sleep", "5000"], nativeCalls: new ProcessOwnershipNativeCalls
+                {
+                    TerminateProcess = (_, _) => NativeCallResult.Failure(8101),
+                    WaitForSingleObject = (_, _) => NativeWaitResult.Failed(8102),
+                    TerminateJobObject = (job, exitCode) =>
+                    {
+                        int call = Interlocked.Increment(ref terminateJobCalls);
+                        if (call == 1)
+                        {
+                            return NativeCallResult.Failure(8103);
+                        }
+                        return NativeMethods.TerminateJobObject(job, exitCode)
+                            ? NativeCallResult.Success()
+                            : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+                    },
+                }),
+                ConstructionFaultPoint.AfterDrainsStartedBeforeAssign);
+
+            Assert.False(result.Succeeded);
+            Assert.Contains("8101", result.Detail, StringComparison.Ordinal);
+            Assert.Contains("8102", result.Detail, StringComparison.Ordinal);
+            Assert.Contains("8103", result.Detail, StringComparison.Ordinal);
+            ContainedProcess cleanupOwner = GetRequiredPublicCleanupOwner(result)!;
+            Assert.IsType<ContainedProcess>(cleanupOwner);
+            Assert.True(QueryJobActiveProcesses(duplicatedJob) > 0);
+            Assert.Equal(NativeMethods.WAIT_TIMEOUT,
+                NativeMethods.WaitForSingleObject(duplicatedProcess, 0));
+            Assert.True(captured is not null);
+            Assert.True(captured!.HasRetainedFamilyResourcesForTests);
+            Assert.DoesNotContain(releases, release => release.Label is "process handle" or "job handle"
+                or "completion port handle");
+
+            Assert.True(cleanupOwner.Terminate());
+            cleanupOwner.Dispose();
+
+            Assert.True(terminateJobCalls >= 2);
+            Assert.Equal(NativeMethods.WAIT_OBJECT_0,
+                NativeMethods.WaitForSingleObject(duplicatedProcess, 5000));
+            Assert.Equal(0u, QueryJobActiveProcesses(duplicatedJob));
+            Assert.False(cleanupOwner.HasRetainedFamilyResourcesForTests);
+            Assert.NotEmpty(releases);
+            Assert.All(releases, release =>
+            {
+                Assert.Null(release.QueryError);
+                Assert.Equal(0u, release.ActiveProcesses);
+            });
+        }
+        finally
+        {
+            ContainedProcess.PostDrainsStartHookForTests = null;
+            postCreate.SetValue(null, null);
+            if (captured is not null)
+            {
+                releaseObserver!.SetValue(captured, null);
+            }
+            if (duplicatedJob != nint.Zero && QueryJobActiveProcesses(duplicatedJob) > 0)
+            {
+                NativeMethods.TerminateJobObject(duplicatedJob, uint.MaxValue);
+                uint waitResult = NativeMethods.WaitForSingleObject(duplicatedProcess, 5000);
+                if (waitResult == NativeMethods.WAIT_FAILED)
+                {
+                    _ = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                }
+            }
+            if (duplicatedProcess != nint.Zero)
+            {
+                NativeMethods.CloseHandle(duplicatedProcess);
+            }
+            if (duplicatedJob != nint.Zero)
+            {
+                NativeMethods.CloseHandle(duplicatedJob);
+            }
         }
     }
 
@@ -1806,6 +2001,42 @@ public sealed class ProcessOwnershipTests
             System.Reflection.BindingFlags.Public |
             System.Reflection.BindingFlags.NonPublic);
         return property is not null && property.PropertyType == type && property.CanWrite ? property : null;
+    }
+
+    private static void DuplicateCurrentHandle(nint source, out nint duplicate)
+    {
+        Assert.NotEqual(nint.Zero, source);
+        Assert.True(
+            NativeMethods.DuplicateHandle(
+                NativeMethods.GetCurrentProcess(), source,
+                NativeMethods.GetCurrentProcess(), out duplicate, 0, false, 0x00000002),
+            $"DuplicateHandle failed with Win32 error {System.Runtime.InteropServices.Marshal.GetLastWin32Error()}.");
+    }
+
+    private static uint QueryJobActiveProcesses(nint jobHandle)
+    {
+        var accounting = default(NativeMethods.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION);
+        bool queried = NativeMethods.QueryInformationJobObject(
+            jobHandle,
+            NativeMethods.JobObjectBasicAccountingInformation,
+            ref accounting,
+            (uint)System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>(),
+            out _);
+        Assert.True(
+            queried,
+            $"QueryInformationJobObject(JobObjectBasicAccountingInformation) failed with Win32 error "
+            + $"{System.Runtime.InteropServices.Marshal.GetLastWin32Error()}.");
+        return accounting.ActiveProcesses;
+    }
+
+    private static ContainedProcess? GetRequiredPublicCleanupOwner(ProcessOwnershipConstructionResult result)
+    {
+        var property = result.GetType().GetProperty(
+            "CleanupOwner",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public);
+        Assert.NotNull(property);
+        Assert.Equal(typeof(ContainedProcess), property!.PropertyType);
+        return (ContainedProcess?)property.GetValue(result);
     }
 
     private static System.Reflection.PropertyInfo? FindStaticTestSeam(string name, Type type)

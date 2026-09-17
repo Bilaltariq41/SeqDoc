@@ -2,7 +2,7 @@
 
 ## State
 
-`Blocked`
+`Building`
 
 ## Authority and frozen state
 
@@ -72,11 +72,18 @@ inheritance guarantees. Do not add a package solely to avoid establishing those 
 - `tests/SeqDoc.AcceptanceTests/ProcessOwnership.cs`
 - `tests/SeqDoc.AcceptanceTests/ProcessOwnershipTests.cs`
 - `tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj`
+- `tests/SeqDoc.AcceptanceTests.ProcessOwnershipStub/packages.lock.json`
+- `SeqDoc.slnx`
+- `docs/project/delegated-contribution-workflow.md`
 - `docs/work/quality/I100-A/checkpoint.md`
 - `docs/work/quality/I100-A/ledger.md`
 - the generated canonical work-item/execution projections, only through `tools/governance/work_state.py`
 
 Any additional path requires a new owner decision before editing.
+
+The three added paths are an owner-approved reconciliation of historical PR changes, not authority for unrelated
+modification. `SeqDoc.slnx` admits the stub project, the stub lock file pins its restored dependency graph, and the
+delegated-contribution record preserves the required implementation and repair trace.
 
 ## Native API admission table
 
@@ -473,6 +480,18 @@ also found a Medium frozen-allowlist discrepancy for `SeqDoc.slnx`,
 `docs/project/delegated-contribution-workflow.md`, and the stub `packages.lock.json`, plus Low stale post-create
 assignment wording/seams. The frozen High-severity stop condition fired: I100-A is Blocked, the branch and attribution
 are preserved, and no final gate or GH-107 work is authorized.
+
+### Owner-authorized Ahmad findings repair
+
+The owner authorized one bounded same-branch repair for Ahmad's latest-head findings. Construction failure after child
+creation must not return until the process family is proven at zero, or must preserve a reachable owner of every native
+and managed resource required to finish containment and cleanup; closing a process handle or relying on asynchronous
+job close without bounded proof is insufficient. The repair must exercise failed direct termination and failed process
+wait while proving job-level termination and family-zero evidence, with no unrelated-process action and no premature
+resource release. The exact three historical paths above are now admitted for their existing checkpoint purposes.
+Stale post-create assignment wording and the unused native assignment seam must be removed; tests should prefer typed
+ownership and evidence observables over new private-field coupling. Run the focused SDK 10.0.302 lane and a complete
+independent review, then stop for Ahmad. The final gate and GH-107 remain prohibited until Ahmad approves.
 
 ### Owner platform-floor amendment
 

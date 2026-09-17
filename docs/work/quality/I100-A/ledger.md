@@ -436,3 +436,13 @@ zero; the current regression proves only managed-task quiescence. One Medium fin
 outside the frozen allowlist, and one Low finding records stale `AssignProcessToJobObject` wording/seams and private
 test coupling. I100-A returned to Blocked under its frozen High-severity stop condition. No final gate or GH-107 work
 ran.
+
+## Owner-authorized Ahmad findings repair
+
+The owner authorized one bounded repair covering Ahmad's High construction-unwind family-exit finding, the exact
+historical-path allowlist discrepancy, and the Low stale assignment documentation/seam finding. The allowlist now names
+`SeqDoc.slnx`, `docs/project/delegated-contribution-workflow.md`, and the stub `packages.lock.json` for their existing
+solution-membership, trace, and lock-file purposes. The implementation must prove family zero after failed direct
+termination/wait or retain reachable cleanup ownership; managed-task quiescence alone is not acceptance evidence.
+Focused verification and complete independent review precede a new Ahmad request; the final gate and GH-107 remain
+withheld.
