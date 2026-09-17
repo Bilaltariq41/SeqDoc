@@ -392,3 +392,11 @@ The owner explicitly authorized one additional I100-A repair round on the same b
 recoverable ownership after tracked close failure and observer-safe attribute-list cleanup. It permits two focused
 regressions, implementation, focused verification, and one complete independent review; it does not authorize the
 final gate or an Ahmad review request before the candidate is clean.
+
+## Additional repair review result
+
+The `26191b8` candidate fixed retryable tracked-close ownership and isolated the attribute-delete observer, then passed
+66/66 focused tests on an unchanged rerun. Complete independent review marked both targeted findings Fixed and all
+earlier Ahmad findings still Fixed, but found one Medium observer boundary: `ResourceReleaseObserverForTests` remains
+outside tracked buffer cleanup's exception boundary and can prevent deletion/free after ownership is cleared. The
+authorized round is exhausted, so I100-A returned to Blocked without a final gate or Ahmad review request.

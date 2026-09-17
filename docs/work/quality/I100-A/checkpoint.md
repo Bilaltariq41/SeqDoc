@@ -2,7 +2,7 @@
 
 ## State
 
-`Building`
+`Blocked`
 
 ## Authority and frozen state
 
@@ -428,6 +428,14 @@ The owner authorized one additional repair round on the same branch. Its scope i
 ownership when close fails, enabling deterministic retry, and making the test-only attribute-list deletion observer
 unable to interrupt native deletion or buffer release. Two focused regressions, the focused lane, and one complete
 independent review are required. The final gate and Ahmad re-review remain withheld until that review is clean.
+
+### Additional repair review result
+
+Head `26191b8` passed the 66-test focused lane on an unchanged rerun and fixed both findings authorized for this round.
+The required complete review found one further Medium defect: `ResourceReleaseObserverForTests` can throw before tracked
+buffer deletion/free, fault disposal after ownership is cleared, and prevent later resource cleanup. The authorization
+is exhausted, so I100-A is blocked again with the branch preserved. The earlier single drain-test failure was assessed
+as fail-closed verification noise rather than a targeted-delta defect; no final gate or Ahmad request was made.
 
 ### Owner platform-floor amendment
 
