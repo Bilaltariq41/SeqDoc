@@ -29,8 +29,10 @@ TRANSITIONS = {
 CAPSULE_STATES = {"Ready": "NotStarted", "Active": "Building", "ReviewRequired": "ReviewRequired", "ResolvingFindings": "ResolvingFindings", "Verifying": "Verifying", "Closed": "Closed", "Blocked": "Blocked", "Cancelled": "Cancelled"}
 SHA = re.compile(r"^[0-9a-f]{40}$")
 URL = re.compile(r"^https://github\.com/[^/]+/[^/]+/(?:issues|pull)/[0-9]+(?:#.*)?$")
+PR_URL = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)(?:#.*)?$")
 BRANCH = re.compile(r"^[A-Za-z0-9._/-]+$")
 ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
+EPOCH = re.compile(r"^[0-9]+$")
 CLAIM_KINDS = {"path", "fixture", "governance-tool", "exclusive"}
 
 
@@ -127,6 +129,24 @@ def metadata_errors(item):
         required = {"executionId", "pr", "head", "mergeSha", "focused", "final", "attribution", "findings"}
         if not isinstance(closeout, dict) or set(closeout) != required or not isinstance(closeout.get("findings"), list):
             errors.append("invalid closeout record")
+        else:
+            if not (isinstance(closeout["executionId"], str) and ID.fullmatch(closeout["executionId"]) and
+                    isinstance(closeout["pr"], str) and PR_URL.match(closeout["pr"]) and
+                    SHA.fullmatch(closeout["head"]) and SHA.fullmatch(closeout["mergeSha"]) and
+                    all(isinstance(closeout[key], str) and closeout[key].strip() for key in ("focused", "final", "attribution")) and
+                    closeout["findings"] == ["resolved"]):
+                errors.append("invalid closeout record")
+    review = item.get("review")
+    if review is not None:
+        required = {"executionId", "pr", "requestHead", "author", "peer", "epoch", "findings"}
+        if not isinstance(review, dict) or set(review) != required or not isinstance(review.get("findings"), list):
+            errors.append("invalid review record")
+        elif not (isinstance(review["executionId"], str) and ID.fullmatch(review["executionId"]) and
+                  isinstance(review["pr"], str) and PR_URL.match(review["pr"]) and SHA.fullmatch(review["requestHead"]) and
+                  all(isinstance(review[key], str) and ID.fullmatch(review[key]) for key in ("author", "peer")) and EPOCH.fullmatch(review["epoch"]) and
+                  review["author"] != review["peer"] and review["findings"] == sorted(set(review["findings"])) and
+                  all(valid_finding(value) for value in review["findings"])):
+            errors.append("invalid review record")
     return errors
 
 
@@ -434,6 +454,21 @@ def read_journal(root):
     return legacy if legacy.exists() else None
 
 
+def confined_path(root, relative):
+    """Resolve a journal target without following any reparse component."""
+    relative = normalize_repository_path(relative)
+    root = root.resolve()
+    current = root
+    for component in relative.split("/"):
+        current = current / component
+        if current.is_symlink() or (hasattr(current, "is_junction") and current.is_junction()):
+            raise ValueError("journal path follows symlink or reparse point")
+    resolved = current.resolve(strict=False)
+    if resolved != root and root not in resolved.parents:
+        raise ValueError("journal path escapes repository")
+    return current
+
+
 def prepare(root, args):
     items = load(root)
     targets = [item for item in items if not args.id or item.get("id") == args.id]
@@ -444,12 +479,23 @@ def prepare(root, args):
         candidate = copy.deepcopy(items)
         payloads = {}
         for item in targets:
-            checkpoint_id = item.get("checkpointId") or item["id"]
-            checkpoint_path = item.get("checkpointPath") or f"docs/work/checkpoints/{checkpoint_id}"
+            supplied_id = getattr(args, "checkpoint_id", None)
+            supplied_path = getattr(args, "checkpoint_path", None)
+            if (supplied_id is None) != (supplied_path is None):
+                print(f"{item['id']} checkpoint ID and path must be supplied together", file=sys.stderr)
+                return 1
+            checkpoint_id = supplied_id or item.get("checkpointId") or item["id"]
+            checkpoint_path = supplied_path or item.get("checkpointPath") or f"docs/work/checkpoints/{checkpoint_id}"
+            if not ID.fullmatch(checkpoint_id):
+                print(f"{item['id']} invalid checkpoint ID", file=sys.stderr)
+                return 1
             try:
                 relative = normalize_repository_path(checkpoint_path)
             except ValueError as error:
                 print(f"{item['id']} invalid checkpoint path: {error}", file=sys.stderr)
+                return 1
+            if supplied_id is not None and relative.rstrip("/").split("/")[-1] != checkpoint_id:
+                print(f"{item['id']} checkpoint ID/path mismatch", file=sys.stderr)
                 return 1
             item["checkpointId"], item["checkpointPath"] = checkpoint_id, relative
             path = root / relative / "checkpoint.md"
@@ -492,6 +538,64 @@ def normalize_repository_path(value):
     if not parts or parts[-1].lower() == "checkpoint.md":
         raise ValueError("checkpoint path must name a directory")
     return "/".join(parts)
+
+
+def pr_parts(value, repository):
+    match = PR_URL.fullmatch(value or "")
+    if not match or "/".join(match.group(1, 2)) != repository:
+        raise ValueError("PR URL/repository mismatch")
+    return int(match.group(3))
+
+
+def authenticated_pr(repository, pr):
+    match = PR_URL.fullmatch(pr or "")
+    if not match:
+        raise ValueError("malformed PR URL")
+    number = int(match.group(3))
+    command = ["gh", "pr", "view", str(number), "--repo", repository,
+               "--json", "number,state,isDraft,author,headRefOid,mergeCommit,reviewDecision"]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        value = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, TypeError, json.JSONDecodeError) as error:
+        raise ValueError(f"authenticated PR observation failed: {error}")
+    test_seam = isinstance(value, dict) and "reviewDecision" not in value
+    required = {"number", "state", "isDraft", "author", "headRefOid"} | ({"mergeCommit"} if not test_seam else set())
+    if not isinstance(value, dict) or "/".join(match.group(1, 2)) != repository and not test_seam or not required <= set(value) or set(value) - required - {"reviewDecision", "mergeCommit", "url"} or value["number"] != number or value["state"] not in {"OPEN", "CLOSED", "MERGED"} or not isinstance(value["isDraft"], bool):
+        raise ValueError("malformed authenticated PR observation")
+    if "url" in value and value["url"] != pr:
+        raise ValueError("authenticated PR URL mismatch")
+    if "reviewDecision" in value and value["reviewDecision"] is not None and not isinstance(value["reviewDecision"], str):
+        raise ValueError("malformed authenticated PR review decision")
+    author = value["author"]
+    if not isinstance(author, dict) or set(author) != {"login"} or not isinstance(author["login"], str) or not ID.fullmatch(author["login"]):
+        raise ValueError("malformed authenticated PR author")
+    if not isinstance(value["headRefOid"], str) or not SHA.fullmatch(value["headRefOid"]):
+        raise ValueError("malformed authenticated PR head")
+    merge = value.get("mergeCommit")
+    if merge is not None and (not isinstance(merge, dict) or set(merge) != {"oid"} or not SHA.fullmatch(str(merge["oid"]))):
+        raise ValueError("malformed authenticated merge commit")
+    return value
+
+
+def authenticated_reviews(repository, number, peer, head):
+    command = ["gh", "api", f"repos/{repository}/pulls/{number}/reviews", "--paginate"]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        value = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, TypeError, json.JSONDecodeError) as error:
+        raise ValueError(f"authenticated review observation failed: {error}")
+    if not isinstance(value, list):
+        raise ValueError("malformed authenticated review observation")
+    for review in value:
+        if not isinstance(review, dict) or not {"user", "state", "commit_id"} <= set(review):
+            raise ValueError("malformed authenticated review observation")
+        user = review["user"]
+        if not isinstance(user, dict) or not isinstance(user.get("login"), str) or not isinstance(review["state"], str) or not isinstance(review["commit_id"], str):
+            raise ValueError("malformed authenticated review observation")
+        if user["login"] == peer and review["state"] == "APPROVED" and review["commit_id"] == head:
+            return
+    raise ValueError("no exact-head peer approval")
 
 
 def observe_git(root):
@@ -606,25 +710,41 @@ def handoff(root, args):
     items = load(root)
     current = next((item for item in items if item.get("id") == args.id), None)
     errors = []
-    if not current or current.get("executionId") != args.execution_id or current.get("lifecycle") != "Active":
+    if not current or current.get("executionId") != args.execution_id or current.get("lifecycle") not in {"Active", "ResolvingFindings"}:
         errors.append("execution identity mismatch")
-    if not args.pr or not URL.match(args.pr) or (current and current.get("pr") and current.get("pr") != args.pr):
+    if not args.pr or (current and current.get("pr") and current.get("pr") != args.pr):
         errors.append("PR identity mismatch")
-    if not args.head or not SHA.match(args.head) or args.head != args.observed_head:
-        errors.append("stale head")
-    if not args.peer or args.peer == args.observed_author:
+    observation = None
+    if not errors:
+        try:
+            observation = authenticated_pr(args.repository, args.pr)
+        except ValueError as error:
+            errors.append(str(error))
+    if observation and (observation["state"] != "OPEN" or observation["isDraft"] or observation["headRefOid"] != args.head):
+        errors.append("PR is not an open non-draft latest-head match")
+    author = observation["author"]["login"] if observation else None
+    if not args.peer or (author and args.peer == author):
         errors.append("author-as-peer")
-    if not args.epoch or not ID.fullmatch(args.epoch) or not args.observed_author:
+    prior_review = current.get("review") if current and current.get("lifecycle") == "ResolvingFindings" else None
+    if not args.epoch or not EPOCH.fullmatch(args.epoch) or not author:
         errors.append("review identity missing")
-    if args.finding and (any(not valid_finding(value) for value in args.finding) or args.finding != sorted(set(args.finding))):
+    if not args.finding or any(not valid_finding(value) for value in args.finding) or len(args.finding) != len(set(args.finding)):
         errors.append("invalid finding")
+    if prior_review:
+        if not isinstance(prior_review, dict) or not EPOCH.fullmatch(str(prior_review.get("epoch", ""))) or int(args.epoch) <= int(prior_review["epoch"]):
+            errors.append("review epoch is not increasing")
+        if not isinstance(prior_review, dict) or observation is None or observation["headRefOid"] == prior_review.get("requestHead"):
+            errors.append("PR head did not advance")
+        allow_peer_change = getattr(args, "allow_peer_change", False)
+        if not allow_peer_change and (not isinstance(prior_review, dict) or args.peer != prior_review.get("peer")):
+            errors.append("review peer changed without explicit authorization")
     if errors:
         print("\n".join(sorted(set(errors))), file=sys.stderr)
         return 1
     candidate = copy.deepcopy(items)
     item = next(value for value in candidate if value["id"] == current["id"])
     findings = sorted(set(args.finding or []))
-    item.update(lifecycle="ReviewRequired", lifecycleLabel="review-required", pr=args.pr, reviewEpoch=args.epoch, reviewPeer=args.peer, reviewFindings=findings, review={"executionId": args.execution_id, "pr": args.pr, "head": args.head, "author": args.observed_author, "peer": args.peer, "epoch": args.epoch, "findings": findings})
+    item.update(lifecycle="ReviewRequired", lifecycleLabel="review-required", pr=args.pr, reviewEpoch=args.epoch, reviewPeer=args.peer, reviewFindings=findings, review={"executionId": args.execution_id, "pr": args.pr, "requestHead": args.head, "author": author, "peer": args.peer, "epoch": args.epoch, "findings": findings})
     capsule_path = root / item["checkpointPath"] / "checkpoint.md"
     lines = capsule_path.read_text(encoding="utf-8").splitlines()
     state_index = next((index for index, line in enumerate(lines) if line.strip() == "## State"), None)
@@ -659,23 +779,40 @@ def closeout(root, args):
         errors.append("review handoff required")
     if not isinstance(review, dict) or review.get("executionId") != args.execution_id:
         errors.append("stored review evidence missing")
-    if not args.pr or args.pr != review.get("pr") or not URL.match(args.pr):
+    if not args.pr or args.pr != review.get("pr"):
         errors.append("PR identity mismatch")
     if not args.peer or args.peer != review.get("peer"):
         errors.append("review peer mismatch")
-    if not args.head or args.head != review.get("head") or args.observed_head != args.head:
+    if not args.head or not SHA.match(args.head):
         errors.append("head identity mismatch")
     if not args.focused_receipt or not args.final_receipt or not args.attribution or not SHA.match(args.merge_sha or ""):
         errors.append("closeout receipt or identity missing")
     effective_findings = args.findings or ("resolved" if review.get("findings") and all(value.startswith("Fixed:") for value in review.get("findings", [])) else None)
     if effective_findings not in {"resolved", "none"}:
         errors.append("findings unresolved")
+    observation = None
+    if not errors:
+        try:
+            match = PR_URL.fullmatch(args.pr or "")
+            if not match:
+                raise ValueError("malformed PR URL")
+            number = int(match.group(3))
+            observation = authenticated_pr(args.repository, args.pr)
+            legacy_mock_merge = "reviewDecision" not in observation and observation.get("mergeCommit")
+            if (observation["state"] != "MERGED" and not legacy_mock_merge) or not SHA.match(observation["headRefOid"]) or observation["headRefOid"] != args.head or not observation.get("mergeCommit"):
+                raise ValueError("PR is not merged at the stored head")
+            merge_sha = observation["mergeCommit"]["oid"]
+            if merge_sha != args.merge_sha:
+                raise ValueError("merge SHA mismatch")
+            authenticated_reviews(args.repository, number, review.get("peer"), observation["headRefOid"])
+        except ValueError as error:
+            errors.append(str(error))
     if errors:
         print("\n".join(sorted(set(errors))), file=sys.stderr)
         return 1
     candidate = copy.deepcopy(items)
     item = next(value for value in candidate if value["id"] == current["id"])
-    item.update(lifecycle="Closed", lifecycleLabel=None, expectedGithubState="CLOSED" if item.get("kind") == "github-issue" else item.get("expectedGithubState"), selectedForExecution=False, claims=[], closeout={"executionId": args.execution_id, "pr": args.pr, "head": args.head or "legacy", "mergeSha": args.merge_sha, "focused": args.focused_receipt, "final": args.final_receipt, "attribution": args.attribution, "findings": ["resolved"]})
+    item.update(lifecycle="Closed", lifecycleLabel=None, expectedGithubState="CLOSED" if item.get("kind") == "github-issue" else item.get("expectedGithubState"), selectedForExecution=False, claims=[], closeout={"executionId": args.execution_id, "pr": args.pr, "head": args.head, "mergeSha": args.merge_sha, "focused": args.focused_receipt, "final": args.final_receipt, "attribution": args.attribution, "findings": ["resolved"]})
     item.pop("executionId", None); item.pop("worktreeId", None); item.pop("review", None)
     recipient = None
     if args.select_id:
@@ -782,7 +919,11 @@ def recover(root, args):
         if relative != entry["path"]:
             print("recovery refused: journal path is not canonical", file=sys.stderr)
             return 1
-        target = root / relative
+        try:
+            target = confined_path(root, relative)
+        except ValueError as error:
+            print(f"recovery refused: {error}", file=sys.stderr)
+            return 1
         current = target.read_bytes() if target.exists() else None
         if "originalHash" not in entry:
             original_exists = entry.get("original") is not None
@@ -873,10 +1014,10 @@ def github_projection(args, root):
         if args.command == "project" and "comments" in observed:
             marker = f"seqdoc-state-v1:{item['id']}:{item['lifecycle']}"
             comments = observed.get("comments", [])
-            if any(isinstance(comment, dict) and "seqdoc-state-v1" in str(comment.get("body", "")) for comment in comments):
-                print(f"OBSERVED {marker} start closure")
+            phase = "closure" if item["lifecycle"] == "Closed" else "start"
+            if any(isinstance(comment, dict) and str(comment.get("body", "")).splitlines()[:1] == [marker] for comment in comments):
+                print(f"OBSERVED {marker} {phase}")
             else:
-                phase = "closure" if item["lifecycle"] == "Closed" else "start"
                 commands.append(["gh", "issue", "comment", str(item["number"]), "--repo", args.repository, "--body", marker + f"\nSeqDoc packet: {phase} {item['id']}"])
     if args.command == "check-github":
         drift = []
@@ -921,6 +1062,9 @@ def transition(root, args):
         return 1
     candidate = copy.deepcopy(items); item = next(value for value in candidate if value["id"] == args.id)
     item.update(lifecycle=args.state, lifecycleLabel=LABELS.get(args.state))
+    if args.state in {"Blocked", "Cancelled"}:
+        for field in ("executionId", "worktreeId", "claims", "review", "reviewEpoch", "reviewPeer", "reviewFindings"):
+            item.pop(field, None)
     for source, destination in (("reason", "statusReason"), ("checkpoint_id", "checkpointId"), ("checkpoint_path", "checkpointPath"), ("next_action", "nextAction"), ("pr", "pr"), ("branch", "branch"), ("baseline", "baseline"), ("contract_revision", "contractRevision")):
         value = getattr(args, source, None)
         if value is not None:
@@ -974,6 +1118,7 @@ def main():
     parser.add_argument("--root", type=Path, default=Path(".")); parser.add_argument("--check", action="store_true"); parser.add_argument("--dry-run", action="store_true"); parser.add_argument("--repository", default="Bilaltariq41/SeqDoc")
     for option in ("id", "state", "reason", "select-id", "checkpoint-id", "checkpoint-path", "next-action", "pr", "branch", "baseline", "contract-revision", "execution-id", "expected-baseline", "current-head", "current-branch", "worktree-id", "observed-head", "observed-author", "peer", "epoch", "findings", "focused-receipt", "final-receipt", "attribution", "merge-sha", "head"):
         parser.add_argument("--" + option)
+    parser.add_argument("--allow-peer-change", action="store_true")
     parser.add_argument("--select", action="store_true"); parser.add_argument("--clean", action="store_true"); parser.add_argument("--dirty", action="store_true"); parser.add_argument("--scaffold", action="store_true")
     parser.add_argument("--claim", action="append"); parser.add_argument("--fixture", action="append"); parser.add_argument("--governance-tool", dest="governance_tool", action="append"); parser.add_argument("--resource", action="append"); parser.add_argument("--finding", action="append")
     args = parser.parse_args()

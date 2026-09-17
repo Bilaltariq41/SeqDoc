@@ -31,8 +31,8 @@
     "reviewEpoch": {"type": "string", "minLength": 1},
     "reviewPeer": {"type": "string", "minLength": 1},
     "reviewFindings": {"type": "array", "items": {"type": "string"}},
-    "review": {"type": "object"},
-    "closeout": {"type": "object"}
+    "review": {"type": "object", "required": ["executionId", "pr", "requestHead", "author", "peer", "epoch", "findings"], "additionalProperties": false, "properties": {"executionId": {"type": "string"}, "pr": {"type": "string"}, "requestHead": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "author": {"type": "string"}, "peer": {"type": "string"}, "epoch": {"type": "string", "pattern": "^[0-9]+$"}, "findings": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}}},
+    "closeout": {"type": "object", "required": ["executionId", "pr", "head", "mergeSha", "focused", "final", "attribution", "findings"], "additionalProperties": false, "properties": {"executionId": {"type": "string"}, "pr": {"type": "string"}, "head": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "mergeSha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "focused": {"type": "string", "minLength": 1}, "final": {"type": "string", "minLength": 1}, "attribution": {"type": "string", "minLength": 1}, "findings": {"type": "array", "const": ["resolved"]}}}
   },
   "additionalProperties": false
 }

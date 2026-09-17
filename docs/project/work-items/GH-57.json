@@ -3,43 +3,109 @@
   "branch": "feature/issue-57-transactional-project-operations",
   "checkpointId": "G57-TPO",
   "checkpointPath": "docs/work/governance/G57-TPO",
+  "claims": [
+    {
+      "kind": "exclusive",
+      "value": "execution"
+    },
+    {
+      "kind": "exclusive",
+      "value": "github-projection"
+    },
+    {
+      "kind": "exclusive",
+      "value": "registry"
+    },
+    {
+      "kind": "governance-tool",
+      "value": "tools/governance/work_state.py"
+    },
+    {
+      "kind": "path",
+      "value": ".github/workflows/work-state.yml"
+    },
+    {
+      "kind": "path",
+      "value": "agents.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/delegated-contribution-workflow.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/execution.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/issue-readiness.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/project-operations.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/work-items/gh-57.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/work-state.schema.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/workflow.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/readme.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/work/governance/g57-tpo/checkpoint.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/work/governance/g57-tpo/ledger.md"
+    },
+    {
+      "kind": "path",
+      "value": "tests/governance/test_work_state.py"
+    },
+    {
+      "kind": "path",
+      "value": "tools/governance/work_state.py"
+    }
+  ],
   "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
   "dependencies": [],
   "executionId": "GH-57:G57-TPO",
   "expectedGithubState": "OPEN",
   "id": "GH-57",
   "kind": "github-issue",
-  "lifecycle": "Active",
-  "lifecycleLabel": "active",
-  "nextAction": "Implement G57-TPO tests first, then the smallest backward-compatible transactional operations and public guide; stop at ReviewRequired after focused verification and complete-candidate self-review.",
+  "lifecycle": "ResolvingFindings",
+  "lifecycleLabel": "resolving-findings",
+  "nextAction": "Resolve G57-TPO-F1 through F7 in one batch; rerun focused verification and complete-candidate review; do not run the final gate until all findings are resolved.",
   "number": 57,
   "owner": "ahmad",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
+  "review": {
+    "author": "AhmadKrarha",
+    "epoch": "1",
+    "executionId": "GH-57:G57-TPO",
+    "findings": [],
+    "requestHead": "f3f24fa7fc63a773655bc6116ab1a5b0041c3ebf",
+    "peer": "Abood-essa",
+    "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110"
+  },
+  "reviewEpoch": "1",
+  "reviewFindings": [],
+  "reviewPeer": "Abood-essa",
   "schemaVersion": 1,
   "selectedForExecution": true,
-  "worktreeId": "feature-issue-57-transactional-ops",
-  "claims": [
-    {"kind": "exclusive", "value": "execution"},
-    {"kind": "exclusive", "value": "github-projection"},
-    {"kind": "exclusive", "value": "registry"},
-    {"kind": "governance-tool", "value": "tools/governance/work_state.py"},
-    {"kind": "path", "value": ".github/workflows/work-state.yml"},
-    {"kind": "path", "value": "agents.md"},
-    {"kind": "path", "value": "docs/project/delegated-contribution-workflow.md"},
-    {"kind": "path", "value": "docs/project/execution.json"},
-    {"kind": "path", "value": "docs/project/issue-readiness.md"},
-    {"kind": "path", "value": "docs/project/project-operations.md"},
-    {"kind": "path", "value": "docs/project/work-items/gh-57.json"},
-    {"kind": "path", "value": "docs/project/work-state.schema.json"},
-    {"kind": "path", "value": "docs/project/workflow.md"},
-    {"kind": "path", "value": "docs/readme.md"},
-    {"kind": "path", "value": "docs/work/governance/g57-tpo/checkpoint.md"},
-    {"kind": "path", "value": "docs/work/governance/g57-tpo/ledger.md"},
-    {"kind": "path", "value": "tests/governance/test_work_state.py"},
-    {"kind": "path", "value": "tools/governance/work_state.py"}
-  ],
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
-  "statusReason": "Ahmad claimed the canonical Ready item; checkpoint G57-TPO freezes the transactional governance contract, path/resource claims, tests, and gates.",
+  "statusReason": "Independent G57-TPO review found five High authentication, lifecycle-cleanup, and recovery-isolation defects plus two Medium scaffold/comment defects.",
   "title": "[Governance] Transactional project operations and repository-native handoff",
-  "track": "governance"
+  "track": "governance",
+  "worktreeId": "feature-issue-57-transactional-ops"
 }

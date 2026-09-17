@@ -90,7 +90,7 @@
   ],
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Implement G57-TPO tests first, then the smallest backward-compatible transactional operations and public guide; stop at ReviewRequired after focused verification and complete-candidate self-review.",
+  "nextAction": "Resolve G57-TPO-F1 through F7 in one batch; rerun focused verification and complete-candidate review; do not run the final gate until all findings are resolved.",
   "schemaVersion": 2,
   "sourceId": "GH-57"
 }

@@ -1,4 +1,4 @@
-import contextlib, io, json, shutil, subprocess, tempfile, unittest
+import base64, contextlib, io, json, shutil, subprocess, tempfile, unittest
 from pathlib import Path
 from unittest.mock import patch
 import tools.governance.work_state as ws
@@ -151,15 +151,32 @@ class WorkStateTests(unittest.TestCase):
         item=json.loads((self.d/"docs/project/work-items/GH-12.json").read_text()); item["lifecycle"]="Draft"; item["lifecycleLabel"]=None; item["selectedForExecution"]=False; (self.d/"docs/project/work-items/GH-12.json").write_text(json.dumps(item)); a=type("A",(),{"id":"GH-12","state":"Cancelled","reason":"cancelled governance test","select":False,"dry_run":False,"check":False})(); self.assertEqual(ws.transition(self.d,a),0); cancelled=json.loads((self.d/"docs/project/work-items/GH-12.json").read_text()); self.assertEqual(cancelled["lifecycle"],"Cancelled"); self.assertEqual(ws.validate(self.d),0); self.assertEqual((self.d/"docs/work/persistence/I12/checkpoint.md").read_text().splitlines()[4],"`Cancelled`")
 
     def test_transition_selected_to_blocked_without_recipient_leaves_idle(self):
-        self.reset_gws1_transition_fixture()
-        a=type("A",(),{"id":"GWS1","state":"Blocked","reason":"blocked for governance test","select":False,"dry_run":False,"check":False})()
-        self.assertEqual(ws.transition(self.d, a), 0)
-        records=json.loads((self.d/"docs/project/work-items/GWS1.json").read_text())
-        self.assertEqual(records["lifecycle"], "Blocked")
-        self.assertFalse(records["selectedForExecution"])
-        execution=json.loads((self.d/"docs/project/execution.json").read_text())
-        self.assertEqual(execution["mode"], "idle")
-        self.assertIsNone(execution["sourceId"])
+        root = self.synthetic(second=True)
+        self.assertEqual(self.activate(root, execution_id="a", claim="src/a")[0], 0)
+        self.assertEqual(self.activate(root, item="B", execution_id="b", claim="src/b")[0], 0)
+        b = root / "docs/project/work-items/B.json"
+        active_b = json.loads(b.read_text(encoding="utf-8"))
+        active_b.update(reviewEpoch="1", reviewPeer="peer", reviewFindings=["Fixed: verification"],
+                        review={"executionId":"b", "pr":"https://github.com/o/r/pull/2", "requestHead":"a"*40,
+                                "author":"author", "peer":"peer", "epoch":"1", "findings":["Fixed: verification"]})
+        b.write_text(ws.dump(active_b), encoding="utf-8")
+        for state in ("Blocked", "Cancelled"):
+            action = type("A",(),{"id":"B","state":state,"reason":"blocked/cancelled governance test","select":False,
+                                   "dry_run":False,"check":False})()
+            self.assertEqual(ws.transition(root, action), 0)
+            selected = json.loads(b.read_text(encoding="utf-8"))
+            self.assertEqual(selected["lifecycle"], state)
+            self.assertFalse(selected["selectedForExecution"])
+            for field in ("executionId", "worktreeId", "claims", "review", "reviewEpoch", "reviewPeer", "reviewFindings"):
+                self.assertNotIn(field, selected, field)
+            survivor = json.loads((root / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
+            self.assertEqual((survivor["executionId"], survivor["worktreeId"]), ("a", "worktree-a"))
+            self.assertEqual(ws.validate(root), 0)
+            if state == "Blocked":
+                b_value = json.loads(b.read_text(encoding="utf-8")); b_value["lifecycle"] = "Blocked"; b_value["lifecycleLabel"] = "blocked"
+                b.write_text(ws.dump(b_value), encoding="utf-8")
+        execution = json.loads((root / "docs/project/execution.json").read_text(encoding="utf-8"))
+        self.assertIn("a", {entry["executionId"] for entry in execution["executions"]})
 
     def test_replace_failure_rolls_back_all_payloads(self):
         self.reset_gws1_transition_fixture()
@@ -278,6 +295,30 @@ class WorkStateTests(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertEqual(failed_before, {p: p.read_bytes() for p in failed_before})
         self.assertFalse((failed / "checkpoint.md").exists())
+        supplied = self.synthetic()
+        supplied_record = supplied / "docs/project/work-items/A.json"
+        supplied_value = json.loads(supplied_record.read_text(encoding="utf-8"))
+        supplied_value["checkpointId"], supplied_value["checkpointPath"] = None, None
+        supplied_record.write_text(ws.dump(supplied_value), encoding="utf-8")
+        code, output = self.operation(supplied, "prepare", id="A", scaffold=True,
+                                      checkpoint_id="custom-a", checkpoint_path="docs/work/custom-a")
+        self.assertEqual(code, 0, output)
+        stored = json.loads(supplied_record.read_text(encoding="utf-8"))
+        self.assertEqual((stored["checkpointId"], stored["checkpointPath"]), ("custom-a", "docs/work/custom-a"))
+        self.assertTrue((supplied / "docs/work/custom-a/checkpoint.md").exists())
+        for checkpoint_id, checkpoint_path in (("custom-a", "/outside"), ("custom-a", "../outside"),
+                                                ("custom-a", "docs/work"), ("bad/id", "docs/work/bad-id"),
+                                                ("other", "docs/work/custom-a")):
+            candidate = self.synthetic()
+            record_path = candidate / "docs/project/work-items/A.json"
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            record["checkpointId"], record["checkpointPath"] = None, None
+            record_path.write_text(ws.dump(record), encoding="utf-8")
+            before = {p: p.read_bytes() for p in candidate.rglob("*") if p.is_file()}
+            code, output = self.operation(candidate, "prepare", id="A", scaffold=True,
+                                          checkpoint_id=checkpoint_id, checkpoint_path=checkpoint_path)
+            self.assertNotEqual(code, 0, (checkpoint_id, checkpoint_path, output))
+            self.assertEqual(before, {p: p.read_bytes() for p in before})
 
     def test_activate_dry_run_is_nonmutating_and_apply_records_identity_and_claims(self):
         root = self.synthetic()
@@ -354,13 +395,17 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(ws.validate(root), 0)
         self.assertEqual(self.activate(root, execution_id="a", claim="src/a")[0], 0)
         self.assertEqual(self.activate(root, item="B", execution_id="b", claim="src/b")[0], 0)
-        self.assertEqual(self.operation(root, "handoff", id="A", execution_id="a", pr="https://github.com/o/r/pull/1",
-                                        head="a" * 40, observed_head="a" * 40, observed_author="external-author",
-                                        peer="reviewer", epoch="1", finding=["Fixed: focused verification"])[0], 0)
-        self.assertEqual(self.operation(root, "closeout", id="A", execution_id="a", select_id="B", focused_receipt="focused",
-                                        final_receipt="final", attribution="tester", pr="https://github.com/o/r/pull/1",
-                                        head="a" * 40, observed_head="a" * 40, peer="reviewer",
-                                        merge_sha="a" * 40)[0], 0)
+        observed = {"number": 1, "state": "OPEN", "isDraft": False, "author": {"login": "external-author"},
+                    "headRefOid": "a" * 40, "mergeCommit": None, "reviewDecision": "APPROVED"}
+        merged = dict(observed, state="MERGED", mergeCommit={"oid": "a" * 40})
+        with patch("tools.governance.work_state.authenticated_pr", side_effect=[observed, merged]), patch("tools.governance.work_state.authenticated_reviews"):
+            self.assertEqual(self.operation(root, "handoff", id="A", execution_id="a", pr="https://github.com/o/r/pull/1",
+                                            head="a" * 40, observed_head="a" * 40, observed_author="external-author",
+                                            peer="reviewer", epoch="1", finding=["Fixed: focused verification"])[0], 0)
+            self.assertEqual(self.operation(root, "closeout", id="A", execution_id="a", select_id="B", focused_receipt="focused",
+                                            final_receipt="final", attribution="tester", pr="https://github.com/o/r/pull/1",
+                                            head="a" * 40, observed_head="a" * 40, peer="reviewer",
+                                            merge_sha="a" * 40)[0], 0)
         state = json.loads((root / "docs/project/work-items/B.json").read_text(encoding="utf-8"))
         self.assertEqual(state.get("executionId"), "b")
         self.assertTrue(state.get("selectedForExecution"))
@@ -426,6 +471,29 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertFalse(absent.exists())
         self.assertEqual(empty.read_bytes(), b"")
+        for parent_link in (False, True):
+            link_root = self.synthetic()
+            outside_dir = Path(tempfile.mkdtemp(dir=link_root.parent))
+            outside_file = outside_dir / "sentinel.txt"
+            outside_file.write_text("outside", encoding="utf-8")
+            try:
+                if parent_link:
+                    link = link_root / "docs/project/linked"
+                    link.symlink_to(outside_dir, target_is_directory=True)
+                    target = link / "sentinel.txt"
+                else:
+                    target = link_root / "docs/project/work-items/linked.txt"
+                    target.symlink_to(outside_file)
+                payload = target.read_bytes()
+                journal = {"executionId":"safe", "entries":[{"path":str(target.relative_to(link_root)).replace("\\","/"),
+                    "originalExists":True, "originalHash":ws.file_hash(payload), "targetHash":ws.file_hash(b"replacement"),
+                    "original":base64.b64encode(payload).decode(), "target":base64.b64encode(b"replacement").decode()}]}
+                (link_root / "docs/project/work-state.journal.json").write_text(json.dumps(journal), encoding="utf-8")
+                code, output = self.operation(link_root, "recover", execution_id="safe")
+                self.assertNotEqual(code, 0, output)
+                self.assertEqual(outside_file.read_text(encoding="utf-8"), "outside")
+            except OSError as error:
+                self.skipTest("symlink fixture unavailable: " + str(error))
 
     def test_packets_and_projection_are_order_and_checkout_independent(self):
         left, right = self.synthetic(), self.synthetic()
@@ -454,21 +522,55 @@ class WorkStateTests(unittest.TestCase):
         root = self.synthetic()
         self.assertEqual(ws.validate(root), 0)
         self.assertEqual(self.activate(root, execution_id="e", claim="src/a")[0], 0)
-        for options in ({"pr": "https://github.com/o/r/pull/1", "head": "c" * 40, "observed_head": "c" * 40,
-                         "observed_author": "tester", "peer": "tester"},
-                        {"pr": "https://github.com/o/r/pull/1", "head": "b" * 40, "observed_head": "c" * 40,
-                         "observed_author": "reviewer", "peer": "reviewer"}):
-            self.assertNotEqual(self.operation(root, "handoff", id="A", execution_id="e", **options)[0], 0)
-        handoff_code, _ = self.operation(root, "handoff", id="A", execution_id="e", pr="https://github.com/o/r/pull/1",
-                                         head="c" * 40, observed_head="c" * 40, observed_author="external-author",
-                         peer="reviewer", epoch="1", finding=["Fixed: focused verification receipt"])
+        def pr_view(**changes):
+            value = {"number":1, "url":"https://github.com/o/r/pull/1", "state":"OPEN", "isDraft":False,
+                     "author":{"login":"actual-author"}, "headRefOid":"c"*40}
+            value.update(changes)
+            return type("R",(),{"stdout":json.dumps(value)})()
+        base = {"id":"A", "execution_id":"e", "head":"c"*40, "observed_head":"spoofed",
+                "observed_author":"spoofed", "peer":"reviewer", "epoch":"1", "finding":["Fixed: receipt"]}
+        for options, response in (({"pr":"https://github.com/o/r/pull/2"}, pr_view()),
+                                  ({"pr":"https://github.com/o/r/pull/1", "head":"b"*40}, pr_view()),
+                                  ({"pr":"https://github.com/o/r/pull/1"}, pr_view(isDraft=True)),
+                                  ({"pr":"https://github.com/o/r/pull/1"}, pr_view(state="CLOSED")),
+                                  ({"pr":"https://github.com/o/r/pull/1", "peer":"actual-author"}, pr_view())):
+            with patch("subprocess.run", return_value=response):
+                self.assertNotEqual(self.operation(root, "handoff", **dict(base, **options))[0], 0)
+        with patch("subprocess.run", return_value=pr_view()) as run:
+            handoff_code, _ = self.operation(root, "handoff", **dict(base, pr="https://github.com/o/r/pull/1"))
         self.assertEqual(handoff_code, 0)
+        self.assertTrue(run.called)
         self.assertEqual(ws.validate(root), 0)
         self.assertIn("`ReviewRequired`", (root / "docs/work/checkpoints/A/checkpoint.md").read_text(encoding="utf-8"))
         reviewed = json.loads((root / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
-        self.assertEqual(reviewed["reviewFindings"], ["Fixed: focused verification receipt"])
+        self.assertEqual(reviewed["reviewFindings"], ["Fixed: receipt"])
         self.assertEqual(reviewed["reviewPeer"], "reviewer")
         self.assertEqual(reviewed["pr"], "https://github.com/o/r/pull/1")
+        self.assertEqual(reviewed["review"]["requestHead"], "c" * 40)
+        resolving = type("A",(),{"id":"A","state":"ResolvingFindings","reason":"repair in progress",
+                                  "select":False,"dry_run":False,"check":False})()
+        self.assertEqual(ws.transition(root, resolving), 0)
+        repaired_findings = ["Fixed: final verification", "Deferred: owner approval: bounded follow-up"]
+        repaired_view = pr_view(headRefOid="d" * 40)
+        for epoch, authenticated_head in (("1", "d" * 40), ("2", "c" * 40)):
+            with patch("subprocess.run", return_value=repaired_view):
+                rejected, _ = self.operation(root, "handoff", id="A", execution_id="e",
+                                             pr="https://github.com/o/r/pull/1", head=authenticated_head,
+                                             observed_head="spoofed", observed_author="spoofed", peer="reviewer",
+                                             epoch=epoch, finding=repaired_findings)
+            self.assertNotEqual(rejected, 0, (epoch, authenticated_head))
+        with patch("subprocess.run", return_value=repaired_view):
+            rehandoff, _ = self.operation(root, "handoff", id="A", execution_id="e",
+                                          pr="https://github.com/o/r/pull/1", head="d" * 40,
+                                          observed_head="spoofed", observed_author="spoofed", peer="reviewer",
+                                          epoch="2", finding=repaired_findings)
+        self.assertEqual(rehandoff, 0)
+        repaired = json.loads((root / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
+        self.assertEqual(repaired["lifecycle"], "ReviewRequired")
+        self.assertEqual(repaired["reviewEpoch"], "2")
+        self.assertEqual(repaired["review"]["requestHead"], "d" * 40)
+        self.assertEqual(repaired["reviewFindings"], sorted(repaired_findings))
+        self.assertEqual(ws.validate(root), 0)
 
     def test_execution_metadata_shapes_and_lifecycle_consistency_are_rejected(self):
         root = self.synthetic()
@@ -483,6 +585,10 @@ class WorkStateTests(unittest.TestCase):
             ("reviewFindings", "fixed", "review"),
             ("reviewFindings", ["open"], "review"),
             ("closeout", {"executionId": "e"}, "closeout"),
+            ("review", {"executionId":"e", "pr":"not-a-url", "requestHead":"bad", "author":7,
+                         "peer":"peer", "epoch":"1", "findings":[]}, "review"),
+            ("closeout", {"executionId":"e", "pr":"not-a-url", "head":"bad", "mergeSha":"bad",
+                          "focused":7, "final":None, "attribution":7, "findings":"resolved"}, "closeout"),
             ("executionId", "orphan", "lifecycle"),
         )
         for field, value, diagnostic in cases:
@@ -573,28 +679,51 @@ class WorkStateTests(unittest.TestCase):
         root = self.synthetic(second=True, dependency=True)
         self.assertEqual(ws.validate(root), 0)
         self.assertEqual(self.activate(root, execution_id="a", claim="src/a")[0], 0)
-        handoff_code, _ = self.operation(root, "handoff", id="A", execution_id="a", pr="https://github.com/o/r/pull/1",
-                                         head="d" * 40, observed_head="d" * 40, observed_author="external-author",
-                                         peer="reviewer", epoch="1", finding=["Fixed: focused verification receipt"])
+        h1, h2, h3 = "d"*40, "e"*40, "f"*40
+        pr = {"number":1,"url":"https://github.com/o/r/pull/1","state":"OPEN","isDraft":False,
+              "author":{"login":"actual-author"},"headRefOid":h1,"mergeCommit":None}
+        def gh_view(merged=False, head=h2, review_state="APPROVED", review_head=h2, review_peer="reviewer", merge_sha="a"*40):
+            view = dict(pr, headRefOid=head, mergeCommit={"oid":merge_sha} if merged else None)
+            reviews = [{"user":{"login":review_peer}, "state":review_state, "commit_id":review_head}]
+            def run(command, *args, **kwargs):
+                text = " ".join(command) if isinstance(command, (list, tuple)) else str(command)
+                return type("R",(),{"stdout":json.dumps(reviews if "reviews" in text else view)})()
+            return run
+        with patch("subprocess.run", side_effect=gh_view(head=h1, review_head=h1)) as run:
+            handoff_code, _ = self.operation(root, "handoff", id="A", execution_id="a", pr="https://github.com/o/r/pull/1",
+                                             head=h1, observed_head="spoofed", observed_author="spoofed",
+                                             peer="reviewer", epoch="1", finding=["Fixed: focused verification receipt"])
         self.assertEqual(handoff_code, 0)
         self.assertEqual(ws.validate(root), 0)
+        handoff_record = json.loads((root / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
+        self.assertEqual(handoff_record["review"]["requestHead"], h1)
         for finding in ("open", "unresolved"):
             self.assertNotEqual(self.operation(root, "closeout", id="A", execution_id="a", findings=finding)[0], 0)
-        mismatch_code, mismatch_output = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
-                                                        focused_receipt="focused", final_receipt="final", attribution="tester",
-                                                        pr="https://github.com/o/r/pull/1", head="e" * 40,
-                                                        observed_head="e" * 40, peer="reviewer", merge_sha="a" * 40)
-        self.assertNotEqual(mismatch_code, 0)
-        self.assertRegex(mismatch_output.lower(), r"(?i)(head|review|receipt|observed)")
-        close_code, close_packet = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
-                                                  focused_receipt="focused", final_receipt="final", attribution="tester",
-                                                  pr="https://github.com/o/r/pull/1", head="d" * 40,
-                                                  observed_head="d" * 40, peer="reviewer", merge_sha="a" * 40)
+        for variant, caller_head in ((dict(merged=False), h2), (dict(merged=True, merge_sha="b"*40), h2),
+                                      (dict(merged=True, review_head=h1), h2),
+                                      (dict(merged=True, review_head=h3), h2),
+                                      (dict(merged=True, review_peer="other"), h2),
+                                      (dict(merged=True), h1), (dict(merged=True), h3),
+                                      (dict(merged=True, review_state="COMMENTED"), h2)):
+            with patch("subprocess.run", side_effect=gh_view(**variant)):
+                rejected, _ = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
+                                              focused_receipt="focused", final_receipt="final", attribution="tester",
+                                              pr="https://github.com/o/r/pull/1", head=caller_head,
+                                              observed_head="spoofed", peer="reviewer", merge_sha="a"*40)
+            self.assertNotEqual(rejected, 0, variant)
+        with patch("subprocess.run", side_effect=gh_view(merged=True)):
+            close_code, close_packet = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
+                                                   focused_receipt="focused", final_receipt="final", attribution="tester",
+                                                   pr="https://github.com/o/r/pull/1", head=h2,
+                                                   observed_head="spoofed", peer="reviewer", merge_sha="a" * 40)
         self.assertEqual(close_code, 0, close_packet)
         self.assertNotRegex(close_packet, r"(?i)([A-Z]:\\|/Users/|/home/|token|password|session|timestamp|2026-)")
         dependent = json.loads((root / "docs/project/work-items/B.json").read_text(encoding="utf-8"))
         closed = json.loads((root / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
         self.assertEqual(closed.get("claims"), [])
+        self.assertEqual(closed["closeout"], {"executionId":"a", "pr":"https://github.com/o/r/pull/1",
+                                               "head":h2, "mergeSha":"a"*40, "focused":"focused",
+                                               "final":"final", "attribution":"tester", "findings":["resolved"]})
         self.assertNotEqual(dependent.get("lifecycle"), "Active")
         self.assertEqual(dependent.get("claims"), None)
         self.assertIn("`Closed`", (root / "docs/work/checkpoints/A/checkpoint.md").read_text(encoding="utf-8"))
@@ -644,16 +773,25 @@ class WorkStateTests(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertEqual(run.call_count, 1)
         self.assertIn("CLOSED", output)
+        item["lifecycle"], item["lifecycleLabel"] = "Active", "active"
+        item_path.write_text(ws.dump(item), encoding="utf-8")
         marker_remote = json.dumps([{"number": 1, "state": "OPEN", "labels": [{"name": "ready"}, {"name": "keep"}],
-                                     "comments": [{"body": "SeqDoc packet: start A; closure A; marker=seqdoc-state-v1"}]}])
+                                     "comments": [{"body": "seqdoc-state-v1:A:Closed\nitem=A state=Closed checkpoint=old next=closed"}]}])
         with patch("subprocess.run", return_value=type("R", (), {"stdout": marker_remote})()) as run:
             code, output = self.operation(root, "project", dry_run=True)
         self.assertEqual(code, 0, output)
         self.assertEqual(run.call_count, 1)
-        self.assertIn("seqdoc-state-v1", output)
-        self.assertIn("start", output)
-        self.assertIn("closure", output)
-        self.assertNotIn("--add-label ready", output)
+        self.assertIn("--body", output)
+        self.assertIn("Active", output)
+        self.assertNotIn("timestamp", output.lower())
+        self.assertNotIn("session", output.lower())
+        duplicate = json.dumps([{"number": 1, "state": "OPEN", "labels": [{"name": "active"}, {"name": "keep"}],
+                                "comments": [{"body": "seqdoc-state-v1:A:Active\nitem=A state=Active checkpoint=A next=continue"}]}])
+        with patch("subprocess.run", return_value=type("R", (), {"stdout": duplicate})()) as run:
+            code, output = self.operation(root, "project", dry_run=True)
+        self.assertEqual(code, 0, output)
+        self.assertEqual(run.call_count, 1)
+        self.assertNotIn("--body", output)
 
     def test_real_registry_and_checked_in_projection_are_read_only(self):
         registry = {p: p.read_bytes() for p in (ROOT / "docs/project/work-items").glob("*.json")}

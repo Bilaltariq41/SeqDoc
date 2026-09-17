@@ -2,7 +2,7 @@
 
 ## State
 
-`Building`
+`ResolvingFindings`
 
 ## Authority
 

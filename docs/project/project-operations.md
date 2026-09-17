@@ -25,8 +25,8 @@ python -B tools/governance/work_state.py validate --root .
 python -B tools/governance/work_state.py project-execution --root . --check
 python -B tools/governance/work_state.py prepare --root . --id GH-57
 python -B tools/governance/work_state.py activate --root . --id ITEM --execution-id EXEC --expected-baseline SHA --current-head SHA --current-branch BRANCH --clean --worktree-id WORKTREE --claim path/to/file --dry-run
-python -B tools/governance/work_state.py handoff --root . --id ITEM --execution-id EXEC --pr PR_URL --head SHA --observed-head SHA --observed-author AUTHOR --peer PEER --epoch EPOCH --finding "Fixed: receipt"
-python -B tools/governance/work_state.py closeout --root . --id ITEM --execution-id EXEC --pr PR_URL --head SHA --observed-head SHA --peer PEER --findings resolved --focused-receipt FOCUSED --final-receipt FINAL --attribution AUTHOR --merge-sha SHA
+python -B tools/governance/work_state.py handoff --root . --id ITEM --execution-id EXEC --pr PR_URL --head SHA --peer PEER --epoch EPOCH --finding "Fixed: receipt"
+python -B tools/governance/work_state.py closeout --root . --id ITEM --execution-id EXEC --pr PR_URL --head SHA --peer PEER --findings resolved --focused-receipt FOCUSED --final-receipt FINAL --attribution AUTHOR --merge-sha SHA
 ```
 
 `activate` observes Git directly whenever the root is a checkout and compares supplied values as expectations. Synthetic
@@ -54,7 +54,9 @@ for compatibility. Disjoint claims may run concurrently; closeout releases only 
 authenticated current PR author, current head, non-author peer, and a review epoch; stale SHA and author-as-peer are
 rejected. Findings are sorted and must receive deterministic dispositions before closure.
 
-`closeout` requires matching execution/PR/merge identity, focused and final receipts, attribution, resolved findings,
+`handoff` invokes authenticated `gh pr view` internally and requires an open, non-draft PR, current head, observed author, and a non-author peer. The first handoff from `Active` uses epoch 1; a repair handoff from `ResolvingFindings` requires a larger integer epoch, an advanced PR head, the same peer (or explicit `--allow-peer-change`), and complete dispositions stored in sorted order. It replaces the authenticated `requestHead` boundary and returns the capsule to `ReviewRequired`. Observed caller fields are test seams only; handoff requests review and does not claim approval.
+
+`closeout` invokes authenticated PR and paginated review observations, requiring a merged PR, its actual final head and merge SHA, and an exact-final-head `APPROVED` review by the stored peer. The handoff request head is retained only as a historical boundary; the caller's closeout head must match the authenticated final head. It requires matching execution/PR identity, focused and final receipts, attribution, resolved findings,
 and review evidence. It closes atomically and either leaves the root idle or selects an already-complete recipient.
 `promote` changes only a blocked or draft dependent to `Ready` after every dependency is `Closed` and its capsule is
 complete; it never activates or selects the dependent.
@@ -72,7 +74,7 @@ Write collaborator list, GitHub token scopes, branch protection, and owner-only 
 confirm that projection credentials remain least-privilege.
 
 `project --dry-run` first reads issue state, lifecycle labels, and comments. A state mismatch aborts before any write.
-Marker comments use `seqdoc-state-v1` and are not repeated when an observed marker exists; unrelated labels are never
+Marker comments use an exact `seqdoc-state-v1:<item>:<lifecycle>` marker; start and closure packets are distinct and only an exact duplicate is suppressed. Unrelated labels are never
 removed. `sync-github` retains lifecycle-label creation and update behavior. Neither operation changes registry files or
 PR heads. `recover` accepts only a fully validated relative-path journal whose current bytes match an original or target
 hash; malformed, outside-root, newer, or partially described journals remain untouched and require manual inspection.
