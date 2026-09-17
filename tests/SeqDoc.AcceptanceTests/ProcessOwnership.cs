@@ -88,6 +88,7 @@ internal sealed class ProcessOwnershipNativeCalls
     internal Func<nint, NativeCallResult<uint>>? ResumeThread { get; init; }
     internal Func<nint, uint, NativeCallResult>? TerminateProcess { get; init; }
     internal Func<nint, NativeCallResult<uint>>? PeekNamedPipe { get; init; }
+    internal Func<nint, NativeCallResult>? CloseHandle { get; init; }
 }
 
 public sealed class ProcessOwnershipConstructionResult
@@ -200,10 +201,13 @@ internal sealed class FailureClassTracker
 /// </summary>
 public static class ProcessOwnershipPlatform
 {
-    public static bool IsSupported() => Evaluate(OperatingSystem.IsWindows(), RuntimeInformation.ProcessArchitecture);
+    public static bool IsSupported() => Evaluate(
+        OperatingSystem.IsWindows(), RuntimeInformation.ProcessArchitecture, Environment.OSVersion.Version);
 
-    internal static bool Evaluate(bool isWindows, System.Runtime.InteropServices.Architecture architecture) =>
-        isWindows && architecture == System.Runtime.InteropServices.Architecture.X64;
+    internal static bool Evaluate(
+        bool isWindows, System.Runtime.InteropServices.Architecture architecture, Version version) =>
+        isWindows && architecture == System.Runtime.InteropServices.Architecture.X64
+        && version >= new Version(10, 0);
 }
 
 /// <summary>
@@ -340,6 +344,7 @@ public sealed class ContainedProcess : IDisposable
     private nint _environmentBlockBuffer;
     private nint _commandLineBuffer;
     private nint _handleListBuffer;
+    private nint _jobListBuffer;
     private nint _parentStdOutRead;
     private nint _parentStdErrRead;
     private nint _parentStdInWrite;
@@ -350,6 +355,7 @@ public sealed class ContainedProcess : IDisposable
     private CancellationTokenSource? _completionMonitorCts;
     private CancellationTokenSource? _drainCts;
     private volatile bool _activeProcessZeroObserved;
+    private volatile bool _completionObservationStoppedForTests;
     private bool _stdOutDrainCompleted;
     private bool _stdErrDrainCompleted;
     private bool _drainsCompletedBeforeCompletionProof;
@@ -358,6 +364,7 @@ public sealed class ContainedProcess : IDisposable
     private bool _terminateJobObjectCalled;
     private LifecycleState _lifecycleState = LifecycleState.Running;
     private readonly object _lifecycleGate = new();
+    private readonly object _teardownEvidenceGate = new();
     private Task<bool>? _terminalTask;
     private Task<bool>? _familyProofTask;
     private Task? _disposeTask;
@@ -378,6 +385,8 @@ public sealed class ContainedProcess : IDisposable
 
     /// <summary>Test-only chronology seam — see the invocation site in <see cref="StartCore"/>.</summary>
     internal static Action<nint, nint>? AssignBeforeResumeHookForTests;
+
+    internal static Action<nint, nint>? PostCreateProcessObserverForTests { get; set; }
 
     /// <summary>
     /// GH106-R2-F1 test-only seam: invoked with the constructed <see cref="ContainedProcess"/> right
@@ -406,7 +415,7 @@ public sealed class ContainedProcess : IDisposable
     /// <summary>GH106-R2-F7: the aggregated teardown failure details recorded during <see cref="Dispose"/>.</summary>
     public IReadOnlyList<string> TeardownFailures
     {
-        get { lock (_lifecycleGate) { return _teardownFailures.ToArray(); } }
+        get { lock (_teardownEvidenceGate) { return _teardownFailures.ToArray(); } }
     }
 
     /// <summary>Test-only observability: never used to gate production semantics.</summary>
@@ -430,7 +439,14 @@ public sealed class ContainedProcess : IDisposable
     internal IReadOnlyList<string> SecondaryFailures => _failures.SecondaryFailures;
 
     /// <summary>GH106-R2-F2 test-only seam: forces the completion monitor to stop observing ACTIVE_PROCESS_ZERO.</summary>
-    internal void StopCompletionMonitorForTests() => _completionMonitorCts?.Cancel();
+    internal void StopCompletionMonitorForTests()
+    {
+        // This seam models an unavailable completion observation channel, even if a very fast child
+        // posted its zero message before the test could cancel the monitor.
+        _completionObservationStoppedForTests = true;
+        lock (_lifecycleGate) { _activeProcessZeroObserved = false; }
+        _completionMonitorCts?.Cancel();
+    }
 
     internal Task? CompletionMonitorTaskForTests => _completionMonitor;
 
@@ -439,7 +455,10 @@ public sealed class ContainedProcess : IDisposable
     internal Task<(string Text, bool Truncated)>? StdErrDrainTaskForTests => _stdErrDrain;
 
     /// <summary>GH106-R2-F11: ordered trace of every resource label actually closed/freed by <see cref="Dispose"/>.</summary>
-    internal IReadOnlyList<string> TeardownOrderForTests => _teardownOrderForTests;
+    internal IReadOnlyList<string> TeardownOrderForTests
+    {
+        get { lock (_teardownEvidenceGate) { return _teardownOrderForTests.ToArray(); } }
+    }
 
     public static ProcessOwnershipConstructionResult Start(ProcessOwnershipOptions options) =>
         Start(options, ConstructionFaultPoint.None);
@@ -453,7 +472,7 @@ public sealed class ContainedProcess : IDisposable
         {
             return ProcessOwnershipConstructionResult.Failure(
                 "Unsupported platform: this primitive requires Windows x64 (RID-equivalent), matching "
-                + "finalized contract decision 1. No PATH/version-floor fallback is attempted.");
+                + "Windows 10 / Server 2016 or newer. No PATH/version-floor fallback is attempted.");
         }
 
         // GH106-R2-F8/F13: reject embedded NUL and malformed environment-name vectors before any
@@ -585,7 +604,7 @@ public sealed class ContainedProcess : IDisposable
             throw new InvalidOperationException("fault-injected: AfterPipesCreated");
         }
 
-        // --- S2: attribute list restricting inheritance to exactly the 3 child-side handles. ---
+        // --- S2: persistent handle-list payload restricting inheritance to exactly the 3 child-side handles. ---
         nint[] inheritable = [stdInRead, stdOutWrite, stdErrWrite];
         nint handleListBuffer = Marshal.AllocHGlobal(nint.Size * inheritable.Length);
         PushUnwind("handle list buffer", () => Marshal.FreeHGlobal(handleListBuffer));
@@ -600,13 +619,6 @@ public sealed class ContainedProcess : IDisposable
             {
                 handles[i] = inheritable[i];
             }
-        }
-
-        nint attributeListBuffer = BuildAttributeList(handleListBuffer, inheritable.Length, unwind);
-
-        if (faultPoint == ConstructionFaultPoint.AfterAttributeListBuilt)
-        {
-            throw new InvalidOperationException("fault-injected: AfterAttributeListBuilt");
         }
 
         // --- S3: Job Object with kill-on-close and breakaway denied. ---
@@ -641,7 +653,7 @@ public sealed class ContainedProcess : IDisposable
             throw new InvalidOperationException("fault-injected: AfterJobCreated");
         }
 
-        // --- S3.5: IOCP associated to the job so ACTIVE_PROCESS_ZERO can be observed later. ---
+        // --- S3.5: IOCP associated to the inactive job so ACTIVE_PROCESS_ZERO can be observed later. ---
         nint completionPort = NativeMethods.CreateIoCompletionPort(
             new nint(-1), nint.Zero, nint.Zero, 1);
         if (completionPort == nint.Zero)
@@ -673,6 +685,25 @@ public sealed class ContainedProcess : IDisposable
         finally
         {
             Marshal.FreeHGlobal(associateBuffer);
+        }
+
+        // JOB_LIST is a creation-time admission payload. Keep it alive until the attribute list has
+        // been deleted during teardown; freeing it after CreateProcess would violate the native API's
+        // lifetime contract.
+        nint jobListBuffer = Marshal.AllocHGlobal(nint.Size);
+        Marshal.WriteIntPtr(jobListBuffer, jobHandle);
+        PushUnwind("job list buffer", () => Marshal.FreeHGlobal(jobListBuffer));
+
+        nint attributeListBuffer = BuildAttributeList(handleListBuffer, inheritable.Length, jobListBuffer, unwind);
+        PushUnwind("attribute list buffer", () =>
+        {
+            NativeMethods.DeleteProcThreadAttributeList(attributeListBuffer);
+            Marshal.FreeHGlobal(attributeListBuffer);
+        });
+
+        if (faultPoint == ConstructionFaultPoint.AfterAttributeListBuilt)
+        {
+            throw new InvalidOperationException("fault-injected: AfterAttributeListBuilt");
         }
 
         // --- S4: CreateProcessW, suspended, with the restricted attribute list. ---
@@ -730,6 +761,10 @@ public sealed class ContainedProcess : IDisposable
             NativeMethods.CloseHandle(processInformation.hProcess);
         });
 
+        // JOB_LIST admission has completed atomically with CreateProcess. Observe it immediately after
+        // both process/thread unwind entries exist, while the new thread is still suspended.
+        PostCreateProcessObserverForTests?.Invoke(jobHandle, processInformation.hProcess);
+
         if (faultPoint == ConstructionFaultPoint.AfterProcessCreatedBeforeAssign)
         {
             // Deliberately fault before any background reader/monitor thread exists and before the
@@ -770,6 +805,7 @@ public sealed class ContainedProcess : IDisposable
             _environmentBlockBuffer = environmentBuffer,
             _commandLineBuffer = commandLineBuffer,
             _handleListBuffer = handleListBuffer,
+            _jobListBuffer = jobListBuffer,
             _parentStdOutRead = stdOutRead,
             _parentStdErrRead = stdErrRead,
             _parentStdInWrite = stdInWrite,
@@ -785,7 +821,7 @@ public sealed class ContainedProcess : IDisposable
         process.StartDrains(options.DrainTimeout);
         process.StartCompletionMonitor();
 
-        // GH106-R2-F1: a failure past this point (AssignProcessToJobObject, the test hook, or
+        // GH106-R2-F1: a failure past this point (the test hook or
         // ResumeThread) must not leak the background drain/completion-monitor tasks just started. This
         // single unwind entry is the one cleanup mechanism for that background work — terminating the
         // process directly (rather than relying on pop order against the separately-pushed "process
@@ -823,18 +859,7 @@ public sealed class ContainedProcess : IDisposable
             throw new InvalidOperationException("fault-injected: AfterDrainsStartedBeforeAssign");
         }
 
-        // --- S5: assign to the job BEFORE first resume — containment precedes any executed instruction. ---
-        NativeCallResult assign = options.NativeCalls?.AssignProcessToJobObject?.Invoke(jobHandle, processInformation.hProcess)
-            ?? (NativeMethods.AssignProcessToJobObject(jobHandle, processInformation.hProcess)
-                ? NativeCallResult.Success() : NativeCallResult.Failure(Marshal.GetLastWin32Error()));
-        if (!assign.Succeeded)
-        {
-            throw Win32("AssignProcessToJobObject", assign.Win32Error);
-        }
-
-        // Test-only chronology seam (same assembly only): invoked while the thread is still suspended,
-        // strictly between AssignProcessToJobObject and ResumeThread, so a test can prove job membership
-        // is already established before the child ever executes an instruction.
+        // Historical pre-resume membership observer; it is no longer an assignment point.
         AssignBeforeResumeHookForTests?.Invoke(jobHandle, processInformation.hProcess);
 
         // --- S6: resume. ---
@@ -1124,7 +1149,18 @@ public sealed class ContainedProcess : IDisposable
         // A live wait is the last permitted user of the process handle; the completion monitor is the
         // corresponding last user of the job handle.  Retain both when either proof is incomplete rather
         // than reporting successful teardown after closing beneath live work.
-        bool nativeHandlesSafe = waitComplete && monitorComplete;
+        bool familyProven = await EnsureFamilyProofAsync(CancellationToken.None).ConfigureAwait(false);
+        bool nativeHandlesSafe = familyProven && waitComplete && monitorComplete;
+        if (!familyProven)
+        {
+            lock (_teardownEvidenceGate)
+            {
+                _teardownFailures.Add(
+                    "ACTIVE_PROCESS_ZERO was not proven; retained process handle, completion port handle, and job handle.");
+            }
+            _failures.Record(ProcessOwnershipFailureClass.TeardownDegraded,
+                "ACTIVE_PROCESS_ZERO was not proven; retained process handle, completion port handle, and job handle.");
+        }
         _completionMonitorCts?.Dispose();
         _drainCts?.Dispose();
         if (nativeHandlesSafe)
@@ -1134,12 +1170,13 @@ public sealed class ContainedProcess : IDisposable
         CloseTracked(ref _threadHandle, "thread handle");
         FreeTracked(ref _environmentBlockBuffer, "environment block buffer", deleteAttributeList: false);
         FreeTracked(ref _commandLineBuffer, "command line buffer", deleteAttributeList: false);
+        FreeTracked(ref _attributeListBuffer, "attribute list buffer", deleteAttributeList: true);
+        FreeTracked(ref _jobListBuffer, "job list buffer", deleteAttributeList: false);
         if (nativeHandlesSafe)
         {
             CloseTracked(ref _completionPortHandle, "completion port handle");
             CloseTracked(ref _jobHandle, "job handle");
         }
-        FreeTracked(ref _attributeListBuffer, "attribute list buffer", deleteAttributeList: true);
         FreeTracked(ref _handleListBuffer, "handle list buffer", deleteAttributeList: false);
         if (drainsComplete)
         {
@@ -1147,10 +1184,12 @@ public sealed class ContainedProcess : IDisposable
             CloseTracked(ref _parentStdOutRead, "stdout pipe handle");
         }
         CloseTracked(ref _parentStdInWrite, "stdin pipe handle");
-        if (_teardownFailures.Count > 0)
+        string[] teardownFailures;
+        lock (_teardownEvidenceGate) { teardownFailures = _teardownFailures.ToArray(); }
+        if (teardownFailures.Length > 0)
         {
             _failures.Record(ProcessOwnershipFailureClass.TeardownDegraded,
-                $"{_teardownFailures.Count} teardown step(s) failed: {string.Join("; ", _teardownFailures)}");
+                $"{teardownFailures.Length} teardown step(s) failed: {string.Join("; ", teardownFailures)}");
         }
         lock (_lifecycleGate) { _lifecycleState = LifecycleState.Disposed; }
     }
@@ -1257,7 +1296,7 @@ public sealed class ContainedProcess : IDisposable
     private async Task<bool> RunFamilyProofAsync(CancellationToken cancellationToken)
     {
         await WaitForActiveProcessZero(cancellationToken).ConfigureAwait(false);
-        bool proven = _activeProcessZeroObserved;
+        bool proven = _activeProcessZeroObserved && !_completionObservationStoppedForTests;
         if (!proven)
         {
             _failures.Record(ProcessOwnershipFailureClass.ProcessFailed,
@@ -1341,7 +1380,10 @@ public sealed class ContainedProcess : IDisposable
     }
 
     /// <summary>Aggregated teardown failures recorded during <see cref="Dispose"/>, if any.</summary>
-    internal IReadOnlyList<string> TeardownFailuresForTests => _teardownFailures;
+    internal IReadOnlyList<string> TeardownFailuresForTests
+    {
+        get { lock (_teardownEvidenceGate) { return _teardownFailures.ToArray(); } }
+    }
 
     internal ProcessOwnershipFailureClass RecordedFailureClassForTests => _failures.Class;
 
@@ -1354,18 +1396,29 @@ public sealed class ContainedProcess : IDisposable
 
         nint toClose = handle;
         handle = nint.Zero;
-        _teardownOrderForTests.Add(label);
         ResourceReleaseObserverForTests?.Invoke(label);
         try
         {
-            if (!NativeMethods.CloseHandle(toClose))
+            NativeCallResult result = _nativeCalls.CloseHandle?.Invoke(toClose)
+                ?? (NativeMethods.CloseHandle(toClose)
+                    ? NativeCallResult.Success()
+                    : NativeCallResult.Failure(Marshal.GetLastWin32Error()));
+            lock (_teardownEvidenceGate)
             {
-                _teardownFailures.Add($"CloseHandle({label}) failed: {Marshal.GetLastWin32Error()}");
+                _teardownOrderForTests.Add(label);
+                if (!result.Succeeded)
+                {
+                    _teardownFailures.Add($"CloseHandle({label}) failed: {result.Win32Error}");
+                }
             }
         }
         catch (Exception ex)
         {
-            _teardownFailures.Add($"CloseHandle({label}) threw: {ex.Message}");
+            lock (_teardownEvidenceGate)
+            {
+                _teardownOrderForTests.Add(label);
+                _teardownFailures.Add($"CloseHandle({label}) threw: {ex.Message}");
+            }
         }
     }
 
@@ -1378,7 +1431,6 @@ public sealed class ContainedProcess : IDisposable
 
         nint toFree = buffer;
         buffer = nint.Zero;
-        _teardownOrderForTests.Add(label);
         ResourceReleaseObserverForTests?.Invoke(label);
         try
         {
@@ -1388,10 +1440,15 @@ public sealed class ContainedProcess : IDisposable
             }
 
             Marshal.FreeHGlobal(toFree);
+            lock (_teardownEvidenceGate) { _teardownOrderForTests.Add(label); }
         }
         catch (Exception ex)
         {
-            _teardownFailures.Add($"Free({label}) threw: {ex.Message}");
+            lock (_teardownEvidenceGate)
+            {
+                _teardownOrderForTests.Add(label);
+                _teardownFailures.Add($"Free({label}) threw: {ex.Message}");
+            }
         }
     }
 
@@ -1626,6 +1683,10 @@ public sealed class ContainedProcess : IDisposable
 
                 if (key == expectedKey && bytes == NativeMethods.JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO)
                 {
+                    if (_completionObservationStoppedForTests)
+                    {
+                        return;
+                    }
                     lock (_lifecycleGate) { _activeProcessZeroObserved = true; }
                     return;
                 }
@@ -1668,36 +1729,37 @@ public sealed class ContainedProcess : IDisposable
         }
     }
 
-    private static nint BuildAttributeList(nint handleListBuffer, int handleCount, Stack<Action> unwind)
+    private static nint BuildAttributeList(
+        nint handleListBuffer, int handleCount, nint jobListBuffer, Stack<Action> unwind)
     {
         nint listSize = nint.Zero;
-        NativeMethods.InitializeProcThreadAttributeList(nint.Zero, 1, 0, ref listSize);
+        NativeMethods.InitializeProcThreadAttributeList(nint.Zero, 2, 0, ref listSize);
         nint attributeListBuffer = Marshal.AllocHGlobal(listSize);
-        unwind.Push(() =>
+        try
         {
-            UnwindStepObserverForTests?.Invoke("attribute list buffer");
+            if (!NativeMethods.InitializeProcThreadAttributeList(attributeListBuffer, 2, 0, ref listSize))
+            {
+                throw Win32("InitializeProcThreadAttributeList");
+            }
+
+            if (!NativeMethods.UpdateProcThreadAttribute(
+                attributeListBuffer, 0, NativeMethods.PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                handleListBuffer, (nint)(handleCount * nint.Size), nint.Zero, nint.Zero)
+                || !NativeMethods.UpdateProcThreadAttribute(
+                attributeListBuffer, 0, NativeMethods.PROC_THREAD_ATTRIBUTE_JOB_LIST,
+                jobListBuffer, (nint)nint.Size, nint.Zero, nint.Zero))
+            {
+                throw Win32("UpdateProcThreadAttribute");
+            }
+
+            return attributeListBuffer;
+        }
+        catch
+        {
             NativeMethods.DeleteProcThreadAttributeList(attributeListBuffer);
             Marshal.FreeHGlobal(attributeListBuffer);
-        });
-
-        if (!NativeMethods.InitializeProcThreadAttributeList(attributeListBuffer, 1, 0, ref listSize))
-        {
-            throw Win32("InitializeProcThreadAttributeList");
+            throw;
         }
-
-        if (!NativeMethods.UpdateProcThreadAttribute(
-            attributeListBuffer,
-            0,
-            NativeMethods.PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-            handleListBuffer,
-            (nint)(handleCount * nint.Size),
-            nint.Zero,
-            nint.Zero))
-        {
-            throw Win32("UpdateProcThreadAttribute");
-        }
-
-        return attributeListBuffer;
     }
 
     private static Win32Exception Win32(string apiName) =>
@@ -1727,6 +1789,7 @@ internal static unsafe class NativeMethods
     internal const int JobObjectAssociateCompletionPortInformation = 7;
     internal const uint JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO = 4;
     internal const nint PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002;
+    internal const nint PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x0002000D;
     internal const int HANDLE_FLAG_INHERIT = 1;
     internal const uint WAIT_OBJECT_0 = 0x00000000;
     internal const uint WAIT_TIMEOUT = 0x00000102;
