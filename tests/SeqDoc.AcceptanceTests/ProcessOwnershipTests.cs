@@ -1262,6 +1262,68 @@ public sealed class ProcessOwnershipTests
         }
     }
 
+    [Fact]
+    public async Task ThrowingResourceReleaseObserverDoesNotInterruptNativeHandleCleanup()
+    {
+        var releaseObserver = FindInstanceTestSeam("ResourceReleaseObserverForTests", typeof(Action<string>));
+        Assert.True(releaseObserver is not null, "Expected per-instance resource-release observer seam.");
+        var receipts = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var closedHandles = new System.Collections.Concurrent.ConcurrentQueue<nint>();
+        const string sentinel = "process-handle-observer-sentinel";
+        var nativeCalls = new ProcessOwnershipNativeCalls
+        {
+            CloseHandle = handle =>
+            {
+                closedHandles.Enqueue(handle);
+                return NativeMethods.CloseHandle(handle)
+                    ? NativeCallResult.Success()
+                    : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+            },
+        };
+        var result = ContainedProcess.Start(NewOptions(["echo", "out", "err"], nativeCalls: nativeCalls));
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        var retainedResources = FindReadableInstanceProperty("HasRetainedFamilyResourcesForTests", typeof(bool));
+        Assert.NotNull(retainedResources);
+        var lifecycle = typeof(ContainedProcess).GetField("_lifecycleState",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(lifecycle);
+        nint processHandle = process.ProcessHandleForTests;
+
+        try
+        {
+            releaseObserver!.SetValue(process, (Action<string>)(label =>
+            {
+                receipts.Enqueue(label);
+                if (label == "process handle")
+                {
+                    throw new InvalidOperationException(sentinel);
+                }
+            }));
+
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+
+            Task dispose = Task.Run(process.Dispose);
+            await dispose.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Contains(processHandle, closedHandles);
+            Assert.Equal(ExpectedFullDisposeOrder, process.TeardownOrderForTests);
+            Assert.Equal(ExpectedFullDisposeOrder, receipts);
+            Assert.Equal(ProcessOwnershipFailureClass.None, process.FailureClass);
+            Assert.Empty(process.TeardownFailures);
+            Assert.DoesNotContain(process.TeardownFailures,
+                evidence => evidence.Contains(sentinel, StringComparison.Ordinal));
+            Assert.False((bool)retainedResources!.GetValue(process)!);
+            Assert.Equal("Disposed", lifecycle!.GetValue(process)!.ToString());
+        }
+        finally
+        {
+            releaseObserver!.SetValue(process, null);
+            process.Dispose();
+        }
+    }
+
     // ---- Group 11: unrelated-process isolation, deterministic receipts, repeated-run cleanup ---------
 
     [Fact]

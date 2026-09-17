@@ -414,3 +414,9 @@ marked that finding Fixed and all earlier findings still Fixed, but identified o
 `ResourceReleaseObserverForTests` remains before `CloseHandle` in `CloseTracked`, allowing callback failure to skip the
 close and become teardown evidence. Because `CloseTracked` was outside the final authorization, I100-A returned to
 Blocked without a final gate or Ahmad review request.
+
+## Owner-authorized CloseTracked observer repair
+
+The owner authorized one repair limited to the remaining native-handle observer boundary. It permits one regression,
+the smallest callback-isolation change in `CloseTracked`, focused verification, and complete independent review. It
+does not authorize the final gate or an Ahmad review request before a clean review.

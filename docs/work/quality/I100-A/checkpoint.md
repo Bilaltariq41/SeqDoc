@@ -2,7 +2,7 @@
 
 ## State
 
-`Blocked`
+`Building`
 
 ## Authority and frozen state
 
@@ -451,6 +451,12 @@ one remaining Medium boundary in the excluded native-handle path: `CloseTracked`
 `ResourceReleaseObserverForTests` before `CloseHandle`, so a throwing observer can skip the native close and contaminate
 teardown evidence. The final authorization is exhausted; I100-A is blocked with the branch preserved and no final gate
 or Ahmad request.
+
+### Owner-authorized CloseTracked observer repair
+
+The owner authorized one same-branch repair limited to isolating `ResourceReleaseObserverForTests` from native-handle
+cleanup in `CloseTracked`. One deterministic regression, focused SDK 10.0.302 verification, and one complete
+independent review are required. The final gate and Ahmad request remain withheld until that review is clean.
 
 ### Owner platform-floor amendment
 
