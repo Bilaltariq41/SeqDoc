@@ -493,6 +493,16 @@ Stale post-create assignment wording and the unused native assignment seam must 
 ownership and evidence observables over new private-field coupling. Run the focused SDK 10.0.302 lane and a complete
 independent review, then stop for Ahmad. The final gate and GH-107 remain prohibited until Ahmad approves.
 
+#### Independent review finding on the repair candidate
+
+Review of `a38fb31` found one High transfer-atomicity gap: owner fields were populated before the transferred cleanup
+delegate was allocated and pushed, so an exception in that interval could leave the old unwind path releasing a family
+without proof while the populated owner was unreachable. The accepted repair must allocate the owner, ownership token,
+and transferred cleanup action before native acquisition; all old unwind actions must consult the same atomic token;
+and one token transition must select exactly one owner. A deterministic fault immediately after transfer and before
+monitor startup must prove the preinstalled cleanup owner handles the family. Ahmad's Medium and Low findings remain
+Fixed. The final gate and GH-107 remain prohibited.
+
 ### Owner platform-floor amendment
 
 Abood selected the evidence-backed repair: require Windows 10 / Windows Server 2016 x64 or newer and use

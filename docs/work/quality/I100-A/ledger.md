@@ -457,3 +457,11 @@ reflection was replaced by typed evidence, and the three historical paths remain
 delegated-trace wording amendment. After the final typed-test cleanup, the first focused SDK 10.0.302 run reproduced
 the previously seen fail-closed drain signature (`DrainIncomplete` expected, `ProcessFailed` actual, 25 seconds); an
 unchanged rerun passed 69/69. This is disclosed for independent review rather than silently treated as stable evidence.
+
+### Independent review finding on the repair candidate
+
+Independent review at `a38fb31` marked Ahmad's allowlist and stale-seam findings Fixed but retained the construction
+finding as High: field population preceded allocation/push of the transferred cleanup action, leaving a theoretical
+post-create no-owner interval. The repair remains within the authorized outcome: preallocate the owner/action/token
+before native acquisition, gate old unwind through one ownership token, and add one deterministic transfer-boundary
+regression. No final gate or GH-107 work is authorized.

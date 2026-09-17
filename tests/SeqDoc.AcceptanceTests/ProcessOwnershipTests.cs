@@ -263,6 +263,101 @@ public sealed class ProcessOwnershipTests
         }
     }
 
+    [Fact]
+    public void OwnershipTransferFaultRetainsOneCleanupOwnerUntilFamilyExitIsProven()
+    {
+        // I100-A-F5: RED uses the next unused numeric ConstructionFaultPoint value. Once the
+        // implementation adds it, this cast may be mechanically replaced with
+        // ConstructionFaultPoint.AfterOwnershipTransferBeforeMonitor without changing assertions.
+        const int afterOwnershipTransferBeforeMonitor = 6;
+        nint duplicatedProcess = nint.Zero;
+        nint duplicatedJob = nint.Zero;
+        int terminateJobCalls = 0;
+        ContainedProcess? unexpectedProcess = null;
+        var releaseObservations = new System.Collections.Concurrent.ConcurrentQueue<(
+            string Label, uint? ActiveProcesses, string? QueryError)>();
+        var postCreate = FindStaticTestSeam("PostCreateProcessObserverForTests", typeof(Action<nint, nint>));
+        Assert.NotNull(postCreate);
+        try
+        {
+            postCreate!.SetValue(null, (Action<nint, nint>)((job, process) =>
+            {
+                // Keep both duplicates alive: the duplicate job prevents kill-on-close from making
+                // this assertion pass merely because the implementation closed its last job handle.
+                DuplicateCurrentHandle(process, out duplicatedProcess);
+                DuplicateCurrentHandle(job, out duplicatedJob);
+            }));
+            ContainedProcess.UnwindStepObserverForTests = label =>
+            {
+                try
+                {
+                    releaseObservations.Enqueue((label, QueryJobActiveProcesses(duplicatedJob), null));
+                }
+                catch (Exception ex)
+                {
+                    releaseObservations.Enqueue((label, null, ex.Message));
+                }
+            };
+
+            var result = ContainedProcess.Start(
+                NewOptions(["sleep", "5000"], nativeCalls: new ProcessOwnershipNativeCalls
+                {
+                    TerminateProcess = (_, _) => NativeCallResult.Failure(8111),
+                    WaitForSingleObject = (_, _) => NativeWaitResult.Failed(8112),
+                    TerminateJobObject = (job, exitCode) =>
+                    {
+                        Interlocked.Increment(ref terminateJobCalls);
+                        return NativeMethods.TerminateJobObject(job, exitCode)
+                            ? NativeCallResult.Success()
+                            : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+                    },
+                }),
+                (ConstructionFaultPoint)afterOwnershipTransferBeforeMonitor);
+            unexpectedProcess = result.Process;
+
+            Assert.False(result.Succeeded);
+            Assert.Equal(ProcessOwnershipFailureClass.ProcessConstructionFailed, result.FailureClass);
+            Assert.Contains("8111", result.Detail, StringComparison.Ordinal);
+            Assert.Contains("8112", result.Detail, StringComparison.Ordinal);
+            Assert.Null(result.CleanupOwner);
+            Assert.True(terminateJobCalls >= 1, "Transferred cleanup must explicitly terminate the job family.");
+            Assert.NotEqual(nint.Zero, duplicatedProcess);
+            Assert.NotEqual(nint.Zero, duplicatedJob);
+            Assert.Equal(NativeMethods.WAIT_OBJECT_0,
+                NativeMethods.WaitForSingleObject(duplicatedProcess, 5000));
+            Assert.Equal(0u, QueryJobActiveProcesses(duplicatedJob));
+
+            // Only real transferred-owner releases count. Pre-transfer no-op unwind entries must not
+            // manufacture release labels, and no transferred resource may be released before zero proof.
+            Assert.NotEmpty(releaseObservations);
+            Assert.All(releaseObservations, release =>
+            {
+                Assert.Contains(release.Label, ExpectedPartialUnwindOrder);
+                Assert.Null(release.QueryError);
+                Assert.Equal(0u, release.ActiveProcesses);
+            });
+        }
+        finally
+        {
+            ContainedProcess.UnwindStepObserverForTests = null;
+            postCreate!.SetValue(null, null);
+            if (duplicatedJob != nint.Zero && QueryJobActiveProcesses(duplicatedJob) > 0)
+            {
+                NativeMethods.TerminateJobObject(duplicatedJob, uint.MaxValue);
+                _ = NativeMethods.WaitForSingleObject(duplicatedProcess, 5000);
+            }
+            unexpectedProcess?.Dispose();
+            if (duplicatedProcess != nint.Zero)
+            {
+                NativeMethods.CloseHandle(duplicatedProcess);
+            }
+            if (duplicatedJob != nint.Zero)
+            {
+                NativeMethods.CloseHandle(duplicatedJob);
+            }
+        }
+    }
+
     // ---- Group 5: parent-exit-survival with contained grandchild -------------------------------------
 
     [Fact]
