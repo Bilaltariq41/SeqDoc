@@ -2,7 +2,7 @@
 
 ## State
 
-`Building`
+`Blocked`
 
 ## Authority and frozen state
 
@@ -443,6 +443,14 @@ The owner authorized one final repair limited to preventing `ResourceReleaseObse
 buffer deletion/free. One deterministic regression, focused SDK 10.0.302 verification, and one complete independent
 review are required. No other lifecycle or cleanup semantics may change. The final gate and Ahmad request remain
 withheld until the review is clean.
+
+### Final observer repair review result
+
+Head `72016de` passed 67/67 focused tests and fixed the authorized tracked-buffer observer finding. Complete review found
+one remaining Medium boundary in the excluded native-handle path: `CloseTracked` still invokes
+`ResourceReleaseObserverForTests` before `CloseHandle`, so a throwing observer can skip the native close and contaminate
+teardown evidence. The final authorization is exhausted; I100-A is blocked with the branch preserved and no final gate
+or Ahmad request.
 
 ### Owner platform-floor amendment
 
