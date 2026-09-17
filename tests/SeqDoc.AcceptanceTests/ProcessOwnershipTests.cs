@@ -777,24 +777,18 @@ public sealed class ProcessOwnershipTests
     [Fact]
     public void ConstructionPhaseFailuresLeaveObservableEvidenceWithoutAbandonedTasks()
     {
-        foreach (var mode in new[] { "assign", "resume-or-await" })
+        // JOB_LIST admits the child during CreateProcess; there is no post-create assignment failure
+        // mode to exercise. Retain the resume/unwind failure, which still proves cleanup evidence.
+        var options = NewOptions(["sleep", "1000"], nativeCalls: new ProcessOwnershipNativeCalls
         {
-            var options = NewOptions(["sleep", "1000"], nativeCalls: new ProcessOwnershipNativeCalls
-            {
-                AssignProcessToJobObject = mode == "assign"
-                    ? (_, _) => NativeCallResult.Failure(87)
-                    : null,
-                ResumeThread = mode == "resume-or-await"
-                    ? _ => NativeCallResult<uint>.Failure(995)
-                    : null,
-                TerminateJobObject = (_, _) => NativeCallResult.Failure(5),
-                WaitForSingleObject = (_, _) => NativeWaitResult.Failed(6),
-            });
-            var result = ContainedProcess.Start(options);
-            Assert.False(result.Succeeded);
-            Assert.Equal(ProcessOwnershipFailureClass.ProcessConstructionFailed, result.FailureClass);
-            Assert.NotNull(result.Detail);
-        }
+            ResumeThread = _ => NativeCallResult<uint>.Failure(995),
+            TerminateJobObject = (_, _) => NativeCallResult.Failure(5),
+            WaitForSingleObject = (_, _) => NativeWaitResult.Failed(6),
+        });
+        var result = ContainedProcess.Start(options);
+        Assert.False(result.Succeeded);
+        Assert.Equal(ProcessOwnershipFailureClass.ProcessConstructionFailed, result.FailureClass);
+        Assert.NotNull(result.Detail);
     }
 
     [Fact]
@@ -869,22 +863,57 @@ public sealed class ProcessOwnershipTests
     [Fact]
     public async Task TeardownDegradedIsObservableThroughPublicSurfaceAfterDispose()
     {
-        // GH106-R2-F7: a real caller (not just an internal test-only accessor) must be able to observe a
-        // degraded teardown. Force a genuine CloseHandle failure by closing the process handle out from
-        // under Dispose before it runs, so Dispose's own CloseHandle call fails for real.
-        var options = NewOptions(["echo", "out", "err"]);
+        // GH106-R2-F7: inject one deterministic owned-handle close failure without pre-closing a numeric
+        // handle that could be reused by the process. All other closes use the real native operation.
+        bool armed = false;
+        nint failedHandle = nint.Zero;
+        var nativeCalls = new ProcessOwnershipNativeCalls();
+        var closeSeam = FindInstanceTestSeam("CloseHandle", typeof(Func<nint, NativeCallResult>));
+        Assert.True(closeSeam is not null, "Expected per-instance CloseHandle seam.");
+        closeSeam!.SetValue(nativeCalls, (Func<nint, NativeCallResult>)(handle =>
+        {
+            if (armed && failedHandle == nint.Zero)
+            {
+                failedHandle = handle;
+                return NativeCallResult.Failure(8301);
+            }
+
+            if (NativeMethods.CloseHandle(handle))
+            {
+                return NativeCallResult.Success();
+            }
+
+            return NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+        }));
+
+        var options = NewOptions(["echo", "out", "err"], nativeCalls: nativeCalls);
         var result = ContainedProcess.Start(options);
         Assert.True(result.Succeeded, result.Detail);
         var process = result.Process!;
-        var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
-        Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+        try
+        {
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
 
-        NativeMethods.CloseHandle(process.ProcessHandleForTests);
+            armed = true;
+            process.Dispose();
 
-        process.Dispose();
+            Assert.Equal(ProcessOwnershipFailureClass.TeardownDegraded, process.FailureClass);
+            Assert.Contains(process.TeardownFailures,
+                evidence => evidence.Contains("8301", StringComparison.Ordinal));
+            Assert.NotEqual(nint.Zero, failedHandle);
+        }
+        finally
+        {
+            armed = false;
+            closeSeam.SetValue(nativeCalls, null);
+            if (failedHandle != nint.Zero)
+            {
+                NativeMethods.CloseHandle(failedHandle);
+            }
 
-        Assert.Equal(ProcessOwnershipFailureClass.TeardownDegraded, process.FailureClass);
-        Assert.NotEmpty(process.TeardownFailures);
+            process.Dispose();
+        }
     }
 
     [Theory]
@@ -1019,13 +1048,13 @@ public sealed class ProcessOwnershipTests
     };
 
     [Fact]
-    public async Task AssignPrecedesResumeProvenByObservableChildReceiptFromItsOwnFirstInstruction()
+    public async Task ChildReceiptProvesCreationTimeJobAdmissionBeforeItsOwnFirstInstruction()
     {
         // GH106-R2-F12: replaces the internal test-hook-only proof above with a genuine, external,
         // production-code-path receipt — the child itself queries its own job membership (via a plain
         // P/Invoke in the stub, no unsafe blocks) as the very first thing it does and prints the result,
-        // proving assign-before-resume chronology from the child's own perspective rather than the test
-        // process's.
+        // proving creation-time job admission from the child's own perspective rather than the test
+        // process's; the receipt must be true before the first child instruction runs.
         var options = NewOptions(["report-job-membership"]);
         var result = ContainedProcess.Start(options);
         Assert.True(result.Succeeded, result.Detail);
