@@ -22,16 +22,13 @@ packet at https://github.com/Bilaltariq41/SeqDoc/issues/106#issuecomment-5694865
 
 ### Finalized contract decisions (supersede the readiness packet's "Open items" section)
 
-1. **Windows/platform floor.** Supported platform is Windows **x64 only**, matching the frozen issue body verbatim
-   ("fails closed outside supported Windows x64. ARM64, x86, Linux, and macOS are unsupported in this checkpoint.").
-   This corrects the readiness packet's provisional "x64 and ARM64" table entry, which conflicted with the frozen
-   issue body: ARM64 is out of scope for I100-A, not merely undecided. No separate Windows version/SKU floor is
-   introduced: every native API this primitive uses (`CreateProcessW`, `CreateJobObjectW`, `SetInformationJobObject`
-   with `JobObjectExtendedLimitInformation`/`JobObjectAssociateCompletionPortInformation`,
-   `AssignProcessToJobObject`, `ResumeThread`, `TerminateJobObject`, `SetHandleInformation`) has been available since
-   Windows XP/Server 2003, well below the floor already implied by the pinned `net10.0` SDK's own minimum supported
-   Windows version. The runtime admission guard is `OperatingSystem.IsWindows() && RuntimeInformation.ProcessArchitecture
-   == Architecture.X64`; anything else fails closed through the platform-admission claim rather than skipping it.
+1. **Windows/platform floor.** Supported platform is Windows **x64 on Windows 10 or Windows Server 2016 and newer**.
+   ARM64, x86, Linux, macOS, older Windows clients, and older Windows Server releases fail closed. The original
+   readiness freeze named Windows x64 without a separate version floor; Ahmad's latest-head construction-unwind
+   finding required atomic creation-time job admission, and Abood approved this explicit amendment after Microsoft
+   documentation established that `PROC_THREAD_ATTRIBUTE_JOB_LIST` is supported only on Windows 10 and Windows Server
+   2016 or newer. The runtime admission guard checks Windows, x64, and the approved version capability before any
+   filesystem or native construction work. This is a deliberate support contraction, not an inferred fallback.
 2. **Executable-path resolution.** The primitive never performs a `SearchPathW`-equivalent lookup. The caller (test
    code) must supply an already-resolved, rooted, existing executable path; the primitive validates
    `Path.IsPathRooted` and file existence before construction and fails closed with `ProcessConstructionFailed`
@@ -407,3 +404,12 @@ Non-goals remain GH-107, I18/PR #103, `src/**`, package/build/repository configu
 global/name/PID killing, and unrelated process capabilities. Research must use authoritative Microsoft Windows API
 documentation. The focused lane must pass under isolated SDK `10.0.302`, followed by a complete independent Reviewer
 rerun and Ahmad's latest-head formal review. The final gate remains withheld until Ahmad approves the repaired head.
+
+### Owner platform-floor amendment
+
+Abood selected the evidence-backed repair: require Windows 10 / Windows Server 2016 x64 or newer and use
+`PROC_THREAD_ATTRIBUTE_JOB_LIST` for creation-time job admission. Microsoft documents that the job-list attribute
+assigns the listed jobs to the child during process creation, that its payload must remain valid until the attribute
+list is destroyed, and that support begins with Windows 10 / Windows Server 2016. The attribute list therefore owns
+both the exact three-handle inheritance payload and the one-job payload through `CreateProcessW`; post-creation
+`AssignProcessToJobObject` is no longer the admission mechanism.

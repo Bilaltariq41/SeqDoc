@@ -358,3 +358,13 @@ family-zero proof; and teardown evidence uses inconsistent synchronization. The 
 accepted as Fixed. Abood authorized one cohesive repair using authoritative Windows API evidence, one deterministic
 regression per finding, focused verification, a complete Reviewer rerun, and a new latest-head Ahmad review. No final
 gate is authorized before that approval.
+
+## Owner platform-floor amendment
+
+Authoritative Microsoft documentation for `UpdateProcThreadAttribute` identifies
+`PROC_THREAD_ATTRIBUTE_JOB_LIST` as creation-time assignment of listed jobs and limits support to Windows 10 /
+Windows Server 2016 and newer. The .NET 10 support matrix still includes older Windows Server releases, so adopting
+this mechanism is a real platform contraction rather than an implied SDK floor. Abood explicitly selected the
+recommended amendment: GH-106 now admits only Windows 10 / Windows Server 2016 x64 or newer, fails closed elsewhere,
+and uses the job-list attribute to eliminate the uncontained suspended-child window. The three-handle inheritance
+attribute remains exact and separate.

@@ -27,15 +27,18 @@ public sealed class ProcessOwnershipTests
         // negative executable lane available, so a real negative machine is not exercised here.
         bool actual = ProcessOwnershipPlatform.IsSupported();
         Assert.Equal(
-            OperatingSystem.IsWindows() && System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == RuntimeArchitecture.X64,
+            OperatingSystem.IsWindows()
+                && System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == RuntimeArchitecture.X64
+                && Environment.OSVersion.Version >= new Version(10, 0),
             actual);
 
-        // Synthetic negative claims via the injected-value seam (unit-level fake, never skipped):
-        Assert.True(ProcessOwnershipPlatform.Evaluate(isWindows: true, RuntimeArchitecture.X64));
-        Assert.False(ProcessOwnershipPlatform.Evaluate(isWindows: false, RuntimeArchitecture.X64));
-        Assert.False(ProcessOwnershipPlatform.Evaluate(isWindows: true, RuntimeArchitecture.Arm64));
-        Assert.False(ProcessOwnershipPlatform.Evaluate(isWindows: true, RuntimeArchitecture.X86));
-        Assert.False(ProcessOwnershipPlatform.Evaluate(isWindows: false, RuntimeArchitecture.Arm64));
+        // Synthetic claims use the amended pure evaluator seam (unit-level fake, never skipped):
+        // Windows 10 x64 is admitted; pre-10 x64 and every non-x64 architecture fail closed.
+        Assert.True(EvaluatePlatform(true, RuntimeArchitecture.X64, new Version(10, 0)));
+        Assert.False(EvaluatePlatform(true, RuntimeArchitecture.X64, new Version(6, 3)));
+        Assert.False(EvaluatePlatform(true, RuntimeArchitecture.Arm64, new Version(10, 0)));
+        Assert.False(EvaluatePlatform(true, RuntimeArchitecture.X86, new Version(10, 0)));
+        Assert.False(EvaluatePlatform(false, RuntimeArchitecture.X64, new Version(10, 0)));
     }
 
     // ---- Group 2: executable/argument/environment vectors -------------------------------------------
@@ -151,21 +154,35 @@ public sealed class ProcessOwnershipTests
         Assert.Equal(expectedPresent, duplicated);
     }
 
-    // ---- Group 4: assign-before-resume chronology ----------------------------------------------------
+    // ---- Group 4: creation-time containment and construction unwind -------------------------------
 
     [Fact]
-    public async Task AssignPrecedesResumeSoJobMembershipIsEstablishedWhileStillSuspended()
+    public async Task CreationTimeJobAdmissionContainsSuspendedChildAndPostCreateAssignIsNotUsed()
     {
+        // Keep the historical hook explicitly disabled; creation-time admission supersedes it.
+        ContainedProcess.AssignBeforeResumeHookForTests = null;
         bool? observedWhileSuspended = null;
-        ContainedProcess.AssignBeforeResumeHookForTests = (job, proc) =>
+        nint duplicatedProcess = nint.Zero;
+        var observer = FindStaticTestSeam("PostCreateProcessObserverForTests", typeof(Action<nint, nint>));
+        Assert.True(observer is not null,
+            "Expected post-CreateProcess observer seam receiving job/process handles while suspended.");
+        var nativeCalls = new ProcessOwnershipNativeCalls
         {
-            NativeMethods.IsProcessInJob(proc, job, out bool result);
-            observedWhileSuspended = result;
+            AssignProcessToJobObject = (_, _) => throw new InvalidOperationException(
+                "post-create AssignProcessToJobObject must not be used after creation-time admission"),
         };
 
         try
         {
-            var options = NewOptions(["sleep", "50"]);
+            observer!.SetValue(null, (Action<nint, nint>)((job, proc) =>
+            {
+                Assert.True(NativeMethods.IsProcessInJob(proc, job, out bool result));
+                observedWhileSuspended = result;
+                Assert.True(NativeMethods.DuplicateHandle(
+                    NativeMethods.GetCurrentProcess(), proc,
+                    NativeMethods.GetCurrentProcess(), out duplicatedProcess, 0, false, 0x00000002));
+            }));
+            var options = NewOptions(["sleep", "50"], nativeCalls: nativeCalls);
             var result = ContainedProcess.Start(options);
             Assert.True(result.Succeeded, result.Detail);
             using var process = result.Process!;
@@ -179,7 +196,49 @@ public sealed class ProcessOwnershipTests
         }
         finally
         {
-            ContainedProcess.AssignBeforeResumeHookForTests = null;
+            observer?.SetValue(null, null);
+            if (duplicatedProcess != nint.Zero)
+            {
+                NativeMethods.CloseHandle(duplicatedProcess);
+            }
+        }
+    }
+
+    [Fact]
+    public void CreationFaultWithFailedTerminateStillClosesKillOnCloseJobAroundSuspendedChild()
+    {
+        nint duplicatedProcess = nint.Zero;
+        var observer = FindStaticTestSeam("PostCreateProcessObserverForTests", typeof(Action<nint, nint>));
+        Assert.True(observer is not null,
+            "Expected post-CreateProcess observer seam receiving job/process handles while suspended.");
+        try
+        {
+            observer!.SetValue(null, (Action<nint, nint>)((_, process) =>
+            {
+                Assert.True(NativeMethods.DuplicateHandle(
+                    NativeMethods.GetCurrentProcess(), process,
+                    NativeMethods.GetCurrentProcess(), out duplicatedProcess, 0, false, 0x00000002));
+            }));
+            var result = ContainedProcess.Start(
+                NewOptions(["sleep", "5000"], nativeCalls: new ProcessOwnershipNativeCalls
+                {
+                    TerminateProcess = (_, _) => NativeCallResult.Failure(8101),
+                }),
+                ConstructionFaultPoint.AfterProcessCreatedBeforeAssign);
+
+            Assert.False(result.Succeeded);
+            Assert.Contains("8101", result.Detail, StringComparison.Ordinal);
+            Assert.NotEqual(nint.Zero, duplicatedProcess);
+            Assert.Equal(NativeMethods.WAIT_OBJECT_0,
+                NativeMethods.WaitForSingleObject(duplicatedProcess, 5000));
+        }
+        finally
+        {
+            observer?.SetValue(null, null);
+            if (duplicatedProcess != nint.Zero)
+            {
+                NativeMethods.CloseHandle(duplicatedProcess);
+            }
         }
     }
 
@@ -890,9 +949,8 @@ public sealed class ProcessOwnershipTests
     [Fact]
     public async Task DisposeClosesResourcesInExactTrueReverseAcquisitionOrder()
     {
-        // GH106-R2-F11: proves the exact close/free trace order for a full normal disposal, not just a
-        // handle-count delta. The stdin write handle is omitted from the expected trace because F6 closes
-        // it during construction, so Dispose's own CloseTracked call for it is a no-op (never recorded).
+        // GH106-R2-F11: proves dependency-safe reverse release. In particular, the job-list payload is
+        // released only after DeleteProcThreadAttributeList has released the two-entry attribute list.
         var options = NewOptions(["echo", "out", "err"]);
         var result = ContainedProcess.Start(options);
         Assert.True(result.Succeeded, result.Detail);
@@ -911,9 +969,10 @@ public sealed class ProcessOwnershipTests
         "thread handle",
         "environment block buffer",
         "command line buffer",
+        "attribute list buffer",
+        "job list buffer",
         "completion port handle",
         "job handle",
-        "attribute list buffer",
         "handle list buffer",
         "stderr pipe handle",
         "stdout pipe handle",
@@ -922,9 +981,8 @@ public sealed class ProcessOwnershipTests
     [Fact]
     public void PartialConstructionUnwindClosesResourcesInExactTrueReverseAcquisitionOrder()
     {
-        // GH106-R2-F11: the same exact-reverse-order proof, but for a partial-construction fault (the
-        // unwind Stack<Action>, not Dispose's straight-line sequence) — the checkpoint's own requirement
-        // to cover at least one S0-S3 fault point, not only full normal disposal.
+        // GH106-R2-F11: the same dependency-safe reverse-order proof for partial construction. Attribute
+        // list deletion precedes release of its job-list payload; only then are the pipe handles unwound.
         var trace = new List<string>();
         ContainedProcess.UnwindStepObserverForTests = trace.Add;
         try
@@ -947,9 +1005,10 @@ public sealed class ProcessOwnershipTests
         "thread handle",
         "environment block buffer",
         "command line buffer",
+        "attribute list buffer",
+        "job list buffer",
         "completion port handle",
         "job handle",
-        "attribute list buffer",
         "handle list buffer",
         "stderr write handle",
         "stderr read handle",
@@ -996,6 +1055,37 @@ public sealed class ProcessOwnershipTests
         process.Dispose();
         Assert.False(process.TerminateJobObjectWasCalled);
         Assert.Empty(process.TeardownFailuresForTests);
+    }
+
+    [Fact]
+    public async Task DisposeDoesNotReleaseFamilyResourcesWhenActiveProcessZeroCannotBeProven()
+    {
+        var result = ContainedProcess.Start(NewOptions(["echo", "out", "err"]));
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        var releases = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var releaseObserver = FindInstanceTestSeam("ResourceReleaseObserverForTests", typeof(Action<string>));
+        Assert.True(releaseObserver is not null, "Expected resource-release observer seam.");
+        releaseObserver!.SetValue(process, (Action<string>)releases.Enqueue);
+        try
+        {
+            process.ActiveProcessZeroBoundForTests = TimeSpan.FromMilliseconds(100);
+            process.StopCompletionMonitorForTests();
+
+            Task dispose = Task.Run(process.Dispose);
+            await dispose.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.NotEqual(ProcessOwnershipFailureClass.None, process.FailureClass);
+            Assert.Contains(process.TeardownFailures,
+                evidence => evidence.Contains("ACTIVE_PROCESS_ZERO", StringComparison.Ordinal));
+            Assert.DoesNotContain(releases, label => label is "process handle" or "completion port handle"
+                or "job handle");
+        }
+        finally
+        {
+            releaseObserver.SetValue(process, null);
+            process.Dispose();
+        }
     }
 
     // ---- Group 11: unrelated-process isolation, deterministic receipts, repeated-run cleanup ---------
@@ -1263,6 +1353,82 @@ public sealed class ProcessOwnershipTests
     }
 
     [Fact]
+    public async Task TeardownEvidenceIsSynchronizedImmutableAndRetainsEachInjectedCloseFailureOnce()
+    {
+        var nativeCalls = new ProcessOwnershipNativeCalls();
+        var closeSeam = FindInstanceTestSeam("CloseHandle", typeof(Func<nint, NativeCallResult>));
+        Assert.True(closeSeam is not null,
+            "Expected per-instance CloseHandle seam for deterministic teardown-failure injection.");
+        int closeCalls = 0;
+        var failedHandles = new nint[2];
+        closeSeam!.SetValue(nativeCalls, (Func<nint, NativeCallResult>)(handle =>
+        {
+            int call = Interlocked.Increment(ref closeCalls);
+            if (call <= failedHandles.Length)
+            {
+                failedHandles[call - 1] = handle;
+                return NativeCallResult.Failure(call == 1 ? 8201 : 8202);
+            }
+
+            if (NativeMethods.CloseHandle(handle))
+            {
+                return NativeCallResult.Success();
+            }
+
+            return NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+        }));
+
+        var result = ContainedProcess.Start(NewOptions(["echo", "out", "err"], nativeCalls: nativeCalls));
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        try
+        {
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+            var failuresBeforeDispose = process.TeardownFailures.ToArray();
+            var orderBeforeDispose = process.TeardownOrderForTests.ToArray();
+            var failuresBeforeCopy = failuresBeforeDispose.ToArray();
+            var orderBeforeCopy = orderBeforeDispose.ToArray();
+            var errors = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
+            Task enumerate = Task.Run(() =>
+            {
+                try
+                {
+                    _ = process.TeardownFailures.ToArray();
+                    _ = process.TeardownOrderForTests.ToArray();
+                    _ = process.TeardownFailures.ToArray();
+                }
+                catch (Exception ex) { errors.Enqueue(ex); }
+            });
+            Task dispose = Task.Run(process.Dispose);
+            await Task.WhenAll(enumerate, dispose).WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Empty(errors);
+            Assert.Equal(failuresBeforeCopy, failuresBeforeDispose);
+            Assert.Equal(orderBeforeCopy, orderBeforeDispose);
+
+            var finalFailures = process.TeardownFailures;
+            var finalFailuresAgain = process.TeardownFailures;
+            var finalOrder = process.TeardownOrderForTests;
+            var finalOrderAgain = process.TeardownOrderForTests;
+            Assert.NotSame(finalFailures, finalFailuresAgain);
+            Assert.NotSame(finalOrder, finalOrderAgain);
+            Assert.Equal(ExpectedFullDisposeOrder, finalOrder);
+            Assert.Equal(1, finalFailures.Count(e => e.Contains("8201", StringComparison.Ordinal)));
+            Assert.Equal(1, finalFailures.Count(e => e.Contains("8202", StringComparison.Ordinal)));
+            Assert.Equal(finalFailures.Count, finalFailures.Distinct(StringComparer.Ordinal).Count());
+        }
+        finally
+        {
+            process.Dispose();
+            foreach (nint handle in failedHandles.Distinct().Where(handle => handle != nint.Zero))
+            {
+                NativeMethods.CloseHandle(handle);
+            }
+        }
+    }
+
+    [Fact]
     public async Task ExplicitRuntimeRootLaunchProvesPinnedSdkWithoutPathOrAmbientInheritance()
     {
         string runtimeDirectory = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
@@ -1364,6 +1530,30 @@ public sealed class ProcessOwnershipTests
             System.Reflection.BindingFlags.Public |
             System.Reflection.BindingFlags.NonPublic);
         return property is not null && property.PropertyType == type && property.CanWrite ? property : null;
+    }
+
+    private static System.Reflection.PropertyInfo? FindStaticTestSeam(string name, Type type)
+    {
+        var property = typeof(ContainedProcess).GetProperty(
+            name,
+            System.Reflection.BindingFlags.Static |
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic);
+        return property is not null && property.PropertyType == type && property.CanWrite ? property : null;
+    }
+
+    private static bool EvaluatePlatform(bool isWindows, RuntimeArchitecture architecture, Version version)
+    {
+        var evaluator = typeof(ProcessOwnershipPlatform).GetMethod(
+            "Evaluate",
+            System.Reflection.BindingFlags.Static |
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic,
+            binder: null,
+            types: [typeof(bool), typeof(RuntimeArchitecture), typeof(Version)],
+            modifiers: null);
+        Assert.NotNull(evaluator);
+        return (bool)evaluator!.Invoke(null, [isWindows, architecture, version])!;
     }
 
     private static System.Reflection.PropertyInfo? FindReadableInstanceProperty(string name, Type type)
