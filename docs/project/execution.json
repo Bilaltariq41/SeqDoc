@@ -1,10 +1,10 @@
 {
-  "activeCheckpointId": null,
-  "activeCheckpointPath": null,
+  "activeCheckpointId": "G57-TPO",
+  "activeCheckpointPath": "docs/work/governance/G57-TPO",
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
-  "mode": "idle",
-  "nextAction": "No work item is selected.",
+  "mode": "active",
+  "nextAction": "Implement G57-TPO tests first, then the smallest backward-compatible transactional operations and public guide; stop at ReviewRequired after focused verification and complete-candidate self-review.",
   "schemaVersion": 1,
-  "sourceId": null
+  "sourceId": "GH-57"
 }
