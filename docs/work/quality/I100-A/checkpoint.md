@@ -2,7 +2,7 @@
 
 ## State
 
-`ResolvingFindings`
+`Blocked`
 
 ## Authority and frozen state
 
@@ -413,6 +413,14 @@ ownership unreachable, and failed second-stage attribute-list initialization cou
 `DeleteProcThreadAttributeList` on an uninitialized buffer. One deterministic regression per signature is authorized.
 The retained-family path must use a truthful non-disposed retained state with observable ownership and retry-safe
 behavior; attribute-list deletion must occur only after successful initialization.
+
+### Blocked after second repair review
+
+Head `7625165` passed the 65-test focused lane and fixed both preceding findings. The next complete independent review
+found two remaining Medium defects: failed tracked closes zero their fields and can falsely finish as `Disposed`, and
+the test-only attribute-list deletion observer can throw before native deletion and buffer release. This was the second
+failed repair rerun. I100-A is therefore blocked with the branch preserved; no further implementation, final gate, or
+Ahmad re-review is authorized without a separate continuation decision.
 
 ### Owner platform-floor amendment
 

@@ -376,3 +376,12 @@ finding Fixed. It retained one High finding: failed family proof kept process/jo
 the object `Disposed`, making retained ownership unreachable and later cleanup impossible. It also found one Medium
 attribute-list failure boundary: unconditional deletion after failed initialization. Both are accepted for one
 deterministic regression and the smallest cohesive repair; the final gate remains withheld.
+
+## Blocked after second repair review
+
+The `7625165` repair passed 65/65 focused tests. Independent review marked retained-family lifecycle and
+initialized-only attribute deletion Fixed, along with all three Ahmad findings and the earlier Wait/Dispose race. It
+then found two Medium defects: tracked close failure discards recoverable handle ownership before reporting `Disposed`,
+and a throwing attribute-delete test observer can interrupt native deletion and buffer release. Because this is the
+second failed repair rerun, I100-A moved to Blocked. The worktree and branch are preserved; no final gate or Ahmad
+re-review was requested.

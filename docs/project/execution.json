@@ -1,10 +1,10 @@
 {
-  "activeCheckpointId": "I100-A",
-  "activeCheckpointPath": "docs/work/quality/I100-A",
+  "activeCheckpointId": null,
+  "activeCheckpointPath": null,
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
-  "mode": "active",
-  "nextAction": "Research and prove creation-time job admission, family-proof-gated disposal release, and synchronized immutable teardown evidence; rerun focused and complete Reviewer before Ahmad re-review.",
+  "mode": "idle",
+  "nextAction": "No work item is selected.",
   "schemaVersion": 1,
-  "sourceId": "GH-106"
+  "sourceId": null
 }
