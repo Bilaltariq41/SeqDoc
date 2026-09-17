@@ -1174,6 +1174,46 @@ public sealed class ProcessOwnershipTests
         }
     }
 
+    [Fact]
+    public async Task ThrowingAttributeDeleteObserverDoesNotInterruptDisposalCleanup()
+    {
+        var deleteObserver = FindStaticTestSeam("AttributeListDeleteObserverForTests", typeof(Action<nint>));
+        Assert.True(deleteObserver is not null, "Expected static attribute-list deletion observer seam.");
+        int deleteCount = 0;
+        const string sentinel = "attribute-delete-observer-sentinel";
+        var result = ContainedProcess.Start(NewOptions(["echo", "out", "err"]));
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+
+        try
+        {
+            deleteObserver!.SetValue(null, (Action<nint>)(_ =>
+            {
+                Interlocked.Increment(ref deleteCount);
+                throw new InvalidOperationException(sentinel);
+            }));
+
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+            var exception = Record.Exception(() =>
+            {
+                process.Dispose();
+            });
+
+            Assert.Null(exception);
+            Assert.Equal(1, deleteCount);
+            Assert.Equal(ExpectedFullDisposeOrder, process.TeardownOrderForTests);
+            Assert.Equal(ProcessOwnershipFailureClass.None, process.FailureClass);
+            Assert.DoesNotContain(process.TeardownFailures,
+                evidence => evidence.Contains(sentinel, StringComparison.Ordinal));
+        }
+        finally
+        {
+            deleteObserver.SetValue(null, null);
+            process.Dispose();
+        }
+    }
+
     // ---- Group 11: unrelated-process isolation, deterministic receipts, repeated-run cleanup ---------
 
     [Fact]
@@ -1447,9 +1487,11 @@ public sealed class ProcessOwnershipTests
             "Expected per-instance CloseHandle seam for deterministic teardown-failure injection.");
         int closeCalls = 0;
         var failedHandles = new nint[2];
+        var attemptedHandles = new List<nint>();
         closeSeam!.SetValue(nativeCalls, (Func<nint, NativeCallResult>)(handle =>
         {
             int call = Interlocked.Increment(ref closeCalls);
+            lock (attemptedHandles) { attemptedHandles.Add(handle); }
             if (call <= failedHandles.Length)
             {
                 failedHandles[call - 1] = handle;
@@ -1486,12 +1528,42 @@ public sealed class ProcessOwnershipTests
                 }
                 catch (Exception ex) { errors.Enqueue(ex); }
             });
-            Task dispose = Task.Run(process.Dispose);
-            await Task.WhenAll(enumerate, dispose).WaitAsync(TimeSpan.FromSeconds(5));
+            Task firstDispose = Task.Run(process.Dispose);
+            await Task.WhenAll(enumerate, firstDispose).WaitAsync(TimeSpan.FromSeconds(5));
 
             Assert.Empty(errors);
             Assert.Equal(failuresBeforeCopy, failuresBeforeDispose);
             Assert.Equal(orderBeforeCopy, orderBeforeDispose);
+
+            var lifecycle = typeof(ContainedProcess).GetField("_lifecycleState",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            var processHandle = typeof(ContainedProcess).GetField("_processHandle",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            var threadHandle = typeof(ContainedProcess).GetField("_threadHandle",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            Assert.NotNull(lifecycle);
+            Assert.NotNull(processHandle);
+            Assert.NotNull(threadHandle);
+            Assert.NotEqual("Disposed", lifecycle!.GetValue(process)!.ToString());
+            Assert.NotEqual(nint.Zero, (nint)processHandle!.GetValue(process)!);
+            Assert.NotEqual(nint.Zero, (nint)threadHandle!.GetValue(process)!);
+            int firstDisposeAttemptCount;
+            nint[] firstDisposeAttempts;
+            lock (attemptedHandles)
+            {
+                firstDisposeAttemptCount = attemptedHandles.Count;
+                firstDisposeAttempts = attemptedHandles.ToArray();
+            }
+            Assert.True(firstDisposeAttemptCount >= 2);
+            Assert.Equal(failedHandles, firstDisposeAttempts.Take(2).ToArray());
+
+            var failuresAfterFirstDispose = process.TeardownFailures.ToArray();
+            var orderAfterFirstDispose = process.TeardownOrderForTests.ToArray();
+            Assert.Equal(1, failuresAfterFirstDispose.Count(e => e.Contains("8201", StringComparison.Ordinal)));
+            Assert.Equal(1, failuresAfterFirstDispose.Count(e => e.Contains("8202", StringComparison.Ordinal)));
+            Assert.Equal(ExpectedFullDisposeOrder, orderAfterFirstDispose);
+
+            process.Dispose();
 
             var finalFailures = process.TeardownFailures;
             var finalFailuresAgain = process.TeardownFailures;
@@ -1499,18 +1571,26 @@ public sealed class ProcessOwnershipTests
             var finalOrderAgain = process.TeardownOrderForTests;
             Assert.NotSame(finalFailures, finalFailuresAgain);
             Assert.NotSame(finalOrder, finalOrderAgain);
-            Assert.Equal(ExpectedFullDisposeOrder, finalOrder);
+            Assert.Equal(failuresAfterFirstDispose, finalFailures.Take(failuresAfterFirstDispose.Length));
+            Assert.Equal(orderAfterFirstDispose, finalOrder.Take(orderAfterFirstDispose.Length));
+            Assert.Equal(ExpectedFullDisposeOrder.Concat(["process handle", "thread handle"]), finalOrder);
             Assert.Equal(1, finalFailures.Count(e => e.Contains("8201", StringComparison.Ordinal)));
             Assert.Equal(1, finalFailures.Count(e => e.Contains("8202", StringComparison.Ordinal)));
             Assert.Equal(finalFailures.Count, finalFailures.Distinct(StringComparer.Ordinal).Count());
+            nint[] allAttempts;
+            lock (attemptedHandles) { allAttempts = attemptedHandles.ToArray(); }
+            Assert.Equal(firstDisposeAttemptCount + 2, allAttempts.Length);
+            Assert.Equal(failedHandles, allAttempts[^2..]);
+            Assert.Equal(2, allAttempts.Count(handle => handle == failedHandles[0]));
+            Assert.Equal(2, allAttempts.Count(handle => handle == failedHandles[1]));
+            Assert.Equal(ProcessOwnershipFailureClass.TeardownDegraded, process.FailureClass);
+            Assert.False((bool)FindReadableInstanceProperty("HasRetainedFamilyResourcesForTests", typeof(bool))!
+                .GetValue(process)!);
         }
         finally
         {
+            closeSeam.SetValue(nativeCalls, null);
             process.Dispose();
-            foreach (nint handle in failedHandles.Distinct().Where(handle => handle != nint.Zero))
-            {
-                NativeMethods.CloseHandle(handle);
-            }
         }
     }
 

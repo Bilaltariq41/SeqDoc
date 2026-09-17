@@ -385,3 +385,10 @@ then found two Medium defects: tracked close failure discards recoverable handle
 and a throwing attribute-delete test observer can interrupt native deletion and buffer release. Because this is the
 second failed repair rerun, I100-A moved to Blocked. The worktree and branch are preserved; no final gate or Ahmad
 re-review was requested.
+
+## Owner-authorized additional repair round
+
+The owner explicitly authorized one additional I100-A repair round on the same branch. The frozen repair covers only
+recoverable ownership after tracked close failure and observer-safe attribute-list cleanup. It permits two focused
+regressions, implementation, focused verification, and one complete independent review; it does not authorize the
+final gate or an Ahmad review request before the candidate is clean.

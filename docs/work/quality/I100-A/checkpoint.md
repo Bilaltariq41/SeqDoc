@@ -2,7 +2,7 @@
 
 ## State
 
-`Blocked`
+`Building`
 
 ## Authority and frozen state
 
@@ -421,6 +421,13 @@ found two remaining Medium defects: failed tracked closes zero their fields and 
 the test-only attribute-list deletion observer can throw before native deletion and buffer release. This was the second
 failed repair rerun. I100-A is therefore blocked with the branch preserved; no further implementation, final gate, or
 Ahmad re-review is authorized without a separate continuation decision.
+
+### Owner-authorized additional repair round
+
+The owner authorized one additional repair round on the same branch. Its scope is limited to preserving tracked handle
+ownership when close fails, enabling deterministic retry, and making the test-only attribute-list deletion observer
+unable to interrupt native deletion or buffer release. Two focused regressions, the focused lane, and one complete
+independent review are required. The final gate and Ahmad re-review remain withheld until that review is clean.
 
 ### Owner platform-floor amendment
 
