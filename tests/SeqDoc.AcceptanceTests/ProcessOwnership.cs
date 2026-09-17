@@ -436,9 +436,7 @@ public sealed class ContainedProcess : IDisposable
             lock (_lifecycleGate)
             {
                 return _lifecycleState == LifecycleState.FamilyResourcesRetained
-                    && _processHandle != nint.Zero
-                    && _completionPortHandle != nint.Zero
-                    && _jobHandle != nint.Zero;
+                    && HasOwnedTrackedResource();
             }
         }
     }
@@ -1272,8 +1270,8 @@ public sealed class ContainedProcess : IDisposable
         }
         lock (_lifecycleGate)
         {
-            bool familyHandlesRetained = !nativeHandlesSafe;
-            _lifecycleState = familyHandlesRetained
+            bool resourcesRetained = !nativeHandlesSafe || HasOwnedTrackedResource();
+            _lifecycleState = resourcesRetained
                 ? LifecycleState.FamilyResourcesRetained
                 : LifecycleState.Disposed;
             _disposeTask = null;
@@ -1440,6 +1438,20 @@ public sealed class ContainedProcess : IDisposable
         return winner == task;
     }
 
+    private bool HasOwnedTrackedResource() =>
+        _processHandle != nint.Zero
+        || _threadHandle != nint.Zero
+        || _jobHandle != nint.Zero
+        || _completionPortHandle != nint.Zero
+        || _attributeListBuffer != nint.Zero
+        || _environmentBlockBuffer != nint.Zero
+        || _commandLineBuffer != nint.Zero
+        || _handleListBuffer != nint.Zero
+        || _jobListBuffer != nint.Zero
+        || _parentStdOutRead != nint.Zero
+        || _parentStdErrRead != nint.Zero
+        || _parentStdInWrite != nint.Zero;
+
     private void WaitConstructionTask(Task? task, string label, List<string> failures)
     {
         if (task is null) { return; }
@@ -1492,14 +1504,23 @@ public sealed class ContainedProcess : IDisposable
         }
 
         nint toClose = handle;
-        handle = nint.Zero;
-        ResourceReleaseObserverForTests?.Invoke(label);
         try
         {
+            ResourceReleaseObserverForTests?.Invoke(label);
             NativeCallResult result = _nativeCalls.CloseHandle?.Invoke(toClose)
                 ?? (NativeMethods.CloseHandle(toClose)
                     ? NativeCallResult.Success()
                     : NativeCallResult.Failure(Marshal.GetLastWin32Error()));
+            if (result.Succeeded)
+            {
+                lock (_lifecycleGate)
+                {
+                    if (handle == toClose)
+                    {
+                        handle = nint.Zero;
+                    }
+                }
+            }
             lock (_teardownEvidenceGate)
             {
                 _teardownOrderForTests.Add(label);
@@ -1872,8 +1893,15 @@ public sealed class ContainedProcess : IDisposable
 
     private static void DeleteAttributeList(nint attributeList)
     {
-        AttributeListDeleteObserverForTests?.Invoke(attributeList);
         NativeMethods.DeleteProcThreadAttributeList(attributeList);
+        try
+        {
+            AttributeListDeleteObserverForTests?.Invoke(attributeList);
+        }
+        catch
+        {
+            // Test-only observation must never interfere with native cleanup or its caller's free.
+        }
     }
 
     private static Win32Exception Win32(string apiName) =>
