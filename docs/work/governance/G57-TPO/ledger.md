@@ -46,3 +46,11 @@ Focused verification passed 28/28 tests with 1 platform-dependent symlink skip. 
   authentication at closeout.
 - Focused repair rerun required normalization of complete dispositions into deterministic sorted order while retaining
   duplicate/invalid rejection.
+
+## Real-GitHub author-shape probe
+
+- Failed-safe probe: the authenticated handoff rejected a documented nested human author payload because validation
+  incorrectly required the nested object to contain only `login`.
+- **Fixed** — nested `id`, `is_bot`, `name`, and benign fields are accepted; login remains required and valid,
+  `is_bot` is type-checked, and bot authors are rejected for the human-peer workflow. Top-level PR identity, state,
+  head, merge, and SHA validation remains strict.

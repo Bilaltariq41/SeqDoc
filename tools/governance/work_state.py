@@ -568,7 +568,11 @@ def authenticated_pr(repository, pr):
     if "reviewDecision" in value and value["reviewDecision"] is not None and not isinstance(value["reviewDecision"], str):
         raise ValueError("malformed authenticated PR review decision")
     author = value["author"]
-    if not isinstance(author, dict) or set(author) != {"login"} or not isinstance(author["login"], str) or not ID.fullmatch(author["login"]):
+    if not isinstance(author, dict) or not isinstance(author.get("login"), str) or not author["login"].strip() or not ID.fullmatch(author["login"]):
+        raise ValueError("malformed authenticated PR author")
+    if "is_bot" in author and not isinstance(author["is_bot"], bool):
+        raise ValueError("malformed authenticated PR author")
+    if "id" in author and (not isinstance(author["id"], int) or isinstance(author["id"], bool)):
         raise ValueError("malformed authenticated PR author")
     if not isinstance(value["headRefOid"], str) or not SHA.fullmatch(value["headRefOid"]):
         raise ValueError("malformed authenticated PR head")
@@ -723,6 +727,8 @@ def handoff(root, args):
     if observation and (observation["state"] != "OPEN" or observation["isDraft"] or observation["headRefOid"] != args.head):
         errors.append("PR is not an open non-draft latest-head match")
     author = observation["author"]["login"] if observation else None
+    if observation and observation["author"].get("is_bot") is True:
+        errors.append("bot author is not eligible for human peer review")
     if not args.peer or (author and args.peer == author):
         errors.append("author-as-peer")
     prior_review = current.get("review") if current and current.get("lifecycle") == "ResolvingFindings" else None

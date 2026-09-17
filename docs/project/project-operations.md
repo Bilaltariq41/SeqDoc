@@ -24,9 +24,9 @@ are never packets or comments.
 python -B tools/governance/work_state.py validate --root .
 python -B tools/governance/work_state.py project-execution --root . --check
 python -B tools/governance/work_state.py prepare --root . --id GH-57
-python -B tools/governance/work_state.py activate --root . --id ITEM --execution-id EXEC --expected-baseline SHA --current-head SHA --current-branch BRANCH --clean --worktree-id WORKTREE --claim path/to/file --dry-run
-python -B tools/governance/work_state.py handoff --root . --id ITEM --execution-id EXEC --pr PR_URL --head SHA --peer PEER --epoch EPOCH --finding "Fixed: receipt"
-python -B tools/governance/work_state.py closeout --root . --id ITEM --execution-id EXEC --pr PR_URL --head SHA --peer PEER --findings resolved --focused-receipt FOCUSED --final-receipt FINAL --attribution AUTHOR --merge-sha SHA
+python -B tools/governance/work_state.py activate --root . --id ITEM --execution-id EXEC --expected-baseline aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-branch BRANCH --clean --worktree-id WORKTREE --claim path/to/file --dry-run
+python -B tools/governance/work_state.py handoff --root . --id ITEM --execution-id EXEC --pr PR_URL --head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --peer PEER --epoch EPOCH --finding "Fixed: receipt"
+python -B tools/governance/work_state.py closeout --root . --id ITEM --execution-id EXEC --pr PR_URL --head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --peer PEER --findings resolved --focused-receipt FOCUSED --final-receipt FINAL --attribution AUTHOR --merge-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ```
 
 `activate` observes Git directly whenever the root is a checkout and compares supplied values as expectations. Synthetic

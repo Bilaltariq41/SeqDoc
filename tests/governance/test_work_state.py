@@ -222,6 +222,7 @@ class WorkStateTests(unittest.TestCase):
 
     def operation(self, root, command, **options):
         argv = ["work_state.py", command, "--root", str(root)]
+        options.setdefault("repository", "o/r")
         for key, value in options.items():
             flag = "--" + key.replace("_", "-")
             if isinstance(value, bool):
@@ -524,7 +525,8 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(self.activate(root, execution_id="e", claim="src/a")[0], 0)
         def pr_view(**changes):
             value = {"number":1, "url":"https://github.com/o/r/pull/1", "state":"OPEN", "isDraft":False,
-                     "author":{"login":"actual-author"}, "headRefOid":"c"*40}
+                     "author":{"login":"actual-author", "id":12345, "is_bot":False, "name":"Actual Author"},
+                     "headRefOid":"c"*40, "mergeCommit":None, "reviewDecision":None}
             value.update(changes)
             return type("R",(),{"stdout":json.dumps(value)})()
         base = {"id":"A", "execution_id":"e", "head":"c"*40, "observed_head":"spoofed",
@@ -533,9 +535,14 @@ class WorkStateTests(unittest.TestCase):
                                   ({"pr":"https://github.com/o/r/pull/1", "head":"b"*40}, pr_view()),
                                   ({"pr":"https://github.com/o/r/pull/1"}, pr_view(isDraft=True)),
                                   ({"pr":"https://github.com/o/r/pull/1"}, pr_view(state="CLOSED")),
-                                  ({"pr":"https://github.com/o/r/pull/1", "peer":"actual-author"}, pr_view())):
+                                  ({"pr":"https://github.com/o/r/pull/1", "peer":"actual-author"}, pr_view()),
+                                  ({"pr":"https://github.com/o/r/pull/1", "head":"c"*39}, pr_view()),
+                                  ({"pr":"https://github.com/o/r/pull/1"}, pr_view(author={"id":12345, "is_bot":False, "name":"Actual Author"})),
+                                  ({"pr":"https://github.com/o/r/pull/1"}, pr_view(author={"login":7, "id":12345, "is_bot":False, "name":"Actual Author"})),
+                                  ({"pr":"https://github.com/o/r/pull/1"}, pr_view(author={"login":"actual-author", "id":12345, "is_bot":True, "name":"Actual Author"})),
+                                  ({"pr":"https://github.com/o/r/pull/1"}, pr_view(author={"login":"actual-author", "id":"12345", "is_bot":False, "name":"Actual Author"}))):
             with patch("subprocess.run", return_value=response):
-                self.assertNotEqual(self.operation(root, "handoff", **dict(base, **options))[0], 0)
+                self.assertNotEqual(self.operation(root, "handoff", **dict(base, **options))[0], 0, options)
         with patch("subprocess.run", return_value=pr_view()) as run:
             handoff_code, _ = self.operation(root, "handoff", **dict(base, pr="https://github.com/o/r/pull/1"))
         self.assertEqual(handoff_code, 0)
@@ -546,6 +553,7 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(reviewed["reviewFindings"], ["Fixed: receipt"])
         self.assertEqual(reviewed["reviewPeer"], "reviewer")
         self.assertEqual(reviewed["pr"], "https://github.com/o/r/pull/1")
+        self.assertEqual(reviewed["review"]["author"], "actual-author")
         self.assertEqual(reviewed["review"]["requestHead"], "c" * 40)
         resolving = type("A",(),{"id":"A","state":"ResolvingFindings","reason":"repair in progress",
                                   "select":False,"dry_run":False,"check":False})()
@@ -681,9 +689,10 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(self.activate(root, execution_id="a", claim="src/a")[0], 0)
         h1, h2, h3 = "d"*40, "e"*40, "f"*40
         pr = {"number":1,"url":"https://github.com/o/r/pull/1","state":"OPEN","isDraft":False,
-              "author":{"login":"actual-author"},"headRefOid":h1,"mergeCommit":None}
+              "author":{"login":"actual-author", "id":12345, "is_bot":False, "name":"Actual Author"},
+              "headRefOid":h1,"mergeCommit":None,"reviewDecision":"APPROVED"}
         def gh_view(merged=False, head=h2, review_state="APPROVED", review_head=h2, review_peer="reviewer", merge_sha="a"*40):
-            view = dict(pr, headRefOid=head, mergeCommit={"oid":merge_sha} if merged else None)
+            view = dict(pr, state="MERGED" if merged else "OPEN", headRefOid=head, mergeCommit={"oid":merge_sha} if merged else None)
             reviews = [{"user":{"login":review_peer}, "state":review_state, "commit_id":review_head}]
             def run(command, *args, **kwargs):
                 text = " ".join(command) if isinstance(command, (list, tuple)) else str(command)
