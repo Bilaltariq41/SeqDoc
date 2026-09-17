@@ -118,3 +118,12 @@ workflow without private state.
 
 Stop for a real external dependency, an active conflicting path or exclusive-resource lease, or an owner-only T4
 operation. Do not weaken transaction, recovery, deterministic-output, or review-identity tests to finish the issue.
+
+Takeover amendment: an owner-authorized maintainer takeover may resume only the blocked checkpoint once. `resume`
+requires explicit nonempty `current_head`, `start_head`, and `next_action`; both heads must be lowercase 40-character
+SHAs equal to the actual observed clean checkout HEAD. It restores one selected execution with normalized claims,
+preserving the frozen baseline, attribution, branch, checkpoint, and PR. It records a deterministic authorization
+receipt, reason, and start head; the supplied reason and next action become `statusReason` and `nextAction`. It rejects
+selected or conflicting executions and atomically updates the capsule and registry.
+This does not authorize automatic repair, GitHub writes, lifecycle changes outside the operation, or the final gate.
+State remains `Blocked` until the explicitly authorized resume operation is invoked after publication.

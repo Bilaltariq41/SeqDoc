@@ -9,7 +9,7 @@ and Windows case, and rejects ancestor overlap and absolute paths.
 
 | Operation | Write permission | Source of truth |
 |---|---|---|
-| `prepare`, `activate`, `handoff`, `closeout`, `promote`, `recover` | assigned Write collaborator on the branch | registry and capsule |
+| `prepare`, `activate`, `resume`, `handoff`, `closeout`, `promote`, `recover` | assigned Write collaborator on the branch; `resume` is owner-authorized takeover only | registry and capsule |
 | `validate`, `project-execution --check`, `check-github` | read-only | registry / observed remote |
 | `project` and `sync-github` | maintainer-approved issue-label permission | registry, then remote |
 | T4 access/settings, rulesets, secrets, apps, visibility, transfer, archive/delete, or bypass | owner only | GitHub controls |
@@ -25,6 +25,7 @@ python -B tools/governance/work_state.py validate --root .
 python -B tools/governance/work_state.py project-execution --root . --check
 python -B tools/governance/work_state.py prepare --root . --id GH-57
 python -B tools/governance/work_state.py activate --root . --id ITEM --execution-id EXEC --expected-baseline aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-branch BRANCH --clean --worktree-id WORKTREE --claim path/to/file --dry-run
+python -B tools/governance/work_state.py resume --root . --id ITEM --execution-id EXEC --worktree-id WORKTREE --expected-baseline aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --start-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-branch BRANCH --clean --claim path/to/file --authorization-receipt OWNER_RECEIPT --reason "bounded takeover"
 python -B tools/governance/work_state.py handoff --root . --id ITEM --execution-id EXEC --pr PR_URL --head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --peer PEER --epoch EPOCH --finding "Fixed: receipt"
 python -B tools/governance/work_state.py closeout --root . --id ITEM --execution-id EXEC --pr PR_URL --head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --peer PEER --findings resolved --focused-receipt FOCUSED --final-receipt FINAL --attribution AUTHOR --merge-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ```
@@ -41,6 +42,16 @@ budget, focused and final commands, review boundary, and acceptance proof. Unkno
 it is not silently inferred. `activate` requires an eligible item, closed dependencies, exact frozen baseline, observed
 HEAD/branch/clean worktree identity, a stable execution and worktree ID, and normalized typed claims. Use `--dry-run`
 first. Claims may cover fixtures, governance tools, and exclusive resources; equal exclusive claims conflict.
+
+`resume` is the sole owner-authorized takeover operation. It accepts only a `Blocked` item, moves it directly to
+`ResolvingFindings`, and observes the actual Git HEAD, branch, and clean status from the checkout. Explicit
+`current_head`, `start_head`, and `next_action` values are required; both heads must be lowercase 40-character SHAs
+equal to the observed HEAD. The branch must match the preserved item branch. A non-empty authorization receipt and
+reason are required, and become the takeover's receipt/reason; `next_action` becomes the selected execution's next
+action. The operation preserves the item's baseline, owner, branch, checkpoint, contract, and PR, rejects any
+selected or overlapping execution (including repeated resume), and atomically writes the registry, capsule, and
+execution projection. It does not activate dependents, write GitHub, change lifecycle outside this transition, or run
+the final gate.
 
 Each operation validates the complete candidate before writing. Payloads are sorted and journaled with a deterministic
 generation identity. In-process failures restore every replaced file. `recover` never overwrites a newer generation;

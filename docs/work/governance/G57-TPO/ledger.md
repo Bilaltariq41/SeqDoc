@@ -54,3 +54,24 @@ Focused verification passed 28/28 tests with 1 platform-dependent symlink skip. 
 - **Fixed** — nested `id`, `is_bot`, `name`, and benign fields are accepted; login remains required and valid,
   `is_bot` is type-checked, and bot authors are rejected for the human-peer workflow. Top-level PR identity, state,
   head, merge, and SHA validation remains strict.
+
+## Owner-authorized takeover trace
+
+- `resume` is bounded to one `Blocked` → `ResolvingFindings` transition. It authenticates the actual clean checkout
+  HEAD, branch, and 40-character start head, while treating caller-supplied values only as expectations.
+- The deterministic takeover record contains exactly `authorizationReceipt`, `reason`, and `startHead`; baseline,
+  owner, branch, checkpoint, contract revision, and PR are preserved. Claims are normalized before persistence, and
+  selected, stale, dirty, malformed, conflicting, and repeated requests fail before any payload is written.
+- Registry, checkpoint capsule, and execution projection are committed through the same atomic transaction. No resume
+  invocation, GitHub mutation, lifecycle projection, or final gate was performed during this takeover.
+- Focused verification after the path-normalization expectation repair: `python -B -m unittest
+  tests.governance.test_work_state` — **28/28 passed**, with **1 skipped** platform-dependent symlink case.
+
+## Strengthened takeover and author boundaries
+
+- `resume` now requires explicit nonempty `current_head`, `start_head`, and `next_action`; both heads must be
+  lowercase 40-character SHAs matching the actual observed HEAD. Success persists `reason` as `statusReason` and
+  `next_action` as `nextAction`.
+- Authenticated PR authors now require `login`, a bounded opaque string node ID compatible with `U_kgDODXRwzA`, and a
+  boolean `is_bot`; whitespace, invalid, overlong, numeric, boolean, and missing node IDs are rejected. Human handoff
+  continues to reject `is_bot: true`, while benign author fields remain compatible.

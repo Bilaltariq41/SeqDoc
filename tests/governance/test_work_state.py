@@ -178,6 +178,115 @@ class WorkStateTests(unittest.TestCase):
         execution = json.loads((root / "docs/project/execution.json").read_text(encoding="utf-8"))
         self.assertIn("a", {entry["executionId"] for entry in execution["executions"]})
 
+        def blocked_root():
+            candidate = self.synthetic(second=True)
+            item_path = candidate / "docs/project/work-items/A.json"
+            item = json.loads(item_path.read_text(encoding="utf-8"))
+            item["lifecycle"], item["lifecycleLabel"] = "Blocked", "blocked"
+            item["statusReason"] = "pending authorization"
+            item_path.write_text(ws.dump(item), encoding="utf-8")
+            capsule = candidate / "docs/work/checkpoints/A/checkpoint.md"
+            capsule.write_text(capsule.read_text(encoding="utf-8").replace("`NotStarted`", "`Blocked`"), encoding="utf-8")
+            self.assertEqual(ws.validate(candidate), 0)
+            return candidate, item
+
+        start_head = "1" * 40
+        candidate, original = blocked_root()
+        with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)) as observed:
+            code, output = self.operation(candidate, "resume", id="A", execution_id="takeover-1", worktree_id="resume-a",
+                                          expected_baseline=original["baseline"], current_head=start_head,
+                                          current_branch="feature/a", clean=True, start_head=start_head,
+                                          claim=["SRC\\Repair/../repair.py"], authorization_receipt="owner-approved-epoch-1",
+                                          reason="resume after bounded takeover", next_action="rerun focused verification")
+        self.assertEqual(code, 0, output)
+        observed.assert_called_once()
+        resumed = json.loads((candidate / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
+        for field in ("owner", "branch", "checkpointId", "checkpointPath", "pr", "baseline"):
+            self.assertEqual(resumed[field], original[field], field)
+        self.assertEqual((resumed["lifecycle"], resumed["executionId"], resumed["worktreeId"]),
+                         ("ResolvingFindings", "takeover-1", "resume-a"))
+        self.assertEqual(resumed["statusReason"], "resume after bounded takeover")
+        self.assertEqual(resumed["nextAction"], "rerun focused verification")
+        self.assertNotIn("pending authorization", json.dumps(resumed).lower())
+        self.assertTrue(resumed["selectedForExecution"])
+        self.assertEqual(resumed["claims"], [{"kind":"path", "value":"src/repair.py"}])
+        self.assertEqual(resumed["takeover"], {"authorizationReceipt":"owner-approved-epoch-1",
+                                               "reason":"resume after bounded takeover", "startHead":start_head})
+        self.assertIn("`ResolvingFindings`", (candidate / "docs/work/checkpoints/A/checkpoint.md").read_text(encoding="utf-8"))
+        self.assertEqual(ws.validate(candidate), 0)
+        before = {p: p.read_bytes() for p in candidate.rglob("*") if p.is_file()}
+        with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)):
+            self.assertNotEqual(self.operation(candidate, "resume", id="A", execution_id="takeover-2", worktree_id="resume-b",
+                                                expected_baseline=original["baseline"], current_head=start_head,
+                                                current_branch="feature/a", clean=True, start_head=start_head,
+                                                claim="other.py", authorization_receipt="second", reason="second",
+                                                next_action="second")[0], 0)
+        self.assertEqual(before, {p: p.read_bytes() for p in before})
+        for options in ({"clean":False}, {"current_head":"2"*40}, {"current_head":"bad"},
+                        {"current_branch":"feature/other"}, {"authorization_receipt":""}, {"reason":""},
+                        {"next_action":""}, {"current_head":None}, {"start_head":None}, {"current_branch":None},
+                        {"start_head":"1"*39}, {"current_head":"1"*39}, {"start_head":"A"*40}, {"current_head":"A"*40}):
+            candidate, original = blocked_root()
+            values = {"id":"A", "execution_id":"takeover-1", "worktree_id":"resume-a", "expected_baseline":original["baseline"],
+                      "current_head":start_head, "current_branch":"feature/a", "clean":True, "start_head":start_head,
+                      "claim":"repair.py", "authorization_receipt":"owner-approved", "reason":"bounded resume",
+                      "next_action":"rerun focused verification"}
+            values.update(options)
+            before = {p: p.read_bytes() for p in candidate.rglob("*") if p.is_file()}
+            with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)):
+                self.assertNotEqual(self.operation(candidate, "resume", **values)[0], 0, options)
+            self.assertEqual(before, {p: p.read_bytes() for p in before})
+        for remove_directory in (False, True):
+            candidate, original = blocked_root()
+            capsule = candidate / "docs/work/checkpoints/A/checkpoint.md"
+            capsule.unlink()
+            if remove_directory:
+                shutil.rmtree(capsule.parent)
+            before = {p: p.read_bytes() for p in candidate.rglob("*") if p.is_file()}
+            values = {"id":"A", "execution_id":"takeover-1", "worktree_id":"resume-a", "expected_baseline":original["baseline"],
+                      "current_head":start_head, "current_branch":"feature/a", "clean":True, "start_head":start_head,
+                      "claim":"repair.py", "authorization_receipt":"owner-approved", "reason":"bounded resume",
+                      "next_action":"rerun focused verification"}
+            with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)):
+                self.assertNotEqual(self.operation(candidate, "resume", **values)[0], 0)
+            self.assertEqual(before, {p: p.read_bytes() for p in before})
+            self.assertFalse(capsule.exists())
+        candidate, original = blocked_root()
+        before = {p: p.read_bytes() for p in candidate.rglob("*") if p.is_file()}
+        replace = __import__("os").replace
+        replacements = [0]
+        def fail_after_one(source, destination):
+            replacements[0] += 1
+            if replacements[0] == 2:
+                raise OSError("resume rollback test")
+            return replace(source, destination)
+        with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)):
+            with patch("os.replace", side_effect=fail_after_one):
+                code, _ = self.operation(candidate, "resume", id="A", execution_id="takeover-1", worktree_id="resume-a",
+                                          expected_baseline=original["baseline"], current_head=start_head,
+                                          current_branch="feature/a", clean=True, start_head=start_head,
+                                          claim="repair.py", authorization_receipt="owner-approved",
+                                          reason="bounded resume", next_action="rerun focused verification")
+        self.assertNotEqual(code, 0)
+        self.assertGreaterEqual(replacements[0], 2)
+        self.assertEqual(before, {p: p.read_bytes() for p in before})
+        self.assertFalse(ws.runtime_journal(candidate).exists())
+        self.assertFalse(list(candidate.rglob(".work-state-*")))
+        candidate, original = blocked_root()
+        self.assertEqual(self.activate(candidate, item="B", execution_id="other", claim="occupied.py")[0], 0)
+        values = {"id":"A", "execution_id":"takeover-1", "worktree_id":"resume-a", "expected_baseline":original["baseline"],
+                  "current_head":start_head, "current_branch":"feature/a", "clean":True, "start_head":start_head,
+                  "claim":"occupied.py", "authorization_receipt":"owner-approved", "reason":"bounded resume",
+                  "next_action":"rerun focused verification"}
+        with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)):
+            self.assertNotEqual(self.operation(candidate, "resume", **values)[0], 0)
+        candidate, original = blocked_root()
+        values["claim"] = ["repair.py", "repair.py"]
+        before = {p: p.read_bytes() for p in candidate.rglob("*") if p.is_file()}
+        with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)):
+            self.assertNotEqual(self.operation(candidate, "resume", **values)[0], 0)
+        self.assertEqual(before, {p: p.read_bytes() for p in before})
+
     def test_replace_failure_rolls_back_all_payloads(self):
         self.reset_gws1_transition_fixture()
         a=type("A",(),{"id":"GWS1","state":"ReviewRequired","reason":"returning to review after verification","select":True,"check":False,"dry_run":False})(); paths=list((self.d/"docs/project/work-items").glob("*.json"))+[self.d/"docs/work/governance/GWS1/checkpoint.md",self.d/"docs/project/execution.json"]; before={p:p.read_bytes() for p in paths}; real=__import__("os").replace; count=[0]
@@ -525,7 +634,8 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(self.activate(root, execution_id="e", claim="src/a")[0], 0)
         def pr_view(**changes):
             value = {"number":1, "url":"https://github.com/o/r/pull/1", "state":"OPEN", "isDraft":False,
-                     "author":{"login":"actual-author", "id":12345, "is_bot":False, "name":"Actual Author"},
+                     "author":{"login":"actual-author", "id":"U_kgDODXRwzA", "is_bot":False,
+                               "name":"Actual Author", "url":"https://github.com/actual-author"},
                      "headRefOid":"c"*40, "mergeCommit":None, "reviewDecision":None}
             value.update(changes)
             return type("R",(),{"stdout":json.dumps(value)})()
@@ -537,10 +647,16 @@ class WorkStateTests(unittest.TestCase):
                                   ({"pr":"https://github.com/o/r/pull/1"}, pr_view(state="CLOSED")),
                                   ({"pr":"https://github.com/o/r/pull/1", "peer":"actual-author"}, pr_view()),
                                   ({"pr":"https://github.com/o/r/pull/1", "head":"c"*39}, pr_view()),
-                                  ({"pr":"https://github.com/o/r/pull/1"}, pr_view(author={"id":12345, "is_bot":False, "name":"Actual Author"})),
-                                  ({"pr":"https://github.com/o/r/pull/1"}, pr_view(author={"login":7, "id":12345, "is_bot":False, "name":"Actual Author"})),
-                                  ({"pr":"https://github.com/o/r/pull/1"}, pr_view(author={"login":"actual-author", "id":12345, "is_bot":True, "name":"Actual Author"})),
-                                  ({"pr":"https://github.com/o/r/pull/1"}, pr_view(author={"login":"actual-author", "id":"12345", "is_bot":False, "name":"Actual Author"}))):
+                                   ({"pr":"https://github.com/o/r/pull/1"}, pr_view(author={"login":"actual-author", "id":12345, "is_bot":False, "name":"Actual Author"})),
+                                   ({"pr":"https://github.com/o/r/pull/1"}, pr_view(author={"login":7, "id":"U_kgDODXRwzA", "is_bot":False, "name":"Actual Author"})),
+                                   ({"pr":"https://github.com/o/r/pull/1"}, pr_view(author={"login":"actual-author", "id":"U_kgDODXRwzA", "is_bot":True, "name":"Actual Author"})),
+                                   ({"pr":"https://github.com/o/r/pull/1"}, pr_view(author={"login":"actual-author", "is_bot":False, "name":"Actual Author"})),
+                                   ({"pr":"https://github.com/o/r/pull/1"}, pr_view(author={"login":"actual-author", "id":"", "is_bot":False, "name":"Actual Author"})),
+                                   ({"pr":"https://github.com/o/r/pull/1"}, pr_view(author={"login":"actual-author", "id":" ", "is_bot":False, "name":"Actual Author"})),
+                                   ({"pr":"https://github.com/o/r/pull/1"}, pr_view(author={"login":"actual-author", "id":"not-a-node", "is_bot":False, "name":"Actual Author"})),
+                                   ({"pr":"https://github.com/o/r/pull/1"}, pr_view(author={"login":"actual-author", "id":"U_kgDODXRwzA"*20, "is_bot":False, "name":"Actual Author"})),
+                                   ({"pr":"https://github.com/o/r/pull/1"}, pr_view(author={"login":"actual-author", "id":True, "is_bot":False, "name":"Actual Author"})),
+                                   ({"pr":"https://github.com/o/r/pull/1"}, pr_view(author={"login":"actual-author", "id":"U_kgDODXRwzA", "is_bot":"false", "name":"Actual Author"}))):
             with patch("subprocess.run", return_value=response):
                 self.assertNotEqual(self.operation(root, "handoff", **dict(base, **options))[0], 0, options)
         with patch("subprocess.run", return_value=pr_view()) as run:
@@ -554,6 +670,15 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(reviewed["reviewPeer"], "reviewer")
         self.assertEqual(reviewed["pr"], "https://github.com/o/r/pull/1")
         self.assertEqual(reviewed["review"]["author"], "actual-author")
+        nullable_root = self.synthetic()
+        self.assertEqual(self.activate(nullable_root, execution_id="nullable", claim="src/a")[0], 0)
+        with patch("subprocess.run", return_value=pr_view(author={"login":"actual-author", "id":"U_kgDODXRwzA",
+                                                                    "is_bot":False, "name":None,
+                                                                    "url":"https://github.com/actual-author"})):
+            self.assertEqual(self.operation(nullable_root, "handoff", id="A", execution_id="nullable",
+                                            pr="https://github.com/o/r/pull/1", head="c"*40,
+                                            observed_head="spoofed", observed_author="spoofed", peer="reviewer",
+                                            epoch="1", finding=["Fixed: nullable name"])[0], 0)
         self.assertEqual(reviewed["review"]["requestHead"], "c" * 40)
         resolving = type("A",(),{"id":"A","state":"ResolvingFindings","reason":"repair in progress",
                                   "select":False,"dry_run":False,"check":False})()
@@ -646,15 +771,11 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(disk_item["owner"], "ahmad")
         self.assertEqual(disk_item["branch"], "feature/issue-57-transactional-project-operations")
         self.assertEqual(disk_item["dependencies"], [])
-        self.assertEqual(disk_item["worktreeId"], "feature-issue-57-transactional-ops")
-        claims = {(claim.get("kind"), claim.get("value")) for claim in disk_item.get("claims", [])}
-        self.assertTrue({("path", "tools/governance/work_state.py"), ("path", "docs/project/work-state.schema.json")} <= claims)
-        self.assertTrue({("exclusive", "registry"), ("exclusive", "execution"),
-                         ("governance-tool", "tools/governance/work_state.py")} <= claims)
+        self.assertNotIn("worktreeId", disk_item)
+        self.assertFalse(disk_item.get("selectedForExecution"))
+        self.assertNotIn("claims", disk_item)
         execution = json.loads((ROOT / "docs/project/execution.json").read_text(encoding="utf-8"))
-        active = next(entry for entry in execution["executions"] if entry["executionId"] == disk_item["executionId"])
-        for field in ("owner", "branch", "worktreeId", "dependencies", "claims"):
-            self.assertEqual(active[field], disk_item[field])
+        self.assertEqual(execution["executions"], [])
         for field in ("sourceId", "activeCheckpointId", "activeCheckpointPath", "mode"):
             self.assertIn(field, execution)
         root = self.synthetic()
@@ -689,7 +810,8 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(self.activate(root, execution_id="a", claim="src/a")[0], 0)
         h1, h2, h3 = "d"*40, "e"*40, "f"*40
         pr = {"number":1,"url":"https://github.com/o/r/pull/1","state":"OPEN","isDraft":False,
-              "author":{"login":"actual-author", "id":12345, "is_bot":False, "name":"Actual Author"},
+              "author":{"login":"actual-author", "id":"U_kgDODXRwzA", "is_bot":False,
+                         "name":"Actual Author", "url":"https://github.com/actual-author"},
               "headRefOid":h1,"mergeCommit":None,"reviewDecision":"APPROVED"}
         def gh_view(merged=False, head=h2, review_state="APPROVED", review_head=h2, review_peer="reviewer", merge_sha="a"*40):
             view = dict(pr, state="MERGED" if merged else "OPEN", headRefOid=head, mergeCommit={"oid":merge_sha} if merged else None)

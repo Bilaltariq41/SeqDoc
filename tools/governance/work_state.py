@@ -28,6 +28,7 @@ TRANSITIONS = {
 }
 CAPSULE_STATES = {"Ready": "NotStarted", "Active": "Building", "ReviewRequired": "ReviewRequired", "ResolvingFindings": "ResolvingFindings", "Verifying": "Verifying", "Closed": "Closed", "Blocked": "Blocked", "Cancelled": "Cancelled"}
 SHA = re.compile(r"^[0-9a-f]{40}$")
+NODE_ID = re.compile(r"^[A-Za-z0-9_]{1,100}$")
 URL = re.compile(r"^https://github\.com/[^/]+/[^/]+/(?:issues|pull)/[0-9]+(?:#.*)?$")
 PR_URL = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)(?:#.*)?$")
 BRANCH = re.compile(r"^[A-Za-z0-9._/-]+$")
@@ -56,6 +57,8 @@ def json_type(value, kind):
 
 
 def normalize_claim(value):
+    if not isinstance(value, str):
+        raise ValueError("claim must be a string")
     value = value.replace("\\", "/")
     if value.startswith("/") or re.match(r"^[A-Za-z]:", value):
         raise ValueError("absolute claim")
@@ -77,7 +80,7 @@ def normalize_claim(value):
 def normalize_claim_record(record):
     if not isinstance(record, dict) or set(record) != {"kind", "value"}:
         raise ValueError("claim object must contain only kind and value")
-    if record["kind"] not in CLAIM_KINDS:
+    if not isinstance(record["kind"], str) or record["kind"] not in CLAIM_KINDS:
         raise ValueError("invalid claim kind")
     return {"kind": record["kind"], "value": normalize_claim(record["value"])}
 
@@ -122,7 +125,7 @@ def metadata_errors(item):
     if (epoch is not None and (not isinstance(epoch, str) or not ID.fullmatch(epoch))) or (peer is not None and (not isinstance(peer, str) or not ID.fullmatch(peer))):
         errors.append("invalid review metadata")
     review_states = {"ReviewRequired", "ResolvingFindings", "Verifying", "Closed"}
-    if lifecycle in review_states and lifecycle != "Closed" and item.get("executionId") is not None and (not epoch or not peer or not isinstance(findings, list)):
+    if lifecycle in review_states and lifecycle != "Closed" and item.get("executionId") is not None and not (lifecycle == "ResolvingFindings" and item.get("takeover")) and (not epoch or not peer or not isinstance(findings, list)):
         errors.append("review metadata missing")
     closeout = item.get("closeout")
     if closeout is not None:
@@ -147,6 +150,11 @@ def metadata_errors(item):
                   review["author"] != review["peer"] and review["findings"] == sorted(set(review["findings"])) and
                   all(valid_finding(value) for value in review["findings"])):
             errors.append("invalid review record")
+    takeover = item.get("takeover")
+    if takeover is not None and (not isinstance(takeover, dict) or set(takeover) != {"authorizationReceipt", "reason", "startHead"} or
+                                 not all(isinstance(takeover[key], str) and takeover[key].strip() for key in ("authorizationReceipt", "reason")) or
+                                 not SHA.fullmatch(takeover["startHead"])):
+        errors.append("invalid takeover record")
     return errors
 
 
@@ -570,9 +578,12 @@ def authenticated_pr(repository, pr):
     author = value["author"]
     if not isinstance(author, dict) or not isinstance(author.get("login"), str) or not author["login"].strip() or not ID.fullmatch(author["login"]):
         raise ValueError("malformed authenticated PR author")
-    if "is_bot" in author and not isinstance(author["is_bot"], bool):
+    if (not isinstance(author.get("id"), str) or not NODE_ID.fullmatch(author["id"])):
         raise ValueError("malformed authenticated PR author")
-    if "id" in author and (not isinstance(author["id"], int) or isinstance(author["id"], bool)):
+    if ("name" in author and author["name"] is not None and
+            not isinstance(author["name"], str)):
+        raise ValueError("malformed authenticated PR author")
+    if not isinstance(author.get("is_bot"), bool):
         raise ValueError("malformed authenticated PR author")
     if not isinstance(value["headRefOid"], str) or not SHA.fullmatch(value["headRefOid"]):
         raise ValueError("malformed authenticated PR head")
@@ -707,6 +718,88 @@ def activate(root, args):
     except OSError:
         return 1
     print(packet, end="")
+    return 0
+
+
+def resume(root, args):
+    items = load(root)
+    candidate = copy.deepcopy(items)
+    item = next((value for value in candidate if value.get("id") == args.id), None)
+    errors = []
+    if not item or item.get("lifecycle") != "Blocked":
+        errors.append("item is not blocked")
+    if any(value.get("selectedForExecution") for value in candidate):
+        errors.append("an execution is already selected")
+    if not args.execution_id or not ID.fullmatch(args.execution_id) or not args.worktree_id or not ID.fullmatch(args.worktree_id) or "/" in args.worktree_id or "\\" in args.worktree_id:
+        errors.append("invalid execution identity")
+    if (not isinstance(args.authorization_receipt, str) or not args.authorization_receipt.strip() or
+            not isinstance(args.reason, str) or not args.reason.strip()):
+        errors.append("authorization receipt and reason are required")
+    if (not isinstance(args.next_action, str) or not args.next_action.strip()):
+        errors.append("next action is required")
+    if not args.expected_baseline or not SHA.fullmatch(args.expected_baseline) or (item and args.expected_baseline != item.get("baseline")):
+        errors.append("baseline identity mismatch")
+    if item and (not item.get("checkpointId") or not item.get("checkpointPath") or not (root / item["checkpointPath"] / "checkpoint.md").is_file()):
+        errors.append("checkpoint is missing")
+    try:
+        actual_head, actual_branch, clean = observe_git(root)
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    if (not isinstance(args.current_head, str) or not SHA.fullmatch(args.current_head) or
+            args.current_head != actual_head or not isinstance(args.start_head, str) or
+            not SHA.fullmatch(args.start_head) or args.start_head != actual_head):
+        errors.append("observed HEAD differs from supplied expectation")
+    if not SHA.fullmatch(actual_head):
+        errors.append("malformed observed HEAD")
+    if args.current_branch is not None and (not isinstance(args.current_branch, str) or args.current_branch != actual_branch):
+        errors.append("observed branch differs from supplied expectation")
+    if item and actual_branch != item.get("branch"):
+        errors.append("branch identity mismatch")
+    if not args.clean or not clean or args.dirty:
+        errors.append("worktree is dirty")
+    try:
+        claims = claims_from_args(args)
+    except ValueError as error:
+        errors.append(str(error)); claims = []
+    if not claims:
+        errors.append("claims are required")
+    if len(claims) != len({(c["kind"], c["value"]) for c in claims}):
+        errors.append("duplicate claims")
+    for other in candidate:
+        if item is not None and other is item:
+            continue
+        for old in other.get("claims", []):
+            try:
+                if any(claims_conflict(normalize_claim_record(old), new) for new in claims):
+                    errors.append("claim overlap")
+            except ValueError:
+                continue
+    if errors:
+        print("\n".join(sorted(set(errors))), file=sys.stderr)
+        return 1
+    item.update(lifecycle="ResolvingFindings", lifecycleLabel="resolving-findings", executionId=args.execution_id,
+                worktreeId=args.worktree_id, selectedForExecution=True, claims=claims,
+                nextAction=args.next_action, statusReason=args.reason,
+                takeover={"authorizationReceipt": args.authorization_receipt, "reason": args.reason, "startHead": actual_head})
+    capsule_path = root / item["checkpointPath"] / "checkpoint.md"
+    lines = capsule_path.read_text(encoding="utf-8").splitlines()
+    state_index = next((i for i, line in enumerate(lines) if line.strip() == "## State"), None)
+    value_index = next((i for i in range((state_index or 0) + 1, len(lines)) if lines[i].strip()), None) if state_index is not None else None
+    if value_index is None:
+        print("capsule state is missing", file=sys.stderr)
+        return 1
+    lines[value_index] = "`ResolvingFindings`"
+    overrides = {item["checkpointPath"]: "\n".join(lines) + "\n"}
+    validation_errors = validate_items(candidate, root, overrides)
+    if validation_errors:
+        print("\n".join(validation_errors), file=sys.stderr)
+        return 1
+    try:
+        atomic_write(root, {root / "docs/project/work-items" / (item["id"] + ".json"): dump(item), capsule_path: overrides[item["checkpointPath"]], root / "docs/project/execution.json": execution_payload(candidate)})
+    except OSError:
+        return 1
+    print(dump(item), end="")
     return 0
 
 
@@ -1120,9 +1213,9 @@ def transition(root, args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["validate", "project-execution", "check-github", "sync-github", "project", "transition", "prepare", "activate", "handoff", "closeout", "promote", "recover"])
+    parser.add_argument("command", choices=["validate", "project-execution", "check-github", "sync-github", "project", "transition", "prepare", "activate", "resume", "handoff", "closeout", "promote", "recover"])
     parser.add_argument("--root", type=Path, default=Path(".")); parser.add_argument("--check", action="store_true"); parser.add_argument("--dry-run", action="store_true"); parser.add_argument("--repository", default="Bilaltariq41/SeqDoc")
-    for option in ("id", "state", "reason", "select-id", "checkpoint-id", "checkpoint-path", "next-action", "pr", "branch", "baseline", "contract-revision", "execution-id", "expected-baseline", "current-head", "current-branch", "worktree-id", "observed-head", "observed-author", "peer", "epoch", "findings", "focused-receipt", "final-receipt", "attribution", "merge-sha", "head"):
+    for option in ("id", "state", "reason", "authorization-receipt", "start-head", "select-id", "checkpoint-id", "checkpoint-path", "next-action", "pr", "branch", "baseline", "contract-revision", "execution-id", "expected-baseline", "current-head", "current-branch", "worktree-id", "observed-head", "observed-author", "peer", "epoch", "findings", "focused-receipt", "final-receipt", "attribution", "merge-sha", "head"):
         parser.add_argument("--" + option)
     parser.add_argument("--allow-peer-change", action="store_true")
     parser.add_argument("--select", action="store_true"); parser.add_argument("--clean", action="store_true"); parser.add_argument("--dirty", action="store_true"); parser.add_argument("--scaffold", action="store_true")
@@ -1131,7 +1224,7 @@ def main():
     if args.command == "validate": return validate(args.root)
     if args.command == "project-execution": return execution(args.root, args.check)
     if args.command in {"check-github", "sync-github", "project"}: return github_projection(args, args.root)
-    return {"transition": transition, "prepare": prepare, "activate": activate, "handoff": handoff, "closeout": closeout, "promote": promote, "recover": recover}[args.command](args.root, args)
+    return {"transition": transition, "prepare": prepare, "activate": activate, "resume": resume, "handoff": handoff, "closeout": closeout, "promote": promote, "recover": recover}[args.command](args.root, args)
 
 
 if __name__ == "__main__":
