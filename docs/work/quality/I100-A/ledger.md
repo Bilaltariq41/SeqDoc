@@ -349,3 +349,12 @@ native handle release, observes wait faults, and retains process/job handles on 
 isolated-SDK focused lane then passed `61/61`, and the complete Reviewer rerun reported `PASS - NO ISSUES DETECTED`;
 the prior High finding is Fixed. No final gate ran. Exact head
 `37b7f71597c2a4bbd4effc87df70fad18519cc89` is ready for Ahmad's latest-head human review.
+
+## Ahmad latest-head review findings
+
+Ahmad reviewed PR head `a0d3ae175b6f14aa33cf2b6c28d7cac4b031287e` and returned `BLOCK`: construction
+unwind can strand an uncontained suspended child; disposal can release family resources without successful
+family-zero proof; and teardown evidence uses inconsistent synchronization. The prior WaitAsync/Dispose finding was
+accepted as Fixed. Abood authorized one cohesive repair using authoritative Windows API evidence, one deterministic
+regression per finding, focused verification, a complete Reviewer rerun, and a new latest-head Ahmad review. No final
+gate is authorized before that approval.

@@ -2,7 +2,7 @@
 
 ## State
 
-`ReviewRequired`
+`ResolvingFindings`
 
 ## Authority and frozen state
 
@@ -393,3 +393,17 @@ failed 1/61 at `11267b9`; repair `37b7f71` synchronously claims disposal, blocks
 retains handles for an existing wait before release. The isolated-SDK focused lane passed 61/61, and the complete
 Reviewer rerun reported `PASS - NO ISSUES DETECTED`, marking the prior High finding Fixed. The checkpoint is ready for
 Ahmad's latest-head human review at exact head `37b7f71597c2a4bbd4effc87df70fad18519cc89`; the final gate remains withheld.
+
+## Ahmad latest-head findings repair
+
+Ahmad reviewed latest PR head `a0d3ae175b6f14aa33cf2b6c28d7cac4b031287e` and blocked approval with two High
+findings and one Medium finding. The accepted repair outcomes are: eliminate the pre-containment suspended-child
+window with evidence-backed creation-time job admission; prevent disposal from releasing family resources without
+successful family-zero proof; and synchronize teardown evidence through immutable snapshots. One deterministic
+regression per observable is authorized in `ProcessOwnershipTests.cs`; implementation remains in `ProcessOwnership.cs`
+and the existing stub may change only if an observable child receipt is indispensable.
+
+Non-goals remain GH-107, I18/PR #103, `src/**`, package/build/repository configuration, ARM64, external corpus,
+global/name/PID killing, and unrelated process capabilities. Research must use authoritative Microsoft Windows API
+documentation. The focused lane must pass under isolated SDK `10.0.302`, followed by a complete independent Reviewer
+rerun and Ahmad's latest-head formal review. The final gate remains withheld until Ahmad approves the repaired head.
