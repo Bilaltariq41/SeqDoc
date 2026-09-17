@@ -25,15 +25,7 @@ session history.
 - `tools/governance/work_state.py`
 - `tests/governance/test_work_state.py`
 - `docs/project/work-state.schema.json`
-- `.github/workflows/work-state.yml`
-- `AGENTS.md`
-- `docs/README.md`
-- `docs/project/workflow.md`
-- `docs/project/issue-readiness.md`
-- `docs/project/delegated-contribution-workflow.md`
 - `docs/project/project-operations.md`
-- `docs/project/work-items/GH-57.json`
-- generated `docs/project/execution.json`
 - `docs/work/governance/G57-TPO/checkpoint.md`
 - `docs/work/governance/G57-TPO/ledger.md`
 
@@ -127,6 +119,14 @@ receipt, reason, and start head; the supplied reason and next action become `sta
 selected or conflicting executions and atomically updates the capsule and registry.
 This does not authorize automatic repair, GitHub writes, lifecycle changes outside the operation, or the final gate.
 State remains `Blocked` until the explicitly authorized resume operation is invoked after publication.
+
+Two-peer takeover amendment: the authorized route is exactly two authenticated peer Issue-comment receipts, repeated as
+`--peer-authorization-receipt`, plus `--authorization-head`; it is mutually exclusive with the owner route. The
+comments must be human same-repository/same-issue OWNER, MEMBER, or COLLABORATOR comments with exact normalized markers,
+distinct IDs and case-insensitively distinct logins. Authenticated PR metadata must prove neither peer authored the item
+PR, and the authorization head must be a lowercase SHA authenticated as a local ancestor of the observed start head.
+The exact approvals are issue comments `5713964023` (Abood-essa) and `5714397001` (Qhatahet). This amendment authorizes
+implementation only; state remains `Blocked` and no resume, review, or final gate is claimed.
 
 ## Review finding repair boundary
 

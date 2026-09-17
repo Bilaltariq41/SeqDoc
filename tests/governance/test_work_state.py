@@ -182,7 +182,8 @@ class WorkStateTests(unittest.TestCase):
             candidate = self.synthetic(second=True)
             item_path = candidate / "docs/project/work-items/A.json"
             item = json.loads(item_path.read_text(encoding="utf-8"))
-            item.update(kind="github-issue", number=1, owner="assigned-collaborator", sourceUrl="https://github.com/repo-owner/r/issues/1",
+            item.update(kind="github-issue", number=57, owner="assigned-collaborator", sourceUrl="https://github.com/repo-owner/r/issues/57",
+                        pr="https://github.com/repo-owner/r/pull/57",
                         expectedGithubState="OPEN", lifecycle="Blocked", lifecycleLabel="blocked")
             item["statusReason"] = "pending authorization"
             item_path.write_text(ws.dump(item), encoding="utf-8")
@@ -192,12 +193,97 @@ class WorkStateTests(unittest.TestCase):
             return candidate, item
 
         start_head = "1" * 40
-        receipt_url = "https://github.com/repo-owner/r/issues/1#issuecomment-123"
+        receipt_url = "https://github.com/repo-owner/r/issues/57#issuecomment-123"
         marker = ("SEQDOC OWNER AUTHORIZATION v1\nItem: A\nCheckpoint: A\nExecution: takeover-1\n"
                   "Baseline: " + "a" * 40 + "\nStart head: " + start_head +
                   "\nOperation: bounded maintainer takeover\n")
-        authorization = {"html_url":receipt_url, "issue_url":"https://api.github.com/repos/repo-owner/r/issues/1",
-                         "user":{"login":"Repo-Owner"}, "author_association":"OWNER", "body":marker}
+        authorization = {"html_url":receipt_url, "issue_url":"https://api.github.com/repos/repo-owner/r/issues/57",
+                         "user":{"login":"Repo-Owner"}, "author_association":"OWNER", "body":marker.rstrip("\n")}
+        authorization_head = "07319b35ad2d7c1d2ee12f6c1438ad0e13e7afde"
+        peer_urls = ["https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5713964023",
+                     "https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5714397001"]
+        peer_logins = ["Abood-essa", "Qhatahet"]
+        def peer_comment(url, login, association="COLLABORATOR", body=None, issue=57):
+            return {"html_url":url, "issue_url":"https://api.github.com/repos/Bilaltariq41/SeqDoc/issues/57",
+                    "user":{"login":login, "type":"User"}, "author_association":association,
+                    "body":body if body is not None else
+                    (f"SEQDOC PEER TAKEOVER DECISION v1\nItem: A\nCheckpoint: A\nExecution: takeover-1\n"
+                     f"Baseline: {'a'*40}\nBlocked head: {authorization_head}\nPeer: {login}\n"
+                     "Decision: authorize bounded maintainer takeover\n").rstrip("\n") if login == "Abood-essa" else
+                    (f"SEQDOC PEER TAKEOVER DECISION v1\nItem: A\nCheckpoint: A\nExecution: takeover-1\n"
+                     f"Baseline: {'a'*40}\nBlocked head: {authorization_head}\nPeer: {login}\n"
+                     "Decision: authorize bounded maintainer takeover\n")}
+        peer_pr = {"number":57, "url":"https://github.com/Bilaltariq41/SeqDoc/pull/57", "state":"OPEN", "isDraft":False,
+                   "author":{"login":"actual-pr-author", "id":"U_pr", "is_bot":False, "name":"PR Author"},
+                   "headRefOid":start_head, "mergeCommit":None, "reviewDecision":None}
+        def peer_run(command, *args, **kwargs):
+            text = " ".join(command)
+            if "issues/comments/5713964023" in text:
+                value = peer_comment(peer_urls[0], peer_logins[0])
+            elif "issues/comments/5714397001" in text:
+                value = peer_comment(peer_urls[1], peer_logins[1], "MEMBER")
+            else:
+                value = peer_pr
+            return type("R", (), {"stdout":json.dumps(value), "returncode":0})()
+        peer_root, peer_original = blocked_root()
+        peer_item_path = peer_root / "docs/project/work-items/A.json"
+        peer_item = json.loads(peer_item_path.read_text(encoding="utf-8"))
+        peer_item.update(sourceUrl="https://github.com/Bilaltariq41/SeqDoc/issues/57",
+                         pr="https://github.com/Bilaltariq41/SeqDoc/pull/57")
+        peer_item_path.write_text(ws.dump(peer_item), encoding="utf-8")
+        peer_values = {"id":"A", "execution_id":"takeover-1", "worktree_id":"resume-peer",
+                       "expected_baseline":peer_original["baseline"], "current_head":start_head,
+                       "current_branch":"feature/a", "clean":True, "start_head":start_head,
+                       "claim":"peer-repair.py", "repository":"Bilaltariq41/SeqDoc", "authorization_head":authorization_head,
+                       "peer_authorization_receipt":list(reversed(peer_urls)), "reason":"peer-authorized bounded takeover",
+                       "next_action":"rerun focused verification"}
+        with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)), \
+             patch("subprocess.run", side_effect=peer_run):
+            peer_code, peer_output = self.operation(peer_root, "resume", **peer_values)
+        self.assertEqual(peer_code, 0, peer_output)
+        peer_resumed = json.loads((peer_root / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
+        self.assertEqual(peer_resumed["takeover"]["mode"], "two-peer")
+        self.assertEqual(peer_resumed["takeover"]["authorizationHead"], authorization_head)
+        self.assertEqual([receipt["authorizedBy"] for receipt in peer_resumed["takeover"]["authorizationReceipts"]], sorted(peer_logins, key=str.casefold))
+        self.assertEqual(peer_resumed["takeover"]["startHead"], start_head)
+        abood_marker = peer_comment(peer_urls[0], peer_logins[0])["body"]
+        self.assertEqual(peer_resumed["takeover"]["authorizationReceipts"][0]["authorizationDigest"],
+                         __import__("hashlib").sha256((abood_marker + "\n").encode()).hexdigest())
+        crlf_authorization = dict(peer_comment(peer_urls[0], peer_logins[0]), body=abood_marker.replace("\n", "\r\n"))
+        crlf_run = lambda command, *args, **kwargs: type("R", (), {"stdout":json.dumps(
+            crlf_authorization if "5713964023" in " ".join(command) else
+            (peer_comment(peer_urls[1], peer_logins[1], "MEMBER") if "5714397001" in " ".join(command) else peer_pr)), "returncode":0})()
+        crlf_root, crlf_original = blocked_root()
+        crlf_item_path = crlf_root / "docs/project/work-items/A.json"
+        crlf_item = json.loads(crlf_item_path.read_text(encoding="utf-8")); crlf_item.update(
+            sourceUrl="https://github.com/Bilaltariq41/SeqDoc/issues/57", pr="https://github.com/Bilaltariq41/SeqDoc/pull/57")
+        crlf_item_path.write_text(ws.dump(crlf_item), encoding="utf-8")
+        with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)), \
+             patch("subprocess.run", side_effect=crlf_run):
+            self.assertEqual(self.operation(crlf_root, "resume", **peer_values)[0], 0)
+        for bad_body in (abood_marker + "\n", abood_marker + " ", abood_marker.replace("Item: A", "Item: B")):
+            bad_root, bad_original = blocked_root()
+            bad_item_path = bad_root / "docs/project/work-items/A.json"
+            bad_item = json.loads(bad_item_path.read_text(encoding="utf-8")); bad_item.update(
+                sourceUrl="https://github.com/Bilaltariq41/SeqDoc/issues/57", pr="https://github.com/Bilaltariq41/SeqDoc/pull/57")
+            bad_item_path.write_text(ws.dump(bad_item), encoding="utf-8")
+            def bad_run(command, *args, **kwargs):
+                text = " ".join(command)
+                value = peer_comment(peer_urls[0], peer_logins[0], body=bad_body) if "5713964023" in text else peer_comment(peer_urls[1], peer_logins[1], "MEMBER")
+                return type("R", (), {"stdout":json.dumps(value), "returncode":0})()
+            before = {p:p.read_bytes() for p in bad_root.rglob("*") if p.is_file()}
+            with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)), \
+                 patch("subprocess.run", side_effect=bad_run):
+                self.assertNotEqual(self.operation(bad_root, "resume", **peer_values)[0], 0)
+            self.assertEqual(before, {p:p.read_bytes() for p in before})
+        for receipts in ([peer_urls[0]], peer_urls + [peer_urls[0]], [peer_urls[0], peer_urls[0]]):
+            invalid_root, invalid_original = blocked_root()
+            invalid_values = dict(peer_values, peer_authorization_receipt=receipts)
+            before = {p:p.read_bytes() for p in invalid_root.rglob("*") if p.is_file()}
+            with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)), \
+                 patch("subprocess.run", side_effect=peer_run):
+                self.assertNotEqual(self.operation(invalid_root, "resume", **invalid_values)[0], 0)
+            self.assertEqual(before, {p:p.read_bytes() for p in before})
         candidate, original = blocked_root()
         with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)) as observed, \
              patch("subprocess.run", return_value=type("R",(),{"stdout":json.dumps(authorization)})()):
@@ -219,7 +305,7 @@ class WorkStateTests(unittest.TestCase):
         self.assertNotIn("pending authorization", json.dumps(resumed).lower())
         self.assertTrue(resumed["selectedForExecution"])
         self.assertEqual(resumed["claims"], [{"kind":"path", "value":"src/repair.py"}])
-        self.assertEqual(resumed["takeover"], {"authorizationReceipt":receipt_url,
+        self.assertEqual(resumed["takeover"], {"mode":"owner", "authorizationReceipt":receipt_url,
                                                "authorizationDigest":__import__("hashlib").sha256(marker.encode()).hexdigest(),
                                                "authorizedBy":"Repo-Owner", "reason":"resume after bounded takeover", "startHead":start_head})
         self.assertIn("`ResolvingFindings`", (candidate / "docs/work/checkpoints/A/checkpoint.md").read_text(encoding="utf-8"))

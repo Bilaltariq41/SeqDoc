@@ -26,6 +26,7 @@ python -B tools/governance/work_state.py project-execution --root . --check
 python -B tools/governance/work_state.py prepare --root . --id GH-57
 python -B tools/governance/work_state.py activate --root . --id ITEM --execution-id EXEC --expected-baseline aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-branch BRANCH --clean --worktree-id WORKTREE --claim path/to/file --dry-run
 python -B tools/governance/work_state.py resume --root . --id ITEM --execution-id EXEC --worktree-id WORKTREE --expected-baseline aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --start-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-branch BRANCH --clean --claim path/to/file --authorization-receipt OWNER_RECEIPT --reason "bounded takeover"
+python -B tools/governance/work_state.py resume --root . --id ITEM --execution-id EXEC --worktree-id WORKTREE --expected-baseline aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --start-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-branch BRANCH --clean --claim path/to/file --authorization-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --peer-authorization-receipt PEER_RECEIPT_1 --peer-authorization-receipt PEER_RECEIPT_2 --reason "bounded takeover"
 python -B tools/governance/work_state.py handoff --root . --id ITEM --execution-id EXEC --pr PR_URL --head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --peer PEER --epoch EPOCH --finding "Fixed: receipt"
 python -B tools/governance/work_state.py closeout --root . --id ITEM --execution-id EXEC --pr PR_URL --head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --peer PEER --findings resolved --focused-receipt FOCUSED --final-receipt FINAL --attribution AUTHOR --merge-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ```
@@ -69,6 +70,19 @@ rejected. Findings are sorted and must receive deterministic dispositions before
 
 `closeout` invokes authenticated PR and paginated review observations, requiring a merged PR, its actual final head and merge SHA, and an exact-final-head `APPROVED` review by the stored peer. The handoff request head is retained only as a historical boundary; the caller's closeout head must match the authenticated final head. It requires matching execution/PR identity, focused and final receipts, attribution, resolved findings,
 and review evidence. It closes atomically and either leaves the root idle or selects an already-complete recipient.
+`resume` has two mutually exclusive authorization routes: one authenticated owner receipt, or exactly two repeated
+authenticated peer receipts plus `authorization_head`. Peer receipts are same-repository, same-issue human comments with
+OWNER/MEMBER/COLLABORATOR association and an exact normalized marker bound to item, checkpoint, execution, baseline,
+authorization head, and authenticated login. Comment IDs and logins must be distinct, neither peer may author the
+item PR, and the authorization head must be an authenticated local ancestor of the observed start head. Persisted
+takeovers use `mode: owner` or `mode: two-peer`; closeout reauthenticates both peer comments, digests, identities, PR
+author, and ancestry. The legacy three-field record remains readable only for the current blocked migration record.
+
+Owner and peer bodies share strict normalization: CRLF and CR become LF; zero or
+one final LF is accepted, but additional final LFs, trailing spaces, blank lines,
+or any other change are rejected. The digest always covers the canonical marker
+with exactly one final LF.
+
 `promote` changes only a blocked or draft dependent to `Ready` after every dependency is `Closed` and its capsule is
 complete; it never activates or selects the dependent.
 

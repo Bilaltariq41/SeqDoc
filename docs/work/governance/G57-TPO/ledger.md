@@ -98,3 +98,16 @@ Focused verification passed 28/28 tests with 1 platform-dependent symlink skip. 
 
 Current receipt migration is **pending the owner comment**. No GitHub write, block/resume, handoff, rereview, or final
 gate was performed.
+
+## Authorized two-peer takeover route
+
+- Exact peer approvals: issue comment `5713964023` by `Abood-essa`; issue comment `5714397001` by `Qhatahet`.
+- Route: exactly two authenticated `--peer-authorization-receipt` URLs plus `--authorization-head`, mutually exclusive
+  with the owner receipt route.
+- Implemented persistence uses `mode: two-peer`, authorization head, sorted URL/digest/authenticated-login receipts,
+  reason, and start head. Owner mode has a separate explicit `mode: owner` shape; malformed mixed shapes are rejected.
+- Closeout reauthenticates both peer comments, PR author, receipt digests, distinct identities, and ancestry.
+- Owner and peer bodies now use one shared strict normalization helper: CRLF/CR become LF; zero or one final LF is
+  accepted, while extra final LFs, trailing spaces, blank lines, and all other changes fail. Hashing uses the canonical
+  marker with exactly one final LF, resolving the live-receipt compatibility boundary without weakening identity checks.
+- State remains **Blocked**. No resume invocation, GitHub write, lifecycle invocation, rereview, or final gate is claimed.
