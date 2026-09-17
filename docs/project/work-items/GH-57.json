@@ -3,21 +3,102 @@
   "branch": "feature/issue-57-transactional-project-operations",
   "checkpointId": "G57-TPO",
   "checkpointPath": "docs/work/governance/G57-TPO",
+  "claims": [
+    {
+      "kind": "exclusive",
+      "value": "execution"
+    },
+    {
+      "kind": "exclusive",
+      "value": "github-projection"
+    },
+    {
+      "kind": "exclusive",
+      "value": "registry"
+    },
+    {
+      "kind": "governance-tool",
+      "value": "tools/governance/work_state.py"
+    },
+    {
+      "kind": "path",
+      "value": ".github/workflows/work-state.yml"
+    },
+    {
+      "kind": "path",
+      "value": "agents.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/delegated-contribution-workflow.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/execution.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/issue-readiness.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/project-operations.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/work-items/gh-57.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/work-state.schema.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/workflow.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/readme.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/work/governance/g57-tpo/checkpoint.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/work/governance/g57-tpo/ledger.md"
+    },
+    {
+      "kind": "path",
+      "value": "tests/governance/test_work_state.py"
+    },
+    {
+      "kind": "path",
+      "value": "tools/governance/work_state.py"
+    }
+  ],
   "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
   "dependencies": [],
+  "executionId": "GH-57:G57-TPO",
   "expectedGithubState": "OPEN",
   "id": "GH-57",
   "kind": "github-issue",
-  "lifecycle": "Blocked",
-  "lifecycleLabel": "blocked",
-  "nextAction": "Resolve G57-TPO-F1 through F7 in one batch; rerun focused verification and complete-candidate review; do not run the final gate until all findings are resolved.",
+  "lifecycle": "ResolvingFindings",
+  "lifecycleLabel": "resolving-findings",
+  "nextAction": "Run focused verification and independent complete-candidate review; do not run the final gate until all findings are resolved.",
   "number": 57,
   "owner": "ahmad",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
   "schemaVersion": 1,
-  "selectedForExecution": false,
+  "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
-  "statusReason": "Two post-review repair candidates failed authenticated handoff: the first rejected GitHub's nested author object; the second still rejected GitHub's string node ID. Worktree preserved pending separately authorized repair, split, transfer, or takeover decision.",
+  "statusReason": "Owner authorized bounded maintainer takeover and transactional resume.",
+  "takeover": {
+    "authorizationReceipt": "owner-conversation-2026-09-17:GH-57:bounded-maintainer-takeover",
+    "reason": "Owner authorized bounded maintainer takeover and transactional resume.",
+    "startHead": "d3110626d011b46729f8fcf3c4c33e359341a4d5"
+  },
   "title": "[Governance] Transactional project operations and repository-native handoff",
-  "track": "governance"
+  "track": "governance",
+  "worktreeId": "feature-issue-57-transactional-ops"
 }
