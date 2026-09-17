@@ -14,10 +14,9 @@ internal static class Program
     private static int Main(string[] args)
     {
         // GH106-R2-F12: as the very first action this process takes — before any other argument
-        // handling, console I/O, or logic — report whether the OS already considers this process a job
-        // member. This is a genuine, external, production-code-path receipt proving job membership (via
-        // AssignProcessToJobObject) was established before this child ever executed any other
-        // instruction, replacing/supplementing the prior in-process test-hook-only proof.
+        // handling, console I/O, or logic — the child reports whether creation-time
+        // PROC_THREAD_ATTRIBUTE_JOB_LIST admission established its job membership. This is a genuine,
+        // external production-code-path receipt proving the child began execution already contained.
         if (args.Length > 0 && args[0] == "report-job-membership")
         {
             return RunReportJobMembership();

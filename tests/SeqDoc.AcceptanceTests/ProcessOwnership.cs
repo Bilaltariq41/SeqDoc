@@ -34,15 +34,15 @@ internal enum ConstructionFaultPoint
     AfterPipesCreated,
     AfterAttributeListBuilt,
     AfterJobCreated,
-    AfterProcessCreatedBeforeAssign,
+    AfterProcessCreatedBeforeResume,
 
     /// <summary>
     /// GH106-R2-F1: faults after <see cref="ContainedProcess.StartDrains"/>/
     /// <see cref="ContainedProcess.StartCompletionMonitor"/> have started background work but before
-    /// assign/resume completes, proving the unwind path cancels/awaits that background work instead of
+    /// resume completes, proving the unwind path cancels/awaits that background work instead of
     /// leaking it.
     /// </summary>
-    AfterDrainsStartedBeforeAssign,
+    AfterDrainsStartedBeforeResume,
 }
 
 public sealed class ProcessOwnershipOptions
@@ -80,11 +80,15 @@ internal readonly record struct NativeWaitResult(uint Result, int Win32Error)
     internal static NativeWaitResult Failed(int error) => new(NativeMethods.WAIT_FAILED, error);
 }
 
+internal sealed class ConstructionCleanupCapture
+{
+    internal ContainedProcess? Owner { get; set; }
+}
+
 internal sealed class ProcessOwnershipNativeCalls
 {
     internal Func<nint, uint, NativeCallResult>? TerminateJobObject { get; init; }
     internal Func<nint, int, NativeWaitResult>? WaitForSingleObject { get; init; }
-    internal Func<nint, nint, NativeCallResult>? AssignProcessToJobObject { get; init; }
     internal Func<nint, NativeCallResult<uint>>? ResumeThread { get; init; }
     internal Func<nint, uint, NativeCallResult>? TerminateProcess { get; init; }
     internal Func<nint, NativeCallResult<uint>>? PeekNamedPipe { get; init; }
@@ -95,14 +99,23 @@ internal sealed class ProcessOwnershipNativeCalls
 public sealed class ProcessOwnershipConstructionResult
 {
     private ProcessOwnershipConstructionResult(
-        ContainedProcess? process, ProcessOwnershipFailureClass failureClass, string? detail)
+        ContainedProcess? process, ContainedProcess? cleanupOwner, ProcessOwnershipFailureClass failureClass, string? detail)
     {
         Process = process;
+        CleanupOwner = cleanupOwner;
         FailureClass = failureClass;
         Detail = detail;
     }
 
     public ContainedProcess? Process { get; }
+
+    /// <summary>
+    /// Gets the owner retained after failed construction when bounded family or managed-task cleanup was
+    /// not proven. Callers must retry <see cref="ContainedProcess.Terminate"/> or <see cref="Dispose"/>;
+    /// successful construction cleanup returns <see langword="null"/>. <see cref="Succeeded"/> depends
+    /// only on <see cref="Process"/>.
+    /// </summary>
+    public ContainedProcess? CleanupOwner { get; }
 
     public ProcessOwnershipFailureClass FailureClass { get; }
 
@@ -111,10 +124,10 @@ public sealed class ProcessOwnershipConstructionResult
     public bool Succeeded => Process is not null;
 
     internal static ProcessOwnershipConstructionResult Success(ContainedProcess process) =>
-        new(process, ProcessOwnershipFailureClass.None, null);
+        new(process, null, ProcessOwnershipFailureClass.None, null);
 
-    internal static ProcessOwnershipConstructionResult Failure(string detail) =>
-        new(null, ProcessOwnershipFailureClass.ProcessConstructionFailed, detail);
+    internal static ProcessOwnershipConstructionResult Failure(string detail, ContainedProcess? cleanupOwner = null) =>
+        new(null, cleanupOwner, ProcessOwnershipFailureClass.ProcessConstructionFailed, detail);
 }
 
 public sealed class ProcessOwnershipStreamResult
@@ -314,7 +327,7 @@ internal static class ProcessOwnershipEncoding
 }
 
 /// <summary>
-/// Owns a Windows-contained child process family: created suspended, assigned to a kill-on-close,
+/// Owns a Windows-contained child process family: created suspended and admitted to a kill-on-close,
 /// breakaway-denied Job Object before first resume, drained concurrently on both standard streams, and
 /// proven fully exited (including any descendant) via a Job Object I/O completion port
 /// <c>JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO</c> message rather than only the immediate child's exit code.
@@ -372,6 +385,8 @@ public sealed class ContainedProcess : IDisposable
     private readonly object _lifecycleGate = new();
     private readonly object _teardownEvidenceGate = new();
     private Task<bool>? _terminalTask;
+    private bool? _terminalSucceeded;
+    private bool _terminalOperationSucceeded;
     private Task<bool>? _familyProofTask;
     private Task? _disposeTask;
     private Task<ProcessOwnershipWaitResult>? _waitTask;
@@ -390,8 +405,6 @@ public sealed class ContainedProcess : IDisposable
     }
 
     /// <summary>Test-only chronology seam — see the invocation site in <see cref="StartCore"/>.</summary>
-    internal static Action<nint, nint>? AssignBeforeResumeHookForTests;
-
     internal static Action<nint, nint>? PostCreateProcessObserverForTests { get; set; }
 
     /// <summary>
@@ -513,9 +526,10 @@ public sealed class ContainedProcess : IDisposable
 
         var unwind = new Stack<Action>();
         var unwindFailures = new List<string>();
+        var cleanupCapture = new ConstructionCleanupCapture();
         try
         {
-            return StartCore(options, faultPoint, unwind, unwindFailures);
+            return StartCore(options, faultPoint, unwind, unwindFailures, cleanupCapture);
         }
         catch (Exception ex)
         {
@@ -534,7 +548,7 @@ public sealed class ContainedProcess : IDisposable
 
             string detail = unwindFailures.Count == 0 ? ex.Message
                 : $"{ex.Message} Cleanup failures: {string.Join("; ", unwindFailures)}";
-            return ProcessOwnershipConstructionResult.Failure(detail);
+            return ProcessOwnershipConstructionResult.Failure(detail, cleanupCapture.Owner);
         }
     }
 
@@ -573,9 +587,8 @@ public sealed class ContainedProcess : IDisposable
 
     private static ProcessOwnershipConstructionResult StartCore(
         ProcessOwnershipOptions options, ConstructionFaultPoint faultPoint, Stack<Action> unwind,
-        List<string> unwindFailures)
+        List<string> unwindFailures, ConstructionCleanupCapture cleanupCapture)
     {
-        bool backgroundQuiesced = true;
         // GH106-R2-F1: closures below capture these locals by reference. Guarding on non-zero and
         // zeroing after close means a handle already closed manually (see the S4 std-handle cleanup
         // below) can never be double-closed by a later unwind pop — the exact "closed-once" idiom
@@ -593,11 +606,6 @@ public sealed class ContainedProcess : IDisposable
         // pops in, without changing production behavior (the observer is null in production).
         void PushUnwind(string label, Action action) => unwind.Push(() =>
         {
-            if (!backgroundQuiesced && label != "background drains and completion monitor")
-            {
-                unwindFailures.Add($"{label} retained because background work did not quiesce.");
-                return;
-            }
             try { action(); }
             catch (Exception ex) { unwindFailures.Add($"{label}: {ex.Message}"); }
             finally { UnwindStepObserverForTests?.Invoke(label); }
@@ -745,6 +753,9 @@ public sealed class ContainedProcess : IDisposable
         startupInfoEx.lpAttributeList = attributeListBuffer;
 
         var processInformation = default(NativeMethods.PROCESS_INFORMATION);
+        // Create the owner before the native creation call. It owns nothing until the transfer below,
+        // so all pre-transfer failures still use the acquisition unwind stack and cannot return it.
+        var process = new ContainedProcess(options.NativeCalls);
         const int Flags = NativeMethods.CREATE_SUSPENDED
             | NativeMethods.CREATE_UNICODE_ENVIRONMENT
             | NativeMethods.EXTENDED_STARTUPINFO_PRESENT;
@@ -784,16 +795,21 @@ public sealed class ContainedProcess : IDisposable
 
         // JOB_LIST admission has completed atomically with CreateProcess. Observe it immediately after
         // both process/thread unwind entries exist, while the new thread is still suspended.
-        PostCreateProcessObserverForTests?.Invoke(jobHandle, processInformation.hProcess);
-
-        if (faultPoint == ConstructionFaultPoint.AfterProcessCreatedBeforeAssign)
+        Exception? postCreateObserverFailure = null;
+        try
         {
-            // Deliberately fault before any background reader/monitor thread exists and before the
-            // child-side pipe handles are closed, so unwind only has to reverse plain handle/buffer
-            // acquisitions here — never a pending synchronous read racing a CloseHandle.
-            throw new InvalidOperationException("fault-injected: AfterProcessCreatedBeforeAssign");
+            PostCreateProcessObserverForTests?.Invoke(jobHandle, processInformation.hProcess);
+        }
+        catch (Exception ex)
+        {
+            // The observer is a test-only receipt. Defer its failure until the transferred owner exists,
+            // so even an asserting observer cannot create a pre-owner post-create unwind window.
+            postCreateObserverFailure = ex;
         }
 
+        // Creation-time PROC_THREAD_ATTRIBUTE_JOB_LIST admission has completed.  Transfer every
+        // remaining resource to one owner before any injectable post-create fault; this closes the
+        // suspended-child window without leaving a copied local and owner with the same handle.
         // The child-side pipe ends have been duplicated into the child's handle table by inheritance;
         // the parent no longer needs (and must not keep) them open, or EOF on the parent's read ends
         // would never be observable once the child itself exits. GH106-R2-F1: zero the locals after
@@ -816,72 +832,54 @@ public sealed class ContainedProcess : IDisposable
         CloseIfOpen(ref stdErrWrite);
         CloseIfOpen(ref stdInWrite);
 
-        var process = new ContainedProcess(options.NativeCalls)
-        {
-            _processHandle = processInformation.hProcess,
-            _threadHandle = processInformation.hThread,
-            _jobHandle = jobHandle,
-            _completionPortHandle = completionPort,
-            _attributeListBuffer = attributeListBuffer,
-            _environmentBlockBuffer = environmentBuffer,
-            _commandLineBuffer = commandLineBuffer,
-            _handleListBuffer = handleListBuffer,
-            _jobListBuffer = jobListBuffer,
-            _parentStdOutRead = stdOutRead,
-            _parentStdErrRead = stdErrRead,
-            _parentStdInWrite = stdInWrite,
-            ProcessId = processInformation.dwProcessId,
-            StdOutChildHandleValueForTests = stdOutChildHandleValue,
-            StdErrChildHandleValueForTests = stdErrChildHandleValue,
-            StdInChildHandleValueForTests = stdInChildHandleValue,
-        };
+        process._processHandle = processInformation.hProcess;
+        process._threadHandle = processInformation.hThread;
+        process._jobHandle = jobHandle;
+        process._completionPortHandle = completionPort;
+        process._attributeListBuffer = attributeListBuffer;
+        process._environmentBlockBuffer = environmentBuffer;
+        process._commandLineBuffer = commandLineBuffer;
+        process._handleListBuffer = handleListBuffer;
+        process._jobListBuffer = jobListBuffer;
+        process._parentStdOutRead = stdOutRead;
+        process._parentStdErrRead = stdErrRead;
+        process._parentStdInWrite = stdInWrite;
+        process.ProcessId = processInformation.dwProcessId;
+        process.StdOutChildHandleValueForTests = stdOutChildHandleValue;
+        process.StdErrChildHandleValueForTests = stdErrChildHandleValue;
+        process.StdInChildHandleValueForTests = stdInChildHandleValue;
 
-        // Reads and the completion-port monitor are both started before ResumeThread returns control to
-        // any wait loop (contract point 5 / 4): the child can produce output or exit the instant it is
-        // resumed, and nothing here may race that.
-        process.StartDrains(options.DrainTimeout);
+        // Transfer ownership before either post-create fault.  The monitor starts first because the
+        // suspended child may already have queued job notifications by the time cleanup runs.
+        Action transferredCleanup = () =>
+        {
+            if (!process.ConstructionCleanup(options, unwindFailures))
+            {
+                cleanupCapture.Owner = process;
+            }
+        };
+        unwind.Clear();
+        unwind.Push(transferredCleanup);
         process.StartCompletionMonitor();
 
-        // GH106-R2-F1: a failure past this point (the test hook or
-        // ResumeThread) must not leak the background drain/completion-monitor tasks just started. This
-        // single unwind entry is the one cleanup mechanism for that background work — terminating the
-        // process directly (rather than relying on pop order against the separately-pushed "process
-        // handle" entry, since Stack<Action> pops most-recently-pushed first and this entry is pushed
-        // after that one) is what actually unblocks a blocked pipe Read() so the bounded awaits below
-        // return quickly instead of running out their full budget.
-        PushUnwind("background drains and completion monitor", () =>
+        if (faultPoint == ConstructionFaultPoint.AfterProcessCreatedBeforeResume)
         {
-            NativeCallResult termination = InvokeTerminateProcess(options, processInformation.hProcess);
-            constructionTerminationAttempted = true;
-            if (!termination.Succeeded)
-            {
-                unwindFailures.Add($"TerminateProcess failed with Win32 error {termination.Win32Error}.");
-            }
-            NativeWaitResult wait = InvokeWaitForSingleObject(options, processInformation.hProcess,
-                (int)Math.Min(int.MaxValue, process.ConstructionCleanupBoundForTests.TotalMilliseconds));
-            if (wait.Result != NativeMethods.WAIT_OBJECT_0)
-            {
-                unwindFailures.Add($"WaitForSingleObject failed with Win32 error {wait.Win32Error}.");
-            }
-            process._completionMonitorCts?.Cancel();
-            process._drainCts?.Cancel();
-            process.WaitConstructionTask(process._completionMonitor, "completion monitor", unwindFailures);
-            process.WaitConstructionTask(process._stdOutDrain, "stdout drain", unwindFailures);
-            process.WaitConstructionTask(process._stdErrDrain, "stderr drain", unwindFailures);
-            backgroundQuiesced = (process._completionMonitor is null || process._completionMonitor.IsCompleted)
-                && (process._stdOutDrain is null || process._stdOutDrain.IsCompleted)
-                && (process._stdErrDrain is null || process._stdErrDrain.IsCompleted);
-        });
+            throw new InvalidOperationException("fault-injected: AfterProcessCreatedBeforeResume");
+        }
+
+        if (postCreateObserverFailure is not null)
+        {
+            throw postCreateObserverFailure;
+        }
+
+        process.StartDrains(options.DrainTimeout);
 
         PostDrainsStartHookForTests?.Invoke(process);
 
-        if (faultPoint == ConstructionFaultPoint.AfterDrainsStartedBeforeAssign)
+        if (faultPoint == ConstructionFaultPoint.AfterDrainsStartedBeforeResume)
         {
-            throw new InvalidOperationException("fault-injected: AfterDrainsStartedBeforeAssign");
+            throw new InvalidOperationException("fault-injected: AfterDrainsStartedBeforeResume");
         }
-
-        // Historical pre-resume membership observer; it is no longer an assignment point.
-        AssignBeforeResumeHookForTests?.Invoke(jobHandle, processInformation.hProcess);
 
         // --- S6: resume. ---
         NativeCallResult<uint> resume;
@@ -903,6 +901,114 @@ public sealed class ContainedProcess : IDisposable
 
         unwind.Clear();
         return ProcessOwnershipConstructionResult.Success(process);
+    }
+
+    private bool ConstructionCleanup(ProcessOwnershipOptions options, List<string> failures)
+    {
+        NativeCallResult directTermination = InvokeTerminateProcess(options, _processHandle);
+        if (!directTermination.Succeeded)
+        {
+            failures.Add($"TerminateProcess failed with Win32 error {directTermination.Win32Error}.");
+        }
+
+        NativeWaitResult directWait = InvokeWaitForSingleObject(options, _processHandle,
+            (int)Math.Min(int.MaxValue, _constructionCleanupBound.TotalMilliseconds));
+        if (directWait.Result != NativeMethods.WAIT_OBJECT_0)
+        {
+            failures.Add($"WaitForSingleObject failed with Win32 error {directWait.Win32Error}.");
+        }
+
+        _terminateJobObjectCalled = true;
+        NativeCallResult jobTermination = InvokeTerminateJobObject(_jobHandle, uint.MaxValue);
+        if (!jobTermination.Succeeded)
+        {
+            failures.Add($"TerminateJobObject failed with Win32 error {jobTermination.Win32Error}.");
+        }
+        else
+        {
+            _terminalOperationSucceeded = true;
+        }
+
+        bool familyProven = EnsureFamilyProofAsync(_constructionCleanupBound, CancellationToken.None)
+            .GetAwaiter().GetResult();
+        if (!familyProven)
+        {
+            failures.Add("ACTIVE_PROCESS_ZERO was not observed within the construction cleanup bound.");
+        }
+        bool monitorComplete = WaitConstructionTaskResult(_completionMonitor, "completion monitor", failures);
+        bool stdoutComplete = WaitConstructionTaskResult(_stdOutDrain, "stdout drain", failures);
+        bool stderrComplete = WaitConstructionTaskResult(_stdErrDrain, "stderr drain", failures);
+        bool managedComplete = monitorComplete && stdoutComplete && stderrComplete;
+        if (!familyProven || !managedComplete || !jobTermination.Succeeded)
+        {
+            _failures.Record(ProcessOwnershipFailureClass.ProcessConstructionFailed,
+                "Construction cleanup retained ownership because family zero or managed quiescence was not proven.");
+            lock (_lifecycleGate) { _lifecycleState = LifecycleState.FamilyResourcesRetained; }
+            return false;
+        }
+
+        _completionMonitorCts?.Cancel();
+        _completionMonitorCts?.Dispose();
+        _completionMonitorCts = null;
+        _drainCts?.Dispose();
+        _drainCts = null;
+
+        ReleaseConstructionHandle(ref _processHandle, "process handle");
+        ReleaseConstructionHandle(ref _threadHandle, "thread handle");
+        ReleaseConstructionBuffer(ref _environmentBlockBuffer, "environment block buffer");
+        ReleaseConstructionBuffer(ref _commandLineBuffer, "command line buffer");
+        ReleaseConstructionBuffer(ref _attributeListBuffer, "attribute list buffer", true);
+        ReleaseConstructionBuffer(ref _jobListBuffer, "job list buffer");
+        ReleaseConstructionHandle(ref _completionPortHandle, "completion port handle");
+        ReleaseConstructionHandle(ref _jobHandle, "job handle");
+        ReleaseConstructionBuffer(ref _handleListBuffer, "handle list buffer");
+        ReleaseConstructionHandle(ref _parentStdErrRead, "stderr pipe handle");
+        ReleaseConstructionHandle(ref _parentStdOutRead, "stdout pipe handle");
+        ReleaseConstructionHandle(ref _parentStdInWrite, "stdin pipe handle");
+        bool resourcesRetained = HasOwnedTrackedResource();
+        lock (_lifecycleGate)
+        {
+            _lifecycleState = resourcesRetained
+                ? LifecycleState.FamilyResourcesRetained
+                : LifecycleState.Disposed;
+        }
+        return !resourcesRetained;
+    }
+
+    private void ReleaseConstructionHandle(ref nint resource, string label)
+    {
+        CloseTracked(ref resource, label);
+        try { UnwindStepObserverForTests?.Invoke(label); }
+        catch { /* construction trace is test-only and non-authoritative */ }
+    }
+
+    private void ReleaseConstructionBuffer(ref nint resource, string label, bool deleteAttributeList = false)
+    {
+        FreeTracked(ref resource, label, deleteAttributeList);
+        try { UnwindStepObserverForTests?.Invoke(label); }
+        catch { /* construction trace is test-only and non-authoritative */ }
+    }
+
+    private bool WaitConstructionTaskResult(Task? task, string label, List<string> failures)
+    {
+        if (task is null)
+        {
+            return true;
+        }
+        try
+        {
+            if (!task.Wait(_constructionCleanupBound))
+            {
+                failures.Add($"{label} did not complete within {_constructionCleanupBound}.");
+                return false;
+            }
+            return true;
+        }
+        catch (AggregateException ex)
+        {
+            failures.Add($"{label} failed: {ex.InnerException?.Message ?? ex.Message}");
+            return false;
+        }
     }
 
     public Task<ProcessOwnershipWaitResult> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken)
@@ -968,7 +1074,7 @@ public sealed class ContainedProcess : IDisposable
 
             // Ensure the shared uncancelled proof task records the family outcome before the result is
             // ever snapshotted. Forced cleanup must not erase a ProcessFailed proof failure.
-            await EnsureFamilyProofAsync(CancellationToken.None).ConfigureAwait(false);
+            await EnsureFamilyProofAsync(cancellationToken: CancellationToken.None).ConfigureAwait(false);
 
             // GH106-R2-F3: terminate AND await family exit — a forced termination without waiting for
             // proof is only half the checkpoint's "terminate and await" contract. `linked` is already
@@ -993,7 +1099,7 @@ public sealed class ContainedProcess : IDisposable
 
             // Give the job's completion port a bounded chance to report ACTIVE_PROCESS_ZERO (every
             // process in the job, including descendants, has exited) before declaring the wait complete.
-            Task familyProof = EnsureFamilyProofAsync(CancellationToken.None);
+            Task familyProof = EnsureFamilyProofAsync(cancellationToken: CancellationToken.None);
             Task drainCompletion = Task.WhenAll(DrainOrTruncate(_stdOutDrain), DrainOrTruncate(_stdErrDrain));
             Task waitDeadline = Task.Delay(Timeout.InfiniteTimeSpan, linked.Token);
             Task raceWinner = await Task.WhenAny(familyProof, drainCompletion, waitDeadline).ConfigureAwait(false);
@@ -1015,7 +1121,7 @@ public sealed class ContainedProcess : IDisposable
 
             // Complete the shared proof task before constructing the immutable wait result. If proof
             // failed, retain its ProcessFailed classification even when forced cleanup follows.
-            bool familyProven = await EnsureFamilyProofAsync(CancellationToken.None).ConfigureAwait(false);
+            bool familyProven = await EnsureFamilyProofAsync(cancellationToken: CancellationToken.None).ConfigureAwait(false);
             if (!familyProven)
             {
                 await EnsureTerminalAsync().ConfigureAwait(false);
@@ -1198,7 +1304,7 @@ public sealed class ContainedProcess : IDisposable
         // A live wait is the last permitted user of the process handle; the completion monitor is the
         // corresponding last user of the job handle.  Retain both when either proof is incomplete rather
         // than reporting successful teardown after closing beneath live work.
-        familyProven = await EnsureFamilyProofAsync(CancellationToken.None).ConfigureAwait(false);
+        familyProven = await EnsureFamilyProofAsync(cancellationToken: CancellationToken.None).ConfigureAwait(false);
         bool nativeHandlesSafe = familyProven && waitComplete && monitorComplete;
         if (!familyProven)
         {
@@ -1287,6 +1393,11 @@ public sealed class ContainedProcess : IDisposable
             {
                 _lifecycleState = LifecycleState.TerminalRequested;
             }
+            if (_terminalTask is { IsCompleted: true } && _terminalSucceeded == false)
+            {
+                _terminalTask = null;
+                _terminalSucceeded = null;
+            }
             return _terminalTask ??= RunTerminalAsync();
         }
     }
@@ -1304,21 +1415,37 @@ public sealed class ContainedProcess : IDisposable
             }
         }
         if (_jobHandle == nint.Zero) { return true; }
+        NativeCallResult result = _terminalOperationSucceeded
+            ? NativeCallResult.Success()
+            : InvokeTerminateJobObject(_jobHandle, uint.MaxValue);
         _terminateJobObjectCalled = true;
-        NativeCallResult result = InvokeTerminateJobObject(_jobHandle, uint.MaxValue);
-        if (!result.Succeeded)
+        if (result.Succeeded)
+        {
+            _terminalOperationSucceeded = true;
+        }
+        else
         {
             _failures.Record(ProcessOwnershipFailureClass.ProcessFailed,
                 $"TerminateJobObject failed with Win32 error {result.Win32Error}.");
         }
 
-        bool familyProven = await EnsureFamilyProofAsync(CancellationToken.None).ConfigureAwait(false);
-        return result.Succeeded && familyProven;
+        bool familyProven = await EnsureFamilyProofAsync(cancellationToken: CancellationToken.None).ConfigureAwait(false);
+        bool succeeded = result.Succeeded && familyProven;
+        lock (_lifecycleGate) { _terminalSucceeded = succeeded; }
+        return succeeded;
     }
 
-    private Task<bool> EnsureFamilyProofAsync(CancellationToken cancellationToken = default)
+    private Task<bool> EnsureFamilyProofAsync(TimeSpan? bound = null, CancellationToken cancellationToken = default)
     {
-        lock (_lifecycleGate) { return _familyProofTask ??= RunFamilyProofAsync(cancellationToken); }
+        lock (_lifecycleGate)
+        {
+            if (_familyProofTask is { IsCompletedSuccessfully: true } && !_familyProofTask.Result
+                && _lifecycleState != LifecycleState.Disposed)
+            {
+                _familyProofTask = null;
+            }
+            return _familyProofTask ??= RunFamilyProofAsync(bound ?? _activeProcessZeroBound, cancellationToken);
+        }
     }
 
     private void MarkDrainCompleted(bool standardError)
@@ -1377,9 +1504,9 @@ public sealed class ContainedProcess : IDisposable
         }
     }
 
-    private async Task<bool> RunFamilyProofAsync(CancellationToken cancellationToken)
+    private async Task<bool> RunFamilyProofAsync(TimeSpan bound, CancellationToken cancellationToken)
     {
-        await WaitForActiveProcessZero(cancellationToken).ConfigureAwait(false);
+        await WaitForActiveProcessZero(bound, cancellationToken).ConfigureAwait(false);
         bool proven = _activeProcessZeroObserved && !_completionObservationStoppedForTests;
         if (!proven)
         {
@@ -1451,22 +1578,6 @@ public sealed class ContainedProcess : IDisposable
         || _parentStdOutRead != nint.Zero
         || _parentStdErrRead != nint.Zero
         || _parentStdInWrite != nint.Zero;
-
-    private void WaitConstructionTask(Task? task, string label, List<string> failures)
-    {
-        if (task is null) { return; }
-        try
-        {
-            if (!task.Wait(_constructionCleanupBound))
-            {
-                failures.Add($"{label} did not complete within {_constructionCleanupBound}.");
-            }
-        }
-        catch (AggregateException ex)
-        {
-            failures.Add($"{label} failed: {ex.InnerException?.Message ?? ex.Message}");
-        }
-    }
 
     private static NativeCallResult InvokeTerminateProcess(ProcessOwnershipOptions options, nint handle)
     {
@@ -1841,11 +1952,11 @@ public sealed class ContainedProcess : IDisposable
         }, CancellationToken.None);
     }
 
-    private async Task WaitForActiveProcessZero(CancellationToken cancellationToken)
+    private async Task WaitForActiveProcessZero(TimeSpan bound, CancellationToken cancellationToken)
     {
         var deadline = System.Diagnostics.Stopwatch.StartNew();
         while (!_activeProcessZeroObserved
-            && deadline.Elapsed < _activeProcessZeroBound
+            && deadline.Elapsed < bound
             && !cancellationToken.IsCancellationRequested)
         {
             await Task.Delay(25, CancellationToken.None).ConfigureAwait(false);
@@ -2127,10 +2238,6 @@ internal static unsafe class NativeMethods
         ref JOBOBJECT_BASIC_ACCOUNTING_INFORMATION lpJobObjectInformation,
         uint cbJobObjectInformationLength,
         out uint lpReturnLength);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool AssignProcessToJobObject(nint hJob, nint hProcess);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     internal static extern nint CreateIoCompletionPort(

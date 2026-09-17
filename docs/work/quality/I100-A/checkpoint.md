@@ -90,12 +90,12 @@ delegated-contribution record preserves the required implementation and repair t
 | Element | Exact identity |
 |---|---|
 | Process creation | `CreateProcessW` with `CREATE_SUSPENDED \| CREATE_UNICODE_ENVIRONMENT \| EXTENDED_STARTUPINFO_PRESENT`, explicit `lpApplicationName` from a caller-resolved rooted path (never PATH/cwd search), `STARTUPINFOEXW` |
-| Containment | `CreateJobObjectW` then `SetInformationJobObject(JobObjectExtendedLimitInformation)` with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and breakaway denied (silent-breakaway flags omitted), then `AssignProcessToJobObject` before `ResumeThread` |
+| Containment | `CreateJobObjectW` then `SetInformationJobObject(JobObjectExtendedLimitInformation)` with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and breakaway denied (silent-breakaway flags omitted); `PROC_THREAD_ATTRIBUTE_JOB_LIST` admits the job atomically during suspended `CreateProcessW`, before any child instruction or `ResumeThread` |
 | Handle policy | `bInheritHandles = TRUE` at `CreateProcessW`, but only the 3 std handles are inheritable (`SetHandleInformation(HANDLE_FLAG_INHERIT)` set only on the pipe ends actually passed); the job handle itself is non-inheritable |
 | Completion/active-zero proof | IOCP associated to the job (`SetInformationJobObject(JobObjectAssociateCompletionPortInformation)`), observing `JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO`; inability to prove active-zero within its bound (production default 10s) is itself recorded as `ProcessFailed`, both on the normal-exit path and after a forced termination (GH106-R2-F2/F3) |
 | Termination | `TerminateJobObject` (relies on `KILL_ON_JOB_CLOSE` for normal `Dispose`, explicit `TerminateJobObject` for timeout/cancellation/unwind, each call site's return value checked and a failure recorded as `ProcessFailed` — GH106-R2-F4) |
 | Stream draining | Two synchronous, thread-pool-offloaded pipe reads (`FileStream.Read` off `Task.Run`, matching the in-repo IR-1 `RunProcess`/`RunGit` idiom — anonymous pipes from `CreatePipe` do not support `FILE_FLAG_OVERLAPPED`, so true overlapped/async I/O is not available here) started before `ResumeThread` returns control to the wait loop; bounded in practice by `WaitAsync` racing drain completion against its own timeout/cancellation token and forcing `TerminateJobObject` (closing every inherited handle, including a silent descendant's) to unblock an in-flight blocked read if the deadline is reached first; both must reach EOF or truncation is recorded |
-| Supported platform | Windows x64 only (finalized decision 1 above). x86, ARM64, Linux, and macOS fail closed via an explicit runtime guard, never silently skipped |
+| Supported platform | Windows 10 / Windows Server 2016 x64 or newer. Older Windows, x86, ARM64, Linux, and macOS fail closed via an explicit runtime guard, never silently skipped |
 | Executable resolution | Finalized decision 2 above: caller-resolved, rooted, existing path only; zero PATH/cwd search inside the primitive |
 
 ## Non-goals
@@ -130,7 +130,7 @@ risk input; only findings relevant to this primitive belong here.
 
 ## Failure-class precedence (Child A scope only; no CleanupDegraded/Restart Manager class — that belongs to #107)
 
-1. `ProcessConstructionFailed` — any S0/S1 failure before/at resume (create, job create/assign, pipe/attribute-list/
+1. `ProcessConstructionFailed` — any S0/S1 failure before/at resume (create, job creation/admission, pipe/attribute-list/
    environment-block construction, unresolved/non-rooted/missing executable path, `ResumeThread` failure)
 2. `TimedOut` — wait-for-exit or readiness wait exceeds its bound
 3. `ProcessFailed` — nonzero exit, `WAIT_FAILED`, `TerminateProcess`/`TerminateJobObject` failure, inability to prove
@@ -151,10 +151,10 @@ Approximately 10-12 grouped claims (the issue's declared budget) at the least ex
 2. executable/argument/environment vectors (quoting: empty arg, embedded quote, trailing backslash, invalid NUL; env
    determinism/dedup; non-rooted or missing executable path fails closed per decision 2)
 3. exact 3-handle inheritance and rejection of an unrelated handle leaking
-4. assign-before-resume chronology (proven via an observable stub receipt — the stub's own
+4. creation-time job admission before resume (proven via an observable stub receipt — the stub's own
    `report-job-membership` command calls `IsProcessInJob` against its own process handle as the very first action
-   it takes and prints `IN-JOB:True`/`False` as its first stdout line; the prior in-process
-   `AssignBeforeResumeHookForTests` proof is kept as a supplementary claim, not the sole proof — GH106-R2-F12)
+   it takes and prints `IN-JOB:True`/`False` as its first stdout line; the suspended post-create observer separately
+   proves the process is already in the exact job before resume — GH106-R2-F12)
 5. parent-exit-survival: parent exits normally, grandchild still owned/contained, later explicitly terminated
 6. complete concurrent stdout/stderr drain to EOF (no deadlock under load)
 7. bounded forced termination with explicit `DrainIncomplete` truncation marking

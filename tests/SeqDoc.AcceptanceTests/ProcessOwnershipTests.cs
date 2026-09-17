@@ -159,8 +159,6 @@ public sealed class ProcessOwnershipTests
     [Fact]
     public async Task CreationTimeJobListAdmissionContainsSuspendedChild()
     {
-        // Compile compatibility only: the authorized implementation repair will remove this stale field.
-        ContainedProcess.AssignBeforeResumeHookForTests = null;
         bool? observedWhileSuspended = null;
         nint duplicatedProcess = nint.Zero;
         var observer = FindStaticTestSeam("PostCreateProcessObserverForTests", typeof(Action<nint, nint>));
@@ -228,13 +226,13 @@ public sealed class ProcessOwnershipTests
                             : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
                     },
                 }),
-                ConstructionFaultPoint.AfterProcessCreatedBeforeAssign);
+                ConstructionFaultPoint.AfterProcessCreatedBeforeResume);
 
             Assert.False(result.Succeeded);
             Assert.Equal(ProcessOwnershipFailureClass.ProcessConstructionFailed, result.FailureClass);
             Assert.Contains("8101", result.Detail, StringComparison.Ordinal);
             Assert.Contains("8102", result.Detail, StringComparison.Ordinal);
-            Assert.Null(GetRequiredPublicCleanupOwner(result));
+            Assert.Null(result.CleanupOwner);
             Assert.True(terminateJobCalls >= 1, "Construction unwind must explicitly terminate the job family.");
             Assert.NotEqual(nint.Zero, duplicatedProcess);
             Assert.NotEqual(nint.Zero, duplicatedJob);
@@ -633,8 +631,8 @@ public sealed class ProcessOwnershipTests
     [InlineData((int)ConstructionFaultPoint.AfterPipesCreated)]
     [InlineData((int)ConstructionFaultPoint.AfterAttributeListBuilt)]
     [InlineData((int)ConstructionFaultPoint.AfterJobCreated)]
-    [InlineData((int)ConstructionFaultPoint.AfterProcessCreatedBeforeAssign)]
-    [InlineData((int)ConstructionFaultPoint.AfterDrainsStartedBeforeAssign)]
+    [InlineData((int)ConstructionFaultPoint.AfterProcessCreatedBeforeResume)]
+    [InlineData((int)ConstructionFaultPoint.AfterDrainsStartedBeforeResume)]
     public void EachConstructionFaultPointUnwindsOnlyWhatWasAcquired(int faultPointValue)
     {
         var faultPoint = (ConstructionFaultPoint)faultPointValue;
@@ -672,7 +670,7 @@ public sealed class ProcessOwnershipTests
         try
         {
             var options = NewOptions(["sleep", "1000"]);
-            var result = ContainedProcess.Start(options, ConstructionFaultPoint.AfterDrainsStartedBeforeAssign);
+            var result = ContainedProcess.Start(options, ConstructionFaultPoint.AfterDrainsStartedBeforeResume);
 
             Assert.False(result.Succeeded);
             Assert.NotNull(captured);
@@ -1040,7 +1038,7 @@ public sealed class ProcessOwnershipTests
         try
         {
             var options = NewOptions(["sleep", "1000"]);
-            var result = ContainedProcess.Start(options, ConstructionFaultPoint.AfterProcessCreatedBeforeAssign);
+            var result = ContainedProcess.Start(options, ConstructionFaultPoint.AfterProcessCreatedBeforeResume);
 
             Assert.False(result.Succeeded);
             Assert.Equal(ExpectedPartialUnwindOrder, trace);
@@ -1062,12 +1060,9 @@ public sealed class ProcessOwnershipTests
         "completion port handle",
         "job handle",
         "handle list buffer",
-        "stderr write handle",
-        "stderr read handle",
-        "stdout write handle",
-        "stdout read handle",
-        "stdin write handle",
-        "stdin read handle",
+        "stderr pipe handle",
+        "stdout pipe handle",
+        "stdin pipe handle",
     };
 
     [Fact]
@@ -1119,12 +1114,6 @@ public sealed class ProcessOwnershipTests
         var releaseObserver = FindInstanceTestSeam("ResourceReleaseObserverForTests", typeof(Action<string>));
         Assert.True(releaseObserver is not null, "Expected resource-release observer seam.");
         releaseObserver!.SetValue(process, (Action<string>)releases.Enqueue);
-        var retainedResources = FindReadableInstanceProperty("HasRetainedFamilyResourcesForTests", typeof(bool));
-        Assert.True(retainedResources is not null && !retainedResources.CanWrite,
-            "Expected read-only retained-family-resource observability seam.");
-        var lifecycle = typeof(ContainedProcess).GetField("_lifecycleState",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        Assert.True(lifecycle is not null, "Expected observable lifecycle state for retained ownership.");
         try
         {
             process.ActiveProcessZeroBoundForTests = TimeSpan.FromMilliseconds(100);
@@ -1138,15 +1127,14 @@ public sealed class ProcessOwnershipTests
             var firstOrder = process.TeardownOrderForTests.ToArray();
             Assert.Contains(firstFailures,
                 evidence => evidence.Contains("ACTIVE_PROCESS_ZERO", StringComparison.Ordinal));
-            Assert.True((bool)retainedResources!.GetValue(process)!,
+            Assert.True(process.HasRetainedFamilyResourcesForTests,
                 "Failed family proof must retain ownership of the process, job, and completion handles.");
-            Assert.NotEqual("Disposed", lifecycle!.GetValue(process)!.ToString());
             Assert.DoesNotContain(releases, label => label is "process handle" or "completion port handle"
                 or "job handle");
 
             int releaseCount = releases.Count;
             await Task.Run(process.Dispose).WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.True((bool)retainedResources.GetValue(process)!,
+            Assert.True(process.HasRetainedFamilyResourcesForTests,
                 "A retry under the same unavailable-proof condition must remain retained.");
             Assert.Equal(releaseCount, releases.Count);
             Assert.Equal(firstFailures, process.TeardownFailures);
@@ -1247,11 +1235,6 @@ public sealed class ProcessOwnershipTests
         var result = ContainedProcess.Start(NewOptions(["echo", "out", "err"]));
         Assert.True(result.Succeeded, result.Detail);
         var process = result.Process!;
-        var retainedResources = FindReadableInstanceProperty("HasRetainedFamilyResourcesForTests", typeof(bool));
-        Assert.NotNull(retainedResources);
-        var lifecycle = typeof(ContainedProcess).GetField("_lifecycleState",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        Assert.NotNull(lifecycle);
 
         try
         {
@@ -1275,8 +1258,7 @@ public sealed class ProcessOwnershipTests
             Assert.Equal(ProcessOwnershipFailureClass.None, process.FailureClass);
             Assert.DoesNotContain(process.TeardownFailures,
                 evidence => evidence.Contains(sentinel, StringComparison.Ordinal));
-            Assert.False((bool)retainedResources!.GetValue(process)!);
-            Assert.Equal("Disposed", lifecycle!.GetValue(process)!.ToString());
+            Assert.False(process.HasRetainedFamilyResourcesForTests);
         }
         finally
         {
@@ -1306,11 +1288,6 @@ public sealed class ProcessOwnershipTests
         var result = ContainedProcess.Start(NewOptions(["echo", "out", "err"], nativeCalls: nativeCalls));
         Assert.True(result.Succeeded, result.Detail);
         var process = result.Process!;
-        var retainedResources = FindReadableInstanceProperty("HasRetainedFamilyResourcesForTests", typeof(bool));
-        Assert.NotNull(retainedResources);
-        var lifecycle = typeof(ContainedProcess).GetField("_lifecycleState",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        Assert.NotNull(lifecycle);
         nint processHandle = process.ProcessHandleForTests;
 
         try
@@ -1337,8 +1314,7 @@ public sealed class ProcessOwnershipTests
             Assert.Empty(process.TeardownFailures);
             Assert.DoesNotContain(process.TeardownFailures,
                 evidence => evidence.Contains(sentinel, StringComparison.Ordinal));
-            Assert.False((bool)retainedResources!.GetValue(process)!);
-            Assert.Equal("Disposed", lifecycle!.GetValue(process)!.ToString());
+            Assert.False(process.HasRetainedFamilyResourcesForTests);
         }
         finally
         {
@@ -1567,13 +1543,13 @@ public sealed class ProcessOwnershipTests
                             : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
                     },
                 }),
-                ConstructionFaultPoint.AfterDrainsStartedBeforeAssign);
+                ConstructionFaultPoint.AfterDrainsStartedBeforeResume);
 
             Assert.False(result.Succeeded);
             Assert.NotNull(captured);
             Assert.Contains("7101", result.Detail, StringComparison.Ordinal);
             Assert.Contains("7102", result.Detail, StringComparison.Ordinal);
-            Assert.Null(GetRequiredPublicCleanupOwner(result));
+            Assert.Null(result.CleanupOwner);
             Assert.True(terminateJobCalls >= 1);
             Assert.Equal(NativeMethods.WAIT_OBJECT_0,
                 NativeMethods.WaitForSingleObject(duplicatedProcess, 5000));
@@ -1665,13 +1641,13 @@ public sealed class ProcessOwnershipTests
                             : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
                     },
                 }),
-                ConstructionFaultPoint.AfterDrainsStartedBeforeAssign);
+                ConstructionFaultPoint.AfterDrainsStartedBeforeResume);
 
             Assert.False(result.Succeeded);
             Assert.Contains("8101", result.Detail, StringComparison.Ordinal);
             Assert.Contains("8102", result.Detail, StringComparison.Ordinal);
             Assert.Contains("8103", result.Detail, StringComparison.Ordinal);
-            ContainedProcess cleanupOwner = GetRequiredPublicCleanupOwner(result)!;
+            ContainedProcess cleanupOwner = result.CleanupOwner!;
             Assert.IsType<ContainedProcess>(cleanupOwner);
             Assert.True(QueryJobActiveProcesses(duplicatedJob) > 0);
             Assert.Equal(NativeMethods.WAIT_TIMEOUT,
@@ -1759,10 +1735,6 @@ public sealed class ProcessOwnershipTests
         var snapshot = wait.SecondaryFailures.ToArray();
         Assert.Empty(snapshot);
         Assert.Equal(snapshot, wait.SecondaryFailures);
-        var currentEvidence = FindReadableInstanceProperty("SecondaryFailures", typeof(IReadOnlyList<string>));
-        Assert.True(currentEvidence is not null,
-            "Expected immutable current-process SecondaryFailures snapshot is not implemented yet.");
-
         var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Task terminal = Task.Run(() =>
         {
@@ -1772,12 +1744,12 @@ public sealed class ProcessOwnershipTests
         Task enumerate = Task.Run(() =>
         {
             start.Task.GetAwaiter().GetResult();
-            _ = ((IReadOnlyList<string>)currentEvidence!.GetValue(process)!).ToArray();
+            _ = process.SecondaryFailures.ToArray();
             _ = wait.SecondaryFailures.ToArray();
         });
         start.SetResult();
         await Task.WhenAll(terminal, enumerate).WaitAsync(TimeSpan.FromSeconds(5));
-        var currentSnapshot = (IReadOnlyList<string>)currentEvidence.GetValue(process)!;
+        var currentSnapshot = process.SecondaryFailures;
         Assert.Contains(currentSnapshot, evidence => evidence.Contains("7202", StringComparison.Ordinal));
         Assert.Equal(snapshot, wait.SecondaryFailures);
         process.Dispose();
@@ -1840,18 +1812,8 @@ public sealed class ProcessOwnershipTests
             Assert.Equal(failuresBeforeCopy, failuresBeforeDispose);
             Assert.Equal(orderBeforeCopy, orderBeforeDispose);
 
-            var lifecycle = typeof(ContainedProcess).GetField("_lifecycleState",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-            var processHandle = typeof(ContainedProcess).GetField("_processHandle",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-            var threadHandle = typeof(ContainedProcess).GetField("_threadHandle",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-            Assert.NotNull(lifecycle);
-            Assert.NotNull(processHandle);
-            Assert.NotNull(threadHandle);
-            Assert.NotEqual("Disposed", lifecycle!.GetValue(process)!.ToString());
-            Assert.NotEqual(nint.Zero, (nint)processHandle!.GetValue(process)!);
-            Assert.NotEqual(nint.Zero, (nint)threadHandle!.GetValue(process)!);
+            Assert.True(process.HasRetainedFamilyResourcesForTests,
+                "A failed close must retain typed resource ownership for retry.");
             int firstDisposeAttemptCount;
             nint[] firstDisposeAttempts;
             lock (attemptedHandles)
@@ -1889,8 +1851,7 @@ public sealed class ProcessOwnershipTests
             Assert.Equal(2, allAttempts.Count(handle => handle == failedHandles[0]));
             Assert.Equal(2, allAttempts.Count(handle => handle == failedHandles[1]));
             Assert.Equal(ProcessOwnershipFailureClass.TeardownDegraded, process.FailureClass);
-            Assert.False((bool)FindReadableInstanceProperty("HasRetainedFamilyResourcesForTests", typeof(bool))!
-                .GetValue(process)!);
+            Assert.False(process.HasRetainedFamilyResourcesForTests);
         }
         finally
         {
@@ -2029,16 +1990,6 @@ public sealed class ProcessOwnershipTests
         return accounting.ActiveProcesses;
     }
 
-    private static ContainedProcess? GetRequiredPublicCleanupOwner(ProcessOwnershipConstructionResult result)
-    {
-        var property = result.GetType().GetProperty(
-            "CleanupOwner",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public);
-        Assert.NotNull(property);
-        Assert.Equal(typeof(ContainedProcess), property!.PropertyType);
-        return (ContainedProcess?)property.GetValue(result);
-    }
-
     private static System.Reflection.PropertyInfo? FindStaticTestSeam(string name, Type type)
     {
         var property = typeof(ContainedProcess).GetProperty(
@@ -2061,16 +2012,6 @@ public sealed class ProcessOwnershipTests
             modifiers: null);
         Assert.NotNull(evaluator);
         return (bool)evaluator!.Invoke(null, [isWindows, architecture, version])!;
-    }
-
-    private static System.Reflection.PropertyInfo? FindReadableInstanceProperty(string name, Type type)
-    {
-        var property = typeof(ContainedProcess).GetProperty(
-            name,
-            System.Reflection.BindingFlags.Instance |
-            System.Reflection.BindingFlags.Public |
-            System.Reflection.BindingFlags.NonPublic);
-        return property is not null && property.PropertyType == type && property.CanRead ? property : null;
     }
 
     private static string ResolveStubExecutablePath()

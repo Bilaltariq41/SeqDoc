@@ -446,3 +446,14 @@ solution-membership, trace, and lock-file purposes. The implementation must prov
 termination/wait or retain reachable cleanup ownership; managed-task quiescence alone is not acceptance evidence.
 Focused verification and complete independent review precede a new Ahmad request; the final gate and GH-107 remain
 withheld.
+
+### Repair candidate result
+
+The candidate transfers all post-create resources to one `ContainedProcess` owner before any injectable fault, invokes
+job-level termination, requires bounded `ACTIVE_PROCESS_ZERO` plus managed-task quiescence before releasing anything,
+and returns a reachable retryable cleanup owner when either proof fails. External duplicate-job accounting prevents
+kill-on-close from masking the proof. Stale post-create assignment seams and wording were removed, private lifecycle
+reflection was replaced by typed evidence, and the three historical paths remain unchanged except for the precise
+delegated-trace wording amendment. After the final typed-test cleanup, the first focused SDK 10.0.302 run reproduced
+the previously seen fail-closed drain signature (`DrainIncomplete` expected, `ProcessFailed` actual, 25 seconds); an
+unchanged rerun passed 69/69. This is disclosed for independent review rather than silently treated as stable evidence.
