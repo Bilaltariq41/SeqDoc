@@ -75,3 +75,11 @@ Focused verification passed 28/28 tests with 1 platform-dependent symlink skip. 
 - Authenticated PR authors now require `login`, a bounded opaque string node ID compatible with `U_kgDODXRwzA`, and a
   boolean `is_bot`; whitespace, invalid, overlong, numeric, boolean, and missing node IDs are rejected. Human handoff
   continues to reject `is_bot: true`, while benign author fields remain compatible.
+
+## Resume execution trace
+
+- `resume` was invoked successfully at start head `d3110626d011b46729f8fcf3c4c33e359341a4d5`.
+- Durable state moved to `ResolvingFindings` in commit `d5e336c`.
+- The first resumed focused run exposed one stale Blocked-only read assertion. It was repaired to derive exact
+  execution expectations from canonical selection.
+- Focused verification now reports **28 passed, 1 skipped**. No review or final gate is claimed.

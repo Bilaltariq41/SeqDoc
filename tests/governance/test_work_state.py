@@ -765,17 +765,31 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(paths, {p: p.read_bytes() for p in paths})
         self.assertEqual(ws.validate(ROOT), 0)
         self.assertEqual(ws.execution(ROOT, True), 0)
-        item = next(x for x in self.items if x["id"] == "GH-57")
-        self.assertEqual(item["lifecycleLabel"], "active" if item["lifecycle"] == "Active" else item["lifecycleLabel"])
+        canonical = next(x for x in self.items if x["id"] == "GH-57")
         disk_item = json.loads((ROOT / "docs/project/work-items/GH-57.json").read_text(encoding="utf-8"))
-        self.assertEqual(disk_item["owner"], "ahmad")
-        self.assertEqual(disk_item["branch"], "feature/issue-57-transactional-project-operations")
-        self.assertEqual(disk_item["dependencies"], [])
-        self.assertNotIn("worktreeId", disk_item)
-        self.assertFalse(disk_item.get("selectedForExecution"))
-        self.assertNotIn("claims", disk_item)
+        self.assertEqual(disk_item["owner"], canonical["owner"])
+        self.assertEqual(disk_item["branch"], canonical["branch"])
+        self.assertEqual(disk_item["dependencies"], canonical["dependencies"])
+        self.assertEqual(disk_item["lifecycleLabel"], ws.LABELS.get(disk_item["lifecycle"]))
         execution = json.loads((ROOT / "docs/project/execution.json").read_text(encoding="utf-8"))
-        self.assertEqual(execution["executions"], [])
+        active_lifecycles = {"Active", "ReviewRequired", "ResolvingFindings", "Verifying"}
+        active_selected = bool(disk_item.get("selectedForExecution")) and disk_item["lifecycle"] in active_lifecycles
+        matching = [entry for entry in execution.get("executions", []) if entry.get("sourceId") == disk_item["id"]]
+        if active_selected:
+            for field in ("executionId", "worktreeId", "claims"):
+                self.assertIn(field, disk_item)
+            self.assertEqual(len(matching), 1)
+            entry = matching[0]
+            for field in ("owner", "branch", "worktreeId", "checkpointId", "checkpointPath"):
+                self.assertEqual(entry[field], disk_item[field], field)
+            self.assertEqual(entry["sourceId"], disk_item["id"])
+            self.assertEqual(entry["executionId"], disk_item["executionId"])
+            self.assertEqual(entry["dependencies"], sorted(disk_item["dependencies"]))
+            self.assertEqual(entry["claims"], sorted(disk_item["claims"], key=lambda claim: (claim["kind"], claim["value"])))
+        else:
+            self.assertFalse(matching)
+            if not any(value.get("selectedForExecution") and value.get("lifecycle") in active_lifecycles for value in self.items):
+                self.assertEqual(execution["executions"], [])
         for field in ("sourceId", "activeCheckpointId", "activeCheckpointPath", "mode"):
             self.assertIn(field, execution)
         root = self.synthetic()
