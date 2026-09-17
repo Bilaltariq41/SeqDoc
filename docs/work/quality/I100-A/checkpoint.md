@@ -2,7 +2,7 @@
 
 ## State
 
-`Building`
+`ReviewRequired`
 
 ## Authority and frozen state
 
@@ -502,6 +502,15 @@ and transferred cleanup action before native acquisition; all old unwind actions
 and one token transition must select exactly one owner. A deterministic fault immediately after transfer and before
 monitor startup must prove the preinstalled cleanup owner handles the family. Ahmad's Medium and Low findings remain
 Fixed. The final gate and GH-107 remain prohibited.
+
+#### Atomic transfer repair result
+
+Head `495208f` preallocates the empty owner, transfer token, and bottom cleanup action before native acquisition. Every
+old unwind action consults that token, and a single atomic transition selects the transferred owner without rebuilding
+the stack. A deterministic post-transfer/pre-monitor fault proves explicit job termination, bounded family-zero proof,
+and release chronology while a duplicated job handle defeats kill-on-close. The focused SDK 10.0.302 lane passed 70/70.
+Complete independent review returned PASS with no findings and marked Ahmad's High, Medium, and Low findings Fixed.
+I100-A is ReviewRequired for Ahmad; the final gate and GH-107 remain withheld.
 
 ### Owner platform-floor amendment
 

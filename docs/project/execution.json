@@ -4,7 +4,7 @@
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Prove bounded construction-unwind family exit without premature release, reconcile exact historical paths, remove stale assignment semantics, run focused SDK 10.0.302 verification and complete independent review; withhold final gate and GH-107 until Ahmad approves.",
+  "nextAction": "Request Ahmad's latest-head formal review of PR #109. Do not run the final gate, merge, close GH-106, or begin GH-107 until Ahmad approves; repair any finding on the same branch.",
   "schemaVersion": 1,
   "sourceId": "GH-106"
 }

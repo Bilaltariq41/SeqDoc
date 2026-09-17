@@ -465,3 +465,10 @@ finding as High: field population preceded allocation/push of the transferred cl
 post-create no-owner interval. The repair remains within the authorized outcome: preallocate the owner/action/token
 before native acquisition, gate old unwind through one ownership token, and add one deterministic transfer-boundary
 regression. No final gate or GH-107 work is authorized.
+
+### Atomic transfer repair result
+
+The `495208f` repair installs the owner, token, and transferred cleanup action before any native resource, gates every
+legacy unwind entry through that token, and adds a deterministic fault immediately after transfer. Focused verification
+passed 70/70 under isolated SDK 10.0.302. Complete independent review returned PASS with no findings, marked I100-A-F5
+Fixed, and marked all three Ahmad findings Fixed. I100-A moved to ReviewRequired; no final gate or GH-107 work ran.
