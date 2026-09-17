@@ -43,6 +43,8 @@ internal enum ConstructionFaultPoint
     /// leaking it.
     /// </summary>
     AfterDrainsStartedBeforeResume,
+
+    AfterOwnershipTransferBeforeMonitor,
 }
 
 public sealed class ProcessOwnershipOptions
@@ -383,6 +385,7 @@ public sealed class ContainedProcess : IDisposable
     private bool _teardownSummaryRecorded;
     private LifecycleState _lifecycleState = LifecycleState.Running;
     private readonly object _lifecycleGate = new();
+    private readonly object _completionMonitorGate = new();
     private readonly object _teardownEvidenceGate = new();
     private Task<bool>? _terminalTask;
     private bool? _terminalSucceeded;
@@ -604,8 +607,42 @@ public sealed class ContainedProcess : IDisposable
 
         // GH106-R2-F11 test-only observability: records the exact label order the unwind stack actually
         // pops in, without changing production behavior (the observer is null in production).
+        int ownershipTransferred = 0;
+        var process = new ContainedProcess(options.NativeCalls);
+        Action transferredCleanup = () =>
+        {
+            if (Volatile.Read(ref ownershipTransferred) == 0)
+            {
+                return;
+            }
+
+            bool cleaned = false;
+            try
+            {
+                cleaned = process.ConstructionCleanup(options, unwindFailures);
+            }
+            catch (Exception ex)
+            {
+                unwindFailures.Add($"Transferred cleanup failed: {ex.Message}");
+                lock (process._lifecycleGate) { process._lifecycleState = LifecycleState.FamilyResourcesRetained; }
+            }
+            finally
+            {
+                if (!cleaned)
+                {
+                    cleanupCapture.Owner = process;
+                }
+            }
+        };
+        unwind.Push(transferredCleanup);
+
         void PushUnwind(string label, Action action) => unwind.Push(() =>
         {
+            if (Volatile.Read(ref ownershipTransferred) != 0)
+            {
+                return;
+            }
+
             try { action(); }
             catch (Exception ex) { unwindFailures.Add($"{label}: {ex.Message}"); }
             finally { UnwindStepObserverForTests?.Invoke(label); }
@@ -753,9 +790,6 @@ public sealed class ContainedProcess : IDisposable
         startupInfoEx.lpAttributeList = attributeListBuffer;
 
         var processInformation = default(NativeMethods.PROCESS_INFORMATION);
-        // Create the owner before the native creation call. It owns nothing until the transfer below,
-        // so all pre-transfer failures still use the acquisition unwind stack and cannot return it.
-        var process = new ContainedProcess(options.NativeCalls);
         const int Flags = NativeMethods.CREATE_SUSPENDED
             | NativeMethods.CREATE_UNICODE_ENVIRONMENT
             | NativeMethods.EXTENDED_STARTUPINFO_PRESENT;
@@ -849,17 +883,15 @@ public sealed class ContainedProcess : IDisposable
         process.StdErrChildHandleValueForTests = stdErrChildHandleValue;
         process.StdInChildHandleValueForTests = stdInChildHandleValue;
 
-        // Transfer ownership before either post-create fault.  The monitor starts first because the
-        // suspended child may already have queued job notifications by the time cleanup runs.
-        Action transferredCleanup = () =>
+        // Transfer ownership before either post-create fault. The token is the sole authority for the
+        // old unwind entries and the preinstalled bottom action; no stack rebuild is needed.
+        Interlocked.Exchange(ref ownershipTransferred, 1);
+
+        if (faultPoint == ConstructionFaultPoint.AfterOwnershipTransferBeforeMonitor)
         {
-            if (!process.ConstructionCleanup(options, unwindFailures))
-            {
-                cleanupCapture.Owner = process;
-            }
-        };
-        unwind.Clear();
-        unwind.Push(transferredCleanup);
+            throw new InvalidOperationException("fault-injected: AfterOwnershipTransferBeforeMonitor");
+        }
+
         process.StartCompletionMonitor();
 
         if (faultPoint == ConstructionFaultPoint.AfterProcessCreatedBeforeResume)
@@ -905,6 +937,19 @@ public sealed class ContainedProcess : IDisposable
 
     private bool ConstructionCleanup(ProcessOwnershipOptions options, List<string> failures)
     {
+        try
+        {
+            StartCompletionMonitor();
+        }
+        catch (Exception ex)
+        {
+            failures.Add($"Completion monitor startup failed: {ex.Message}");
+            _failures.Record(ProcessOwnershipFailureClass.ProcessConstructionFailed,
+                $"Completion monitor startup failed: {ex.Message}");
+            lock (_lifecycleGate) { _lifecycleState = LifecycleState.FamilyResourcesRetained; }
+            return false;
+        }
+
         NativeCallResult directTermination = InvokeTerminateProcess(options, _processHandle);
         if (!directTermination.Succeeded)
         {
@@ -1414,6 +1459,22 @@ public sealed class ContainedProcess : IDisposable
                 _lifecycleState = LifecycleState.TerminalInProgress;
             }
         }
+
+        if (_jobHandle != nint.Zero && _completionMonitor is null)
+        {
+            try
+            {
+                StartCompletionMonitor();
+            }
+            catch (Exception ex)
+            {
+                _failures.Record(ProcessOwnershipFailureClass.ProcessFailed,
+                    $"Completion monitor startup failed during termination: {ex.Message}");
+                lock (_lifecycleGate) { _terminalSucceeded = false; }
+                return false;
+            }
+        }
+
         if (_jobHandle == nint.Zero) { return true; }
         NativeCallResult result = _terminalOperationSucceeded
             ? NativeCallResult.Success()
@@ -1924,32 +1985,53 @@ public sealed class ContainedProcess : IDisposable
 
     private void StartCompletionMonitor()
     {
-        _completionMonitorCts = new CancellationTokenSource();
-        var token = _completionMonitorCts.Token;
-        nint port = _completionPortHandle;
-        nint expectedKey = _jobHandle;
-        _completionMonitor = Task.Run(() =>
+        lock (_completionMonitorGate)
         {
-            while (!token.IsCancellationRequested)
+            if (_completionMonitor is not null)
             {
-                bool signalled = NativeMethods.GetQueuedCompletionStatus(
-                    port, out uint bytes, out nint key, out _, 100);
-                if (!signalled)
-                {
-                    continue;
-                }
-
-                if (key == expectedKey && bytes == NativeMethods.JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO)
-                {
-                    if (_completionObservationStoppedForTests)
-                    {
-                        return;
-                    }
-                    lock (_lifecycleGate) { _activeProcessZeroObserved = true; }
-                    return;
-                }
+                return;
             }
-        }, CancellationToken.None);
+
+            CancellationTokenSource? attemptedCts = null;
+            try
+            {
+                attemptedCts = new CancellationTokenSource();
+                var token = attemptedCts.Token;
+                nint port = _completionPortHandle;
+                nint expectedKey = _jobHandle;
+                Task monitor = Task.Run(() =>
+                {
+                    while (!token.IsCancellationRequested)
+                    {
+                        bool signalled = NativeMethods.GetQueuedCompletionStatus(
+                            port, out uint bytes, out nint key, out _, 100);
+                        if (!signalled)
+                        {
+                            continue;
+                        }
+
+                        if (key == expectedKey && bytes == NativeMethods.JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO)
+                        {
+                            if (_completionObservationStoppedForTests)
+                            {
+                                return;
+                            }
+                            lock (_lifecycleGate) { _activeProcessZeroObserved = true; }
+                            return;
+                        }
+                    }
+                }, CancellationToken.None);
+                _completionMonitorCts = attemptedCts;
+                _completionMonitor = monitor;
+            }
+            catch
+            {
+                attemptedCts?.Dispose();
+                _completionMonitorCts = null;
+                _completionMonitor = null;
+                throw;
+            }
+        }
     }
 
     private async Task WaitForActiveProcessZero(TimeSpan bound, CancellationToken cancellationToken)

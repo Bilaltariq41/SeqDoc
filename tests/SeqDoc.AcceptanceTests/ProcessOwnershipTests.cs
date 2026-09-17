@@ -264,12 +264,8 @@ public sealed class ProcessOwnershipTests
     }
 
     [Fact]
-    public void OwnershipTransferFaultRetainsOneCleanupOwnerUntilFamilyExitIsProven()
+    public void OwnershipTransferFaultUsesPreinstalledCleanupOwnerToProveFamilyExit()
     {
-        // I100-A-F5: RED uses the next unused numeric ConstructionFaultPoint value. Once the
-        // implementation adds it, this cast may be mechanically replaced with
-        // ConstructionFaultPoint.AfterOwnershipTransferBeforeMonitor without changing assertions.
-        const int afterOwnershipTransferBeforeMonitor = 6;
         nint duplicatedProcess = nint.Zero;
         nint duplicatedJob = nint.Zero;
         int terminateJobCalls = 0;
@@ -312,7 +308,7 @@ public sealed class ProcessOwnershipTests
                             : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
                     },
                 }),
-                (ConstructionFaultPoint)afterOwnershipTransferBeforeMonitor);
+                ConstructionFaultPoint.AfterOwnershipTransferBeforeMonitor);
             unexpectedProcess = result.Process;
 
             Assert.False(result.Succeeded);
