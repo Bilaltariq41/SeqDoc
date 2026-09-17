@@ -83,32 +83,30 @@
   "expectedGithubState": "OPEN",
   "id": "GH-57",
   "kind": "github-issue",
-  "lifecycle": "ResolvingFindings",
-  "lifecycleLabel": "resolving-findings",
+  "lifecycle": "ReviewRequired",
+  "lifecycleLabel": "review-required",
   "nextAction": "Resolve G57-TPO-F8 through F10 in one batch; rerun focused verification and independent rereview; do not run the final gate.",
   "number": 57,
   "owner": "ahmad",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
   "review": {
     "author": "AhmadKrarha",
-    "epoch": "3",
+    "epoch": "4",
     "executionId": "GH-57:G57-TPO",
     "findings": [
-      "Fixed: F1 authenticated owner or two-peer takeover authority",
-      "Fixed: F2 exact authenticated contributor attribution",
-      "Fixed: F3 deterministic slurped review pagination",
-      "Fixed: F4 human non-author reviewer identity"
+      "Fixed: F10 fail-closed projection comment observation",
+      "Fixed: F8 production-shaped authenticated PR evidence",
+      "Fixed: F9 canonical repository-bound owner authority"
     ],
     "peer": "Abood-essa",
     "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
-    "requestHead": "5db9a9b0e269b124fa8b1dc93447cef95724ab9c"
+    "requestHead": "b7687c43017368896e10a8e2aa132e0203411750"
   },
-  "reviewEpoch": "3",
+  "reviewEpoch": "4",
   "reviewFindings": [
-    "Fixed: F1 authenticated owner or two-peer takeover authority",
-    "Fixed: F2 exact authenticated contributor attribution",
-    "Fixed: F3 deterministic slurped review pagination",
-    "Fixed: F4 human non-author reviewer identity"
+    "Fixed: F10 fail-closed projection comment observation",
+    "Fixed: F8 production-shaped authenticated PR evidence",
+    "Fixed: F9 canonical repository-bound owner authority"
   ],
   "reviewPeer": "Abood-essa",
   "schemaVersion": 1,
