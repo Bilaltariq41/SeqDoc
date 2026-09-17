@@ -2,7 +2,7 @@
 
 ## State
 
-`ReviewRequired`
+`Blocked`
 
 ## Authority and frozen state
 
@@ -511,6 +511,17 @@ the stack. A deterministic post-transfer/pre-monitor fault proves explicit job t
 and release chronology while a duplicated job handle defeats kill-on-close. The focused SDK 10.0.302 lane passed 70/70.
 Complete independent review returned PASS with no findings and marked Ahmad's High, Medium, and Low findings Fixed.
 I100-A is ReviewRequired for Ahmad; the final gate and GH-107 remain withheld.
+
+#### Ahmad latest-head review at `cd7d103`
+
+Ahmad returned `BLOCK` with two High findings and one Medium finding; local inspection confirmed all three. First,
+pre-transfer `CloseHandle` results are ignored and locals are zeroed, so a failed parent pipe-write close loses
+ownership and can prevent drain EOF even after job termination. Second, the exited-child race records `ProcessFailed`
+when drains win just before `ACTIVE_PROCESS_ZERO` publication, before awaiting the already-started bounded family-proof
+task; this is a concrete cause of the disclosed intermittent `DrainIncomplete` versus `ProcessFailed` result. Third,
+stub resolution walks from `AppContext.BaseDirectory` to a literal `tests` ancestor, so relocated or shadow-copied test
+output fails independently of the primitive. I100-A is Blocked; preserve the branch and do not run the final gate or
+GH-107 without owner disposition.
 
 ### Owner platform-floor amendment
 

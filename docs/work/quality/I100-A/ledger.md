@@ -472,3 +472,12 @@ The `495208f` repair installs the owner, token, and transferred cleanup action b
 legacy unwind entry through that token, and adds a deterministic fault immediately after transfer. Focused verification
 passed 70/70 under isolated SDK 10.0.302. Complete independent review returned PASS with no findings, marked I100-A-F5
 Fixed, and marked all three Ahmad findings Fixed. I100-A moved to ReviewRequired; no final gate or GH-107 work ran.
+
+### Ahmad latest-head review at `cd7d103`
+
+Ahmad returned `BLOCK`. Local code verification confirmed both High findings: failed pre-transfer native closes can be
+zeroed out of ownership, including parent pipe writers whose survival prevents EOF; and the exited-child drain/family
+race records `ProcessFailed` before the bounded family-proof task finishes, explaining the previously disclosed
+25-second instability. The Medium finding is also accurate: runtime stub discovery depends on a literal repository
+`tests/bin/<Config>/<Tfm>` layout instead of staged output or MSBuild metadata. I100-A returned to Blocked with no final
+gate or GH-107 work.
