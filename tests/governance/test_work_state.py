@@ -1,4 +1,4 @@
-import contextlib, io, json, shutil, tempfile, unittest
+import contextlib, io, json, shutil, subprocess, tempfile, unittest
 from pathlib import Path
 from unittest.mock import patch
 import tools.governance.work_state as ws
@@ -135,10 +135,15 @@ class WorkStateTests(unittest.TestCase):
             invalid=type("A",(),{"id":"GWS1","state":"Closed","reason":None,"select":False,"select_id":recipient_id,"check":False,"dry_run":False})()
             self.assertNotEqual(ws.transition(self.d,invalid),0)
             self.assertEqual(before,{p:p.read_bytes() for p in paths})
-        valid=type("A",(),{"id":"GWS1","state":"Closed","reason":None,"select":False,"select_id":"GH-12","check":False,"dry_run":False})()
+        valid=type("A",(),{"id":"GWS1","state":"Closed","reason":"metadata receipt","select":False,"select_id":"GH-12","check":False,"dry_run":False,
+                            "checkpoint_id":"GWS1","checkpoint_path":"docs/work/governance/GWS1","next_action":"closed next",
+                            "pr":"https://github.com/o/r/pull/1","branch":"governance/gws1","baseline":"a"*40,
+                            "contract_revision":"contract-v2"})()
         self.assertEqual(ws.transition(self.d,valid),0)
         records={x["id"]:json.loads((self.d/"docs/project/work-items"/(x["id"]+".json")).read_text()) for x in self.items}
         self.assertEqual(records["GWS1"]["lifecycle"],"Closed"); self.assertFalse(records["GWS1"]["selectedForExecution"])
+        self.assertEqual({records["GWS1"][k] for k in ("statusReason", "checkpointId", "checkpointPath", "nextAction", "pr", "branch", "baseline", "contractRevision")},
+                         {"metadata receipt", "GWS1", "docs/work/governance/GWS1", "closed next", "https://github.com/o/r/pull/1", "governance/gws1", "a"*40, "contract-v2"})
         self.assertEqual((self.d/"docs/work/governance/GWS1/checkpoint.md").read_text().splitlines()[4],"`Closed`")
         self.assertEqual(records["GH-12"]["lifecycle"],"Active"); self.assertTrue(records["GH-12"]["selectedForExecution"])
         execution=json.loads((self.d/"docs/project/execution.json").read_text())
@@ -204,6 +209,8 @@ class WorkStateTests(unittest.TestCase):
             flag = "--" + key.replace("_", "-")
             if isinstance(value, bool):
                 if value: argv.append(flag)
+            elif isinstance(value, (list, tuple)):
+                for entry in value: argv.extend([flag, str(entry)])
             else:
                 argv.extend([flag, str(value)])
         output = io.StringIO()
@@ -232,31 +239,79 @@ class WorkStateTests(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertRegex(output, r"(?i)(unknown|objective|target|non-goal|risk|focused|final|review|proof)")
         capsule.write_text(capsule.read_text(encoding="utf-8").replace("\n## Unknown field\n\nsecret\n", ""), encoding="utf-8")
+        capsule.write_text(capsule.read_text(encoding="utf-8") + "\n## Authority\n\nSynthetic authority.\n\n## Stop conditions\n\nStop on conflict.\n", encoding="utf-8")
         self.assertEqual(ws.validate(root), 0)
         code, output = self.operation(root, "prepare")
         self.assertEqual(code, 0, output)
         self.assertIn("A", output)
+        capsule.unlink()
+        code, output = self.operation(root, "prepare", id="A", scaffold=True)
+        self.assertEqual(code, 0, output)
+        self.assertTrue(capsule.exists())
+        self.assertRegex(capsule.read_text(encoding="utf-8"), r"(?i)(todo|placeholder|blocked)")
+        self.assertNotEqual(ws.validate(root), 0)
+        canonical = self.synthetic()
+        record_path = canonical / "docs/project/work-items/A.json"
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        record["checkpointId"], record["checkpointPath"] = None, None
+        record_path.write_text(ws.dump(record), encoding="utf-8")
+        old_capsule = canonical / "docs/work/checkpoints/A/checkpoint.md"
+        old_capsule.unlink()
+        before = {p: p.read_bytes() for p in canonical.rglob("*") if p.is_file()}
+        code, output = self.operation(canonical, "prepare", id="A", scaffold=True)
+        self.assertEqual(code, 0, output)
+        prepared = json.loads(record_path.read_text(encoding="utf-8"))
+        self.assertTrue(prepared["checkpointId"])
+        self.assertTrue(prepared["checkpointPath"])
+        self.assertFalse(Path(prepared["checkpointPath"]).is_absolute())
+        self.assertTrue((canonical / prepared["checkpointPath"] / "checkpoint.md").exists())
+        self.assertFalse((canonical / "checkpoint.md").exists())
+        self.assertNotEqual(ws.validate(canonical), 0)
+        failed = self.synthetic()
+        failed_record = failed / "docs/project/work-items/A.json"
+        value = json.loads(failed_record.read_text(encoding="utf-8"))
+        value["checkpointId"], value["checkpointPath"] = None, None
+        failed_record.write_text(ws.dump(value), encoding="utf-8")
+        failed_before = {p: p.read_bytes() for p in failed.rglob("*") if p.is_file()}
+        with patch("os.replace", side_effect=OSError("scaffold write failed")):
+            code, _ = self.operation(failed, "prepare", id="A", scaffold=True)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(failed_before, {p: p.read_bytes() for p in failed_before})
+        self.assertFalse((failed / "checkpoint.md").exists())
 
     def test_activate_dry_run_is_nonmutating_and_apply_records_identity_and_claims(self):
         root = self.synthetic()
         self.assertEqual(ws.validate(root), 0)
         before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
-        code, packet = self.activate(root, dry_run=True, claim="src/a.py", resource="registry")
+        code, packet = self.activate(root, dry_run=True, claim=["src/a.py", "src/b.py"], fixture="Fixture-A",
+                                     governance_tool="tools/governance/work_state.py", resource="REGISTRY")
         self.assertEqual(code, 0, packet)
         self.assertEqual(before, {p: p.read_bytes() for p in before})
         self.assertNotRegex(packet, r"(?i)(timestamp|2026-|[A-Z]:\\|C:/checkout|password|token|session dump)")
-        self.assertEqual(self.activate(root, claim="src/a.py", resource="registry")[0], 0)
+        self.assertEqual(self.activate(root, claim=["src/a.py", "src/b.py"], fixture="Fixture-A",
+                                       governance_tool="tools/governance/work_state.py", resource="REGISTRY")[0], 0)
         state = json.loads((root / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
         self.assertEqual(state.get("lifecycle"), "Active")
         self.assertEqual(state.get("executionId"), "exec-a")
         self.assertEqual(state.get("worktreeId"), "worktree-a")
-        self.assertTrue(state.get("claims"))
+        self.assertEqual(sorted(state["claims"], key=lambda x: (x["kind"], x["value"])), [
+            {"kind": "exclusive", "value": "registry"}, {"kind": "fixture", "value": "fixture-a"},
+            {"kind": "governance-tool", "value": "tools/governance/work_state.py"},
+            {"kind": "path", "value": "src/a.py"}, {"kind": "path", "value": "src/b.py"}])
+        self.assertEqual(ws.validate(root), 0)
+        self.assertIn("`Building`", (root / "docs/work/checkpoints/A/checkpoint.md").read_text(encoding="utf-8"))
+        projection = json.loads((root / "docs/project/execution.json").read_text(encoding="utf-8"))
+        self.assertIn("exec-a", {x["executionId"] for x in projection["executions"]})
+        self.assertFalse((root / "docs/project/work-state.journal.json").exists())
+        self.assertFalse(list(root.rglob(".work-state-*")))
 
     def test_activate_rejects_ineligible_dependency_baseline_identity_capsule_and_overlap(self):
-        cases = ("closed", "dependency", "baseline", "branch", "worktree", "empty-worktree", "dirty", "head", "capsule")
+        cases = (("closed", "eligible"), ("dependency", "dependency"), ("baseline", "baseline identity"),
+                 ("branch", "branch identity"), ("worktree", "worktree identity"), ("empty-worktree", "worktree identity"),
+                 ("dirty", "dirty"), ("head", "stale"), ("capsule", "capsule"))
         root = self.synthetic(second=True, dependency=True)
         self.assertEqual(ws.validate(root), 0)
-        for case in cases:
+        for case, expected in cases:
             with self.subTest(case=case):
                 candidate = root / "docs/project/work-items/A.json"
                 item = json.loads(candidate.read_text(encoding="utf-8"))
@@ -266,30 +321,49 @@ class WorkStateTests(unittest.TestCase):
                 elif case == "branch": item["branch"] = "feature/other"
                 elif case == "capsule": (root / "docs/work/checkpoints/A/checkpoint.md").write_text("# incomplete\n", encoding="utf-8")
                 candidate.write_text(ws.dump(item), encoding="utf-8")
-                code, _ = self.operation(root, "activate", id="A", baseline="a" * 40,
-                                          branch="feature/other" if case == "branch" else "feature/a",
-                                          expected_baseline="a" * 40,
-                                          current_head="b" * 40 if case == "head" else "a" * 40,
-                                          current_branch="feature/a", clean=case != "dirty",
-                                          dirty=True if case == "dirty" else False,
-                                          worktree_id=("/tmp/other" if case == "worktree" else
-                                                       "" if case == "empty-worktree" else "worktree-a"),
-                                          claim="src/a")
+                code, output = self.operation(root, "activate", id="A", execution_id="valid-execution",
+                                              baseline="a" * 40,
+                                              branch="feature/other" if case == "branch" else "feature/a",
+                                              expected_baseline="a" * 40,
+                                              current_head="b" * 40 if case == "head" else "a" * 40,
+                                              current_branch="feature/a", clean=case != "dirty",
+                                              dirty=True if case == "dirty" else False,
+                                              worktree_id=("/tmp/other" if case == "worktree" else
+                                                           "" if case == "empty-worktree" else "worktree-a"),
+                                              claim=["src/a", "src/b"], fixture="fixture-a",
+                                              governance_tool="tools/governance/work_state.py", resource="registry")
                 self.assertNotEqual(code, 0)
+                self.assertIn(expected, output.lower(), output)
                 # Restore the complete synthetic input for the next partition.
                 root = self.synthetic(second=True, dependency=True)
                 self.assertEqual(ws.validate(root), 0)
+        checkout = self.synthetic()
+        for command in (("git", "init", "-q"), ("git", "config", "user.email", "test@example.invalid"),
+                        ("git", "config", "user.name", "SeqDoc Test"), ("git", "add", "."),
+                        ("git", "commit", "-qm", "baseline"), ("git", "branch", "-M", "feature/a")):
+            subprocess.run(command, cwd=checkout, check=True, capture_output=True, text=True)
+        code, output = self.operation(checkout, "activate", id="A", execution_id="git-observer-test",
+                                      expected_baseline="a" * 40, current_head="a" * 40,
+                                      current_branch="feature/a", clean=True, worktree_id="worktree-a",
+                                      claim="src/a")
+        self.assertNotEqual(code, 0)
+        self.assertRegex(output.lower(), r"(?i)(head|baseline|observed|repository)")
 
     def test_parallel_disjoint_executions_survive_each_others_closeout(self):
         root = self.synthetic(second=True)
         self.assertEqual(ws.validate(root), 0)
         self.assertEqual(self.activate(root, execution_id="a", claim="src/a")[0], 0)
         self.assertEqual(self.activate(root, item="B", execution_id="b", claim="src/b")[0], 0)
-        self.assertEqual(self.operation(root, "closeout", id="A", execution_id="a", focused_receipt="focused",
+        self.assertEqual(self.operation(root, "handoff", id="A", execution_id="a", pr="https://github.com/o/r/pull/1",
+                                        head="a" * 40, observed_head="a" * 40, observed_author="external-author",
+                                        peer="reviewer", epoch="1", finding=["Fixed: focused verification"])[0], 0)
+        self.assertEqual(self.operation(root, "closeout", id="A", execution_id="a", select_id="B", focused_receipt="focused",
                                         final_receipt="final", attribution="tester", pr="https://github.com/o/r/pull/1",
+                                        head="a" * 40, observed_head="a" * 40, peer="reviewer",
                                         merge_sha="a" * 40)[0], 0)
         state = json.loads((root / "docs/project/work-items/B.json").read_text(encoding="utf-8"))
         self.assertEqual(state.get("executionId"), "b")
+        self.assertTrue(state.get("selectedForExecution"))
 
     def test_claim_normalization_rejects_windows_ancestor_fixture_and_tool_conflicts_but_not_disjoint(self):
         root = self.synthetic(second=True)
@@ -323,44 +397,219 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(self.activate(root, execution_id="new", claim="src/a")[0], 0)
         (root / "docs/project/work-state.journal.json").write_text(json.dumps({"executionId": "old", "generation": 1,
                                                                                    "status": "interrupted"}), encoding="utf-8")
-        self.assertNotEqual(self.operation(root, "recover", execution_id="old")[0], 0)
+        recovery_code, recovery_output = self.operation(root, "recover", execution_id="old")
+        self.assertNotEqual(recovery_code, 0)
+        self.assertIn("newer state", recovery_output.lower())
         self.assertEqual(json.loads((root / "docs/project/work-items/A.json").read_text(encoding="utf-8")).get("executionId"), "new")
+        outside = root.parent / "recovery-outside-sentinel.txt"
+        outside.write_text("must remain", encoding="utf-8")
+        generation = ws.hashlib.sha256(ws.execution_payload(ws.load(root)).encode()).hexdigest()[:16]
+        for paths, extra in (([str(outside)], {}), (["../recovery-outside-sentinel.txt"], {}),
+                             (["docs/project/work-items/A.json"], {"preimages": {"docs/project/work-items/A.json": "%%%"}}),
+                             (["docs/project/work-items/A.json"], {"generation": "not-a-generation"})):
+            journal = {"executionId": "new", "generation": generation, "status": "interrupted", "paths": paths}
+            journal.update(extra)
+            (root / "docs/project/work-state.journal.json").write_text(json.dumps(journal), encoding="utf-8")
+            code, output = self.operation(root, "recover", execution_id="new")
+            self.assertNotEqual(code, 0)
+            self.assertIn("refused", output.lower())
+            self.assertEqual(outside.read_text(encoding="utf-8"), "must remain")
+        absent = root / "docs/project/recovery-absent.json"
+        empty = root / "docs/project/recovery-empty.json"
+        absent.unlink(missing_ok=True)
+        empty.write_bytes(b"")
+        (root / "docs/project/work-state.journal.json").write_text(json.dumps({
+            "executionId": "new", "generation": generation, "status": "interrupted",
+            "entries": [{"path": "docs/project/recovery-absent.json", "original": None},
+                        {"path": "docs/project/recovery-empty.json", "original": ""}]}), encoding="utf-8")
+        code, output = self.operation(root, "recover", execution_id="new")
+        self.assertEqual(code, 0, output)
+        self.assertFalse(absent.exists())
+        self.assertEqual(empty.read_bytes(), b"")
 
     def test_packets_and_projection_are_order_and_checkout_independent(self):
         left, right = self.synthetic(), self.synthetic()
         self.assertEqual(ws.validate(left), 0)
         self.assertEqual(ws.validate(right), 0)
-        self.assertEqual(self.activate(left, execution_id="e", claim="z", resource="r")[0], 0)
-        self.assertEqual(self.activate(right, execution_id="e", claim="z", resource="r")[0], 0)
+        left_code, left_packet = self.activate(left, execution_id="e", claim="z", resource="r")
+        right_code, right_packet = self.activate(right, execution_id="e", claim="z", resource="r")
+        self.assertEqual(left_code, 0); self.assertEqual(right_code, 0)
+        self.assertEqual(left_packet, right_packet)
         self.assertEqual((left / "docs/project/execution.json").read_bytes(), (right / "docs/project/execution.json").read_bytes())
+        for root in (left, right):
+            self.assertFalse(list(root.rglob(".work-state-*")))
+            self.assertFalse((root / "docs/project/work-state.journal.json").exists())
+        failed_root = self.synthetic(); before = {p: p.read_bytes() for p in failed_root.rglob("*") if p.is_file()}
+        real_replace = __import__("os").replace; replacements = [0]
+        def fail_after_one(src, dst):
+            replacements[0] += 1
+            if replacements[0] == 2: raise OSError("after replacement")
+            return real_replace(src, dst)
+        with patch("os.replace", side_effect=fail_after_one):
+            self.assertNotEqual(self.activate(failed_root, claim="z")[0], 0)
+        self.assertGreaterEqual(replacements[0], 2)
+        self.assertEqual(before, {p: p.read_bytes() for p in before})
 
     def test_handoff_requires_latest_pr_sha_and_non_author_peer_and_records_epoch(self):
         root = self.synthetic()
         self.assertEqual(ws.validate(root), 0)
         self.assertEqual(self.activate(root, execution_id="e", claim="src/a")[0], 0)
         for options in ({"pr": "https://github.com/o/r/pull/1", "head": "c" * 40, "observed_head": "c" * 40,
-                         "observed_author": "tester", "peer": "reviewer"},
+                         "observed_author": "tester", "peer": "tester"},
                         {"pr": "https://github.com/o/r/pull/1", "head": "b" * 40, "observed_head": "c" * 40,
                          "observed_author": "reviewer", "peer": "reviewer"}):
-            self.assertNotEqual(self.operation(root, "handoff", id="A", **options)[0], 0)
-        self.assertEqual(self.operation(root, "handoff", id="A", pr="https://github.com/o/r/pull/1",
-                                        head="c" * 40, observed_head="c" * 40, observed_author="author",
-                                        peer="reviewer", epoch="1")[0], 0)
+            self.assertNotEqual(self.operation(root, "handoff", id="A", execution_id="e", **options)[0], 0)
+        handoff_code, _ = self.operation(root, "handoff", id="A", execution_id="e", pr="https://github.com/o/r/pull/1",
+                                         head="c" * 40, observed_head="c" * 40, observed_author="external-author",
+                         peer="reviewer", epoch="1", finding=["Fixed: focused verification receipt"])
+        self.assertEqual(handoff_code, 0)
+        self.assertEqual(ws.validate(root), 0)
+        self.assertIn("`ReviewRequired`", (root / "docs/work/checkpoints/A/checkpoint.md").read_text(encoding="utf-8"))
+        reviewed = json.loads((root / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
+        self.assertEqual(reviewed["reviewFindings"], ["Fixed: focused verification receipt"])
+        self.assertEqual(reviewed["reviewPeer"], "reviewer")
+        self.assertEqual(reviewed["pr"], "https://github.com/o/r/pull/1")
+
+    def test_execution_metadata_shapes_and_lifecycle_consistency_are_rejected(self):
+        root = self.synthetic()
+        baseline = json.loads((root / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
+        cases = (
+            ("worktreeId", "/tmp/elsewhere", "worktree"),
+            ("worktreeId", "", "worktree"),
+            ("executionId", 7, "execution"),
+            ("claims", [{"kind": "unknown", "value": "src/a"}], "claim"),
+            ("claims", [{"kind": "path", "value": "/absolute"}], "claim"),
+            ("claims", [{"kind": "path", "value": "src/a"}, {"kind": "path", "value": "src/a"}], "claim"),
+            ("reviewFindings", "fixed", "review"),
+            ("reviewFindings", ["open"], "review"),
+            ("closeout", {"executionId": "e"}, "closeout"),
+            ("executionId", "orphan", "lifecycle"),
+        )
+        for field, value, diagnostic in cases:
+            with self.subTest(field=field, value=value):
+                candidate = __import__("copy").deepcopy(baseline)
+                candidate[field] = value
+                if field in {"executionId", "worktreeId", "claims"}:
+                    candidate["lifecycle"] = "Active"
+                    candidate["lifecycleLabel"] = "active"
+                if field == "executionId" and value == "orphan":
+                    candidate["lifecycle"] = "Ready"
+                    candidate["lifecycleLabel"] = "ready"
+                expected_state = "Building" if candidate["lifecycle"] == "Active" else "NotStarted"
+                capsule = (root / candidate["checkpointPath"] / "checkpoint.md").read_text(encoding="utf-8")
+                capsule = capsule.replace("`NotStarted`", f"`{expected_state}`")
+                errors = ws.validate_items([candidate], root, {candidate["checkpointPath"]: capsule})
+                self.assertTrue(errors, (field, value))
+                self.assertTrue(any(diagnostic in error.lower() or field.lower() in error.lower() for error in errors), errors)
+        root = self.synthetic()
+        required = {"expected_baseline": "a" * 40, "current_head": "a" * 40,
+                    "current_branch": "feature/a", "clean": True, "worktree_id": "worktree-a",
+                    "claim": "src/a"}
+        for option, value, diagnostic in (("expected_baseline", "b" * 40, "baseline identity mismatch"),
+                                          ("current_head", "b" * 40, "current HEAD is stale"),
+                                          ("current_branch", "feature/other", "branch identity mismatch"),
+                                          ("worktree_id", "/tmp/other", "invalid worktree identity"),
+                                          ("claim", "/absolute", "absolute claim")):
+            with self.subTest(option=option):
+                packet = dict(required)
+                packet[option] = value
+                code, output = self.operation(root, "activate", id="A", execution_id="valid-execution", **packet)
+                self.assertNotEqual(code, 0)
+                self.assertIn(diagnostic, output)
+
+    def test_real_prepare_and_projection_reads_are_nonmutating_and_github_start_close_are_observable(self):
+        paths = {p: p.read_bytes() for p in ROOT.rglob("*") if p.is_file() and ".git" not in p.parts}
+        code, output = self.operation(ROOT, "prepare", id="GH-57")
+        self.assertEqual(code, 0, output)
+        self.assertIn("GH-57", output)
+        self.assertNotRegex(output, r"(?i)([A-Z]:\\|/Users/|/home/|token|password|session|timestamp|2026-)")
+        self.assertEqual(paths, {p: p.read_bytes() for p in paths})
+        self.assertEqual(ws.validate(ROOT), 0)
+        self.assertEqual(ws.execution(ROOT, True), 0)
+        item = next(x for x in self.items if x["id"] == "GH-57")
+        self.assertEqual(item["lifecycleLabel"], "active" if item["lifecycle"] == "Active" else item["lifecycleLabel"])
+        disk_item = json.loads((ROOT / "docs/project/work-items/GH-57.json").read_text(encoding="utf-8"))
+        self.assertEqual(disk_item["owner"], "ahmad")
+        self.assertEqual(disk_item["branch"], "feature/issue-57-transactional-project-operations")
+        self.assertEqual(disk_item["dependencies"], [])
+        self.assertEqual(disk_item["worktreeId"], "feature-issue-57-transactional-ops")
+        claims = {(claim.get("kind"), claim.get("value")) for claim in disk_item.get("claims", [])}
+        self.assertTrue({("path", "tools/governance/work_state.py"), ("path", "docs/project/work-state.schema.json")} <= claims)
+        self.assertTrue({("exclusive", "registry"), ("exclusive", "execution"),
+                         ("governance-tool", "tools/governance/work_state.py")} <= claims)
+        execution = json.loads((ROOT / "docs/project/execution.json").read_text(encoding="utf-8"))
+        active = next(entry for entry in execution["executions"] if entry["executionId"] == disk_item["executionId"])
+        for field in ("owner", "branch", "worktreeId", "dependencies", "claims"):
+            self.assertEqual(active[field], disk_item[field])
+        for field in ("sourceId", "activeCheckpointId", "activeCheckpointPath", "mode"):
+            self.assertIn(field, execution)
+        root = self.synthetic()
+        item_path = root / "docs/project/work-items/A.json"
+        item = json.loads(item_path.read_text(encoding="utf-8"))
+        item.update(kind="github-issue", number=57, sourceUrl="https://github.com/o/r/issues/57", expectedGithubState="OPEN")
+        item_path.write_text(ws.dump(item), encoding="utf-8")
+        self.assertEqual(ws.validate(root), 0)
+        remote = json.dumps([{"number": 57, "state": "OPEN", "labels": []}])
+        with patch("subprocess.run", return_value=type("R", (), {"stdout": remote})()) as run:
+            code, output = self.operation(root, "sync-github", dry_run=True)
+        self.assertEqual(code, 0, output)
+        run.assert_called_once()
+        self.assertIn("--add-label ready", output)
+        self.assertIn("DRY-RUN", output)
+        item["lifecycle"], item["lifecycleLabel"] = "Active", "active"
+        item_path.write_text(ws.dump(item), encoding="utf-8")
+        with patch("subprocess.run", return_value=type("R", (), {"stdout": json.dumps([{"number": 57, "state": "OPEN", "labels": [{"name": "ready"}]}])})()):
+            code, output = self.operation(root, "sync-github", dry_run=True)
+        self.assertEqual(code, 0, output)
+        self.assertIn("--remove-label ready --add-label active", output)
+        item["lifecycle"], item["lifecycleLabel"], item["expectedGithubState"] = "Closed", None, "CLOSED"
+        item_path.write_text(ws.dump(item), encoding="utf-8")
+        with patch("subprocess.run", return_value=type("R", (), {"stdout": json.dumps([{"number": 57, "state": "CLOSED", "labels": [{"name": "active"}]}])})()):
+            code, output = self.operation(root, "sync-github", dry_run=True)
+        self.assertEqual(code, 0, output)
+        self.assertIn("--remove-label active", output)
 
     def test_closeout_requires_receipts_identity_and_resolved_findings_and_promotes_only_ready_dependents(self):
         root = self.synthetic(second=True, dependency=True)
         self.assertEqual(ws.validate(root), 0)
         self.assertEqual(self.activate(root, execution_id="a", claim="src/a")[0], 0)
+        handoff_code, _ = self.operation(root, "handoff", id="A", execution_id="a", pr="https://github.com/o/r/pull/1",
+                                         head="d" * 40, observed_head="d" * 40, observed_author="external-author",
+                                         peer="reviewer", epoch="1", finding=["Fixed: focused verification receipt"])
+        self.assertEqual(handoff_code, 0)
+        self.assertEqual(ws.validate(root), 0)
         for finding in ("open", "unresolved"):
             self.assertNotEqual(self.operation(root, "closeout", id="A", execution_id="a", findings=finding)[0], 0)
-        self.assertEqual(self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
-                                        focused_receipt="focused", final_receipt="final", attribution="tester",
-                                        pr="https://github.com/o/r/pull/1", merge_sha="a" * 40)[0], 0)
+        mismatch_code, mismatch_output = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
+                                                        focused_receipt="focused", final_receipt="final", attribution="tester",
+                                                        pr="https://github.com/o/r/pull/1", head="e" * 40,
+                                                        observed_head="e" * 40, peer="reviewer", merge_sha="a" * 40)
+        self.assertNotEqual(mismatch_code, 0)
+        self.assertRegex(mismatch_output.lower(), r"(?i)(head|review|receipt|observed)")
+        close_code, close_packet = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
+                                                  focused_receipt="focused", final_receipt="final", attribution="tester",
+                                                  pr="https://github.com/o/r/pull/1", head="d" * 40,
+                                                  observed_head="d" * 40, peer="reviewer", merge_sha="a" * 40)
+        self.assertEqual(close_code, 0, close_packet)
+        self.assertNotRegex(close_packet, r"(?i)([A-Z]:\\|/Users/|/home/|token|password|session|timestamp|2026-)")
         dependent = json.loads((root / "docs/project/work-items/B.json").read_text(encoding="utf-8"))
+        closed = json.loads((root / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
+        self.assertEqual(closed.get("claims"), [])
         self.assertNotEqual(dependent.get("lifecycle"), "Active")
+        self.assertEqual(dependent.get("claims"), None)
+        self.assertIn("`Closed`", (root / "docs/work/checkpoints/A/checkpoint.md").read_text(encoding="utf-8"))
+        self.assertEqual(ws.validate(root), 0)
+        b_capsule = root / "docs/work/checkpoints/B/checkpoint.md"
+        complete_b = b_capsule.read_text(encoding="utf-8")
+        b_capsule.write_text("# incomplete\n", encoding="utf-8")
+        self.assertNotEqual(self.operation(root, "promote", id="B")[0], 0)
+        b_capsule.write_text(complete_b, encoding="utf-8")
         self.assertEqual(self.operation(root, "promote", id="B")[0], 0)
         dependent = json.loads((root / "docs/project/work-items/B.json").read_text(encoding="utf-8"))
         self.assertEqual(dependent.get("lifecycle"), "Ready")
+        self.assertFalse(dependent.get("selectedForExecution")); self.assertNotIn("executionId", dependent)
+        self.assertIn("`NotStarted`", (root / "docs/work/checkpoints/B/checkpoint.md").read_text(encoding="utf-8"))
+        self.assertEqual(ws.validate(root), 0)
 
     def test_github_projection_is_dry_run_idempotent_permission_aware_and_preserves_unrelated_labels(self):
         root = self.synthetic()
@@ -387,6 +636,24 @@ class WorkStateTests(unittest.TestCase):
         drift = json.dumps([{"number": 1, "state": "OPEN", "labels": [{"name": "blocked"}]}])
         with patch("subprocess.run", side_effect=[type("R", (), {"stdout": drift})(), OSError("write failed")]):
             self.assertNotEqual(self.operation(root, "project")[0], 0)
+        closed_drift = json.dumps([{"number": 1, "state": "CLOSED", "labels": [{"name": "blocked"}],
+                                   "comments": [{"body": "SeqDoc packet: start A; closure A; marker=seqdoc-state-v1"}]}])
+        with patch("subprocess.run", side_effect=[type("R", (), {"stdout": closed_drift})(),
+                                                   type("R", (), {"stdout": ""})()]) as run:
+            code, output = self.operation(root, "project", dry_run=True)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(run.call_count, 1)
+        self.assertIn("CLOSED", output)
+        marker_remote = json.dumps([{"number": 1, "state": "OPEN", "labels": [{"name": "ready"}, {"name": "keep"}],
+                                     "comments": [{"body": "SeqDoc packet: start A; closure A; marker=seqdoc-state-v1"}]}])
+        with patch("subprocess.run", return_value=type("R", (), {"stdout": marker_remote})()) as run:
+            code, output = self.operation(root, "project", dry_run=True)
+        self.assertEqual(code, 0, output)
+        self.assertEqual(run.call_count, 1)
+        self.assertIn("seqdoc-state-v1", output)
+        self.assertIn("start", output)
+        self.assertIn("closure", output)
+        self.assertNotIn("--add-label ready", output)
 
     def test_real_registry_and_checked_in_projection_are_read_only(self):
         registry = {p: p.read_bytes() for p in (ROOT / "docs/project/work-items").glob("*.json")}

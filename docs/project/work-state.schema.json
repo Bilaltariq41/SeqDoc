@@ -24,7 +24,15 @@
     "nextAction": {"type": ["string", "null"]},
     "expectedGithubState": {"enum": ["OPEN", "CLOSED", "NONE"]},
     "lifecycleLabel": {"type": ["string", "null"]},
-    "statusReason": {"type": "string", "minLength": 1}
+    "statusReason": {"type": "string", "minLength": 1},
+    "executionId": {"type": "string", "minLength": 1},
+    "worktreeId": {"type": "string", "minLength": 1},
+    "claims": {"type": "array", "items": {"type": "object", "required": ["kind", "value"], "properties": {"kind": {"enum": ["path", "fixture", "governance-tool", "exclusive"]}, "value": {"type": "string", "minLength": 1}}, "additionalProperties": false}},
+    "reviewEpoch": {"type": "string", "minLength": 1},
+    "reviewPeer": {"type": "string", "minLength": 1},
+    "reviewFindings": {"type": "array", "items": {"type": "string"}},
+    "review": {"type": "object"},
+    "closeout": {"type": "object"}
   },
   "additionalProperties": false
 }

@@ -10,4 +10,10 @@
 
 ## Verification
 
-No focused, review, or final-gate result has been recorded yet.
+- Repair rerun focused command: `python -B -m unittest tests.governance.test_work_state` — **28/28 passed**.
+- Self-review: inspected the complete diff from `8b1512f`; `git diff --check` passed. Repaired activation admission,
+  execution migration, typed claims, capsule transitions, metadata validation, transaction cleanup/recovery, legacy
+  transition behavior, review handoff, closeout isolation, promotion, and bounded projection compatibility.
+- Requested post-checks: `git diff --check` passed; `python -B tools/governance/work_state.py validate --root .`
+  reported **50 work items valid**; `project-execution --root . --check` reported **execution projection: current**.
+- Final gate, independent review, and lifecycle transition were intentionally not run.
