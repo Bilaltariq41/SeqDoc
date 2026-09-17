@@ -4,7 +4,7 @@
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Add one native-handle observer regression, isolate ResourceReleaseObserverForTests from CloseHandle cleanup/evidence, run focused SDK 10.0.302 verification and complete independent review; withhold final gate and Ahmad request until clean.",
+  "nextAction": "Obtain Ahmad's latest-head formal review of PR #109 at d09d236. Do not run the final gate until Ahmad approves; repair any finding on the same branch.",
   "schemaVersion": 1,
   "sourceId": "GH-106"
 }

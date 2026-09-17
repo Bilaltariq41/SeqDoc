@@ -2,7 +2,7 @@
 
 ## State
 
-`Building`
+`ReviewRequired`
 
 ## Authority and frozen state
 
@@ -457,6 +457,12 @@ or Ahmad request.
 The owner authorized one same-branch repair limited to isolating `ResourceReleaseObserverForTests` from native-handle
 cleanup in `CloseTracked`. One deterministic regression, focused SDK 10.0.302 verification, and one complete
 independent review are required. The final gate and Ahmad request remain withheld until that review is clean.
+
+### CloseTracked observer repair result
+
+Head `d09d236` passed 68/68 focused tests under isolated SDK 10.0.302. Complete independent review found no issues and
+marked the final `CloseTracked` observer finding Fixed; all Ahmad and earlier reviewer findings remain Fixed. I100-A is
+ready for Ahmad's latest-head formal review. The final gate remains withheld until Ahmad approves.
 
 ### Owner platform-floor amendment
 

@@ -420,3 +420,10 @@ Blocked without a final gate or Ahmad review request.
 The owner authorized one repair limited to the remaining native-handle observer boundary. It permits one regression,
 the smallest callback-isolation change in `CloseTracked`, focused verification, and complete independent review. It
 does not authorize the final gate or an Ahmad review request before a clean review.
+
+## CloseTracked observer repair result
+
+The `d09d236` repair runs native close and ownership/evidence handling before isolated release observation. The focused
+SDK 10.0.302 lane passed 68/68, and complete independent review returned PASS with no findings. All Ahmad and reviewer
+findings are Fixed. I100-A moved to ReviewRequired for Ahmad's latest-head formal review; the final gate remains
+withheld.
