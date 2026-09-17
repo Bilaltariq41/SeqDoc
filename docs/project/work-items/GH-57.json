@@ -3,136 +3,26 @@
   "branch": "feature/issue-57-transactional-project-operations",
   "checkpointId": "G57-TPO",
   "checkpointPath": "docs/work/governance/G57-TPO",
-  "claims": [
-    {
-      "kind": "exclusive",
-      "value": "execution"
-    },
-    {
-      "kind": "exclusive",
-      "value": "github-projection"
-    },
-    {
-      "kind": "exclusive",
-      "value": "registry"
-    },
-    {
-      "kind": "governance-tool",
-      "value": "tools/governance/work_state.py"
-    },
-    {
-      "kind": "path",
-      "value": ".github/workflows/work-state.yml"
-    },
-    {
-      "kind": "path",
-      "value": "agents.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/delegated-contribution-workflow.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/execution.json"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/issue-readiness.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/project-operations.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/work-items/gh-57.json"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/work-state.schema.json"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/workflow.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/readme.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/work/governance/g57-tpo/checkpoint.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/work/governance/g57-tpo/ledger.md"
-    },
-    {
-      "kind": "path",
-      "value": "tests/governance/test_work_state.py"
-    },
-    {
-      "kind": "path",
-      "value": "tools/governance/work_state.py"
-    }
-  ],
   "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
   "dependencies": [],
-  "executionId": "GH-57:G57-TPO",
   "expectedGithubState": "OPEN",
   "id": "GH-57",
   "kind": "github-issue",
-  "lifecycle": "ResolvingFindings",
-  "lifecycleLabel": "resolving-findings",
-  "nextAction": "Resolve G57-TPO-F1 through F4; rerun focused verification and independent review; do not run the final gate.",
+  "lifecycle": "Blocked",
+  "lifecycleLabel": "blocked",
+  "nextAction": "Repository owner posts the exact Issue #57 takeover authorization marker for the blocked commit; then run authenticated resume.",
   "number": 57,
   "owner": "ahmad",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
-  "review": {
-    "author": "AhmadKrarha",
-    "epoch": "2",
-    "executionId": "GH-57:G57-TPO",
-    "findings": [
-      "Fixed: F1 authenticated PR handoff",
-      "Fixed: F2 authenticated merged-PR closeout",
-      "Fixed: F3 exact-head peer approval",
-      "Fixed: F4 execution cleanup on block and cancel",
-      "Fixed: F5 symlink and reparse recovery confinement",
-      "Fixed: F6 transactional supplied scaffold identity",
-      "Fixed: F7 lifecycle-specific projection comments",
-      "Fixed: T1 transactional blocked-checkpoint resume",
-      "Fixed: T2 realistic GitHub author node identity",
-      "Fixed: T3 lifecycle-aware real projection assertion"
-    ],
-    "peer": "Abood-essa",
-    "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
-    "requestHead": "08191949867f772a1183abff31d9a4025d5e0fda"
-  },
-  "reviewEpoch": "2",
-  "reviewFindings": [
-    "Fixed: F1 authenticated PR handoff",
-    "Fixed: F2 authenticated merged-PR closeout",
-    "Fixed: F3 exact-head peer approval",
-    "Fixed: F4 execution cleanup on block and cancel",
-    "Fixed: F5 symlink and reparse recovery confinement",
-    "Fixed: F6 transactional supplied scaffold identity",
-    "Fixed: F7 lifecycle-specific projection comments",
-    "Fixed: T1 transactional blocked-checkpoint resume",
-    "Fixed: T2 realistic GitHub author node identity",
-    "Fixed: T3 lifecycle-aware real projection assertion"
-  ],
-  "reviewPeer": "Abood-essa",
   "schemaVersion": 1,
-  "selectedForExecution": true,
+  "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
-  "statusReason": "Independent takeover review found four unresolved identity and pagination defects: owner-authenticated resume authorization, authenticated attribution, paginated review parsing, and human reviewer identity.",
+  "statusReason": "Authenticated owner authorization is required before the bounded takeover can resume. Await an exact owner-authored Issue #57 authorization marker bound to the next start head.",
   "takeover": {
     "authorizationReceipt": "owner-conversation-2026-09-17:GH-57:bounded-maintainer-takeover",
     "reason": "Owner authorized bounded maintainer takeover and transactional resume.",
     "startHead": "d3110626d011b46729f8fcf3c4c33e359341a4d5"
   },
   "title": "[Governance] Transactional project operations and repository-native handoff",
-  "track": "governance",
-  "worktreeId": "feature-issue-57-transactional-ops"
+  "track": "governance"
 }
