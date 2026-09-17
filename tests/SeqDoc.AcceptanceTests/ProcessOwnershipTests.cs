@@ -1096,6 +1096,12 @@ public sealed class ProcessOwnershipTests
         var releaseObserver = FindInstanceTestSeam("ResourceReleaseObserverForTests", typeof(Action<string>));
         Assert.True(releaseObserver is not null, "Expected resource-release observer seam.");
         releaseObserver!.SetValue(process, (Action<string>)releases.Enqueue);
+        var retainedResources = FindReadableInstanceProperty("HasRetainedFamilyResourcesForTests", typeof(bool));
+        Assert.True(retainedResources is not null && !retainedResources.CanWrite,
+            "Expected read-only retained-family-resource observability seam.");
+        var lifecycle = typeof(ContainedProcess).GetField("_lifecycleState",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.True(lifecycle is not null, "Expected observable lifecycle state for retained ownership.");
         try
         {
             process.ActiveProcessZeroBoundForTests = TimeSpan.FromMilliseconds(100);
@@ -1105,15 +1111,66 @@ public sealed class ProcessOwnershipTests
             await dispose.WaitAsync(TimeSpan.FromSeconds(5));
 
             Assert.NotEqual(ProcessOwnershipFailureClass.None, process.FailureClass);
-            Assert.Contains(process.TeardownFailures,
+            var firstFailures = process.TeardownFailures.ToArray();
+            var firstOrder = process.TeardownOrderForTests.ToArray();
+            Assert.Contains(firstFailures,
                 evidence => evidence.Contains("ACTIVE_PROCESS_ZERO", StringComparison.Ordinal));
+            Assert.True((bool)retainedResources!.GetValue(process)!,
+                "Failed family proof must retain ownership of the process, job, and completion handles.");
+            Assert.NotEqual("Disposed", lifecycle!.GetValue(process)!.ToString());
             Assert.DoesNotContain(releases, label => label is "process handle" or "completion port handle"
                 or "job handle");
+
+            int releaseCount = releases.Count;
+            await Task.Run(process.Dispose).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True((bool)retainedResources.GetValue(process)!,
+                "A retry under the same unavailable-proof condition must remain retained.");
+            Assert.Equal(releaseCount, releases.Count);
+            Assert.Equal(firstFailures, process.TeardownFailures);
+            Assert.Equal(firstOrder, process.TeardownOrderForTests);
+            Assert.Equal(1, process.TeardownFailures.Count(
+                evidence => evidence.Contains("ACTIVE_PROCESS_ZERO", StringComparison.Ordinal)));
+
+            var terminateException = Record.Exception(() => _ = process.Terminate());
+            Assert.False(terminateException is ObjectDisposedException,
+                "Retained ownership must remain usable by Terminate after a failed disposal proof.");
         }
         finally
         {
             releaseObserver.SetValue(process, null);
             process.Dispose();
+        }
+    }
+
+    [Fact]
+    public void FailedSecondAttributeInitializationDoesNotDeleteUninitializedBuffer()
+    {
+        var initialize = FindInstanceTestSeam("InitializeProcThreadAttributeList", typeof(Func<nint, NativeCallResult>));
+        Assert.True(initialize is not null,
+            "Expected per-instance InitializeProcThreadAttributeList fault seam.");
+        var deleteObserver = FindStaticTestSeam("AttributeListDeleteObserverForTests", typeof(Action<nint>));
+        Assert.True(deleteObserver is not null,
+            "Expected static attribute-list deletion observer seam.");
+
+        int deleteCount = 0;
+        var nativeCalls = new ProcessOwnershipNativeCalls();
+        try
+        {
+            initialize!.SetValue(nativeCalls, (Func<nint, NativeCallResult>)(buffer =>
+                buffer == nint.Zero ? NativeCallResult.Success() : NativeCallResult.Failure(8301)));
+            deleteObserver!.SetValue(null, (Action<nint>)(_ => Interlocked.Increment(ref deleteCount)));
+
+            var result = ContainedProcess.Start(NewOptions(["echo", "out", "err"], nativeCalls: nativeCalls));
+
+            Assert.False(result.Succeeded);
+            Assert.Equal(ProcessOwnershipFailureClass.ProcessConstructionFailed, result.FailureClass);
+            Assert.Contains("8301", result.Detail, StringComparison.Ordinal);
+            Assert.Equal(0, deleteCount);
+        }
+        finally
+        {
+            initialize.SetValue(nativeCalls, null);
+            deleteObserver.SetValue(null, null);
         }
     }
 

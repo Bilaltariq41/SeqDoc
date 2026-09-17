@@ -368,3 +368,11 @@ this mechanism is a real platform contraction rather than an implied SDK floor. 
 recommended amendment: GH-106 now admits only Windows 10 / Windows Server 2016 x64 or newer, fails closed elsewhere,
 and uses the job-list attribute to eliminate the uncontained suspended-child window. The three-handle inheritance
 attribute remains exact and separate.
+
+## Reviewer findings on Ahmad repair candidate
+
+Independent review at `d964c76` marked Ahmad's construction-containment finding Fixed and teardown synchronization
+finding Fixed. It retained one High finding: failed family proof kept process/job/completion handles but still marked
+the object `Disposed`, making retained ownership unreachable and later cleanup impossible. It also found one Medium
+attribute-list failure boundary: unconditional deletion after failed initialization. Both are accepted for one
+deterministic regression and the smallest cohesive repair; the final gate remains withheld.

@@ -405,6 +405,15 @@ global/name/PID killing, and unrelated process capabilities. Research must use a
 documentation. The focused lane must pass under isolated SDK `10.0.302`, followed by a complete independent Reviewer
 rerun and Ahmad's latest-head formal review. The final gate remains withheld until Ahmad approves the repaired head.
 
+### Reviewer findings on Ahmad repair candidate
+
+Independent review of `d964c76` accepted creation-time containment and synchronized teardown snapshots as Fixed, but
+found two remaining defects: retained family handles were followed by a false terminal `Disposed` state that made
+ownership unreachable, and failed second-stage attribute-list initialization could call
+`DeleteProcThreadAttributeList` on an uninitialized buffer. One deterministic regression per signature is authorized.
+The retained-family path must use a truthful non-disposed retained state with observable ownership and retry-safe
+behavior; attribute-list deletion must occur only after successful initialization.
+
 ### Owner platform-floor amendment
 
 Abood selected the evidence-backed repair: require Windows 10 / Windows Server 2016 x64 or newer and use
