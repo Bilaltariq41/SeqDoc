@@ -1,96 +1,11 @@
 {
-  "activeCheckpointId": "G57-TPO",
-  "activeCheckpointPath": "docs/work/governance/G57-TPO",
+  "activeCheckpointId": null,
+  "activeCheckpointPath": null,
   "activePlanPath": null,
-  "executions": [
-    {
-      "branch": "feature/issue-57-transactional-project-operations",
-      "checkpointId": "G57-TPO",
-      "checkpointPath": "docs/work/governance/G57-TPO",
-      "claims": [
-        {
-          "kind": "exclusive",
-          "value": "execution"
-        },
-        {
-          "kind": "exclusive",
-          "value": "github-projection"
-        },
-        {
-          "kind": "exclusive",
-          "value": "registry"
-        },
-        {
-          "kind": "governance-tool",
-          "value": "tools/governance/work_state.py"
-        },
-        {
-          "kind": "path",
-          "value": ".github/workflows/work-state.yml"
-        },
-        {
-          "kind": "path",
-          "value": "agents.md"
-        },
-        {
-          "kind": "path",
-          "value": "docs/project/delegated-contribution-workflow.md"
-        },
-        {
-          "kind": "path",
-          "value": "docs/project/execution.json"
-        },
-        {
-          "kind": "path",
-          "value": "docs/project/issue-readiness.md"
-        },
-        {
-          "kind": "path",
-          "value": "docs/project/project-operations.md"
-        },
-        {
-          "kind": "path",
-          "value": "docs/project/work-items/gh-57.json"
-        },
-        {
-          "kind": "path",
-          "value": "docs/project/work-state.schema.json"
-        },
-        {
-          "kind": "path",
-          "value": "docs/project/workflow.md"
-        },
-        {
-          "kind": "path",
-          "value": "docs/readme.md"
-        },
-        {
-          "kind": "path",
-          "value": "docs/work/governance/g57-tpo/checkpoint.md"
-        },
-        {
-          "kind": "path",
-          "value": "docs/work/governance/g57-tpo/ledger.md"
-        },
-        {
-          "kind": "path",
-          "value": "tests/governance/test_work_state.py"
-        },
-        {
-          "kind": "path",
-          "value": "tools/governance/work_state.py"
-        }
-      ],
-      "dependencies": [],
-      "executionId": "GH-57:G57-TPO",
-      "owner": "ahmad",
-      "sourceId": "GH-57",
-      "worktreeId": "feature-issue-57-transactional-ops"
-    }
-  ],
+  "executions": [],
   "generatedBy": "tools/governance/work_state.py",
-  "mode": "active",
-  "nextAction": "Resolve G57-TPO-F1 through F7 in one batch; rerun focused verification and complete-candidate review; do not run the final gate until all findings are resolved.",
+  "mode": "idle",
+  "nextAction": "No work item is selected.",
   "schemaVersion": 2,
-  "sourceId": "GH-57"
+  "sourceId": null
 }
