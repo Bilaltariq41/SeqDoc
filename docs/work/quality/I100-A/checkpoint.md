@@ -2,7 +2,7 @@
 
 ## State
 
-`Blocked`
+`Building`
 
 ## Authority and frozen state
 
@@ -436,6 +436,13 @@ The required complete review found one further Medium defect: `ResourceReleaseOb
 buffer deletion/free, fault disposal after ownership is cleared, and prevent later resource cleanup. The authorization
 is exhausted, so I100-A is blocked again with the branch preserved. The earlier single drain-test failure was assessed
 as fail-closed verification noise rather than a targeted-delta defect; no final gate or Ahmad request was made.
+
+### Owner-authorized final observer repair
+
+The owner authorized one final repair limited to preventing `ResourceReleaseObserverForTests` from interrupting tracked
+buffer deletion/free. One deterministic regression, focused SDK 10.0.302 verification, and one complete independent
+review are required. No other lifecycle or cleanup semantics may change. The final gate and Ahmad request remain
+withheld until the review is clean.
 
 ### Owner platform-floor amendment
 

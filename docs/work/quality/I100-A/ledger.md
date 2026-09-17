@@ -400,3 +400,9 @@ The `26191b8` candidate fixed retryable tracked-close ownership and isolated the
 earlier Ahmad findings still Fixed, but found one Medium observer boundary: `ResourceReleaseObserverForTests` remains
 outside tracked buffer cleanup's exception boundary and can prevent deletion/free after ownership is cleared. The
 authorized round is exhausted, so I100-A returned to Blocked without a final gate or Ahmad review request.
+
+## Owner-authorized final observer repair
+
+The owner authorized one final same-branch repair for the remaining `ResourceReleaseObserverForTests` cleanup finding.
+The authorization permits one regression, the smallest observer-isolation repair, focused verification, and complete
+independent review only. It does not authorize the final gate or an Ahmad review request before a clean review.

@@ -1214,6 +1214,54 @@ public sealed class ProcessOwnershipTests
         }
     }
 
+    [Fact]
+    public async Task ThrowingResourceReleaseObserverDoesNotInterruptBufferCleanup()
+    {
+        var releaseObserver = FindInstanceTestSeam("ResourceReleaseObserverForTests", typeof(Action<string>));
+        Assert.True(releaseObserver is not null, "Expected per-instance resource-release observer seam.");
+        var receipts = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        const string sentinel = "attribute-list-buffer-observer-sentinel";
+        var result = ContainedProcess.Start(NewOptions(["echo", "out", "err"]));
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        var retainedResources = FindReadableInstanceProperty("HasRetainedFamilyResourcesForTests", typeof(bool));
+        Assert.NotNull(retainedResources);
+        var lifecycle = typeof(ContainedProcess).GetField("_lifecycleState",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(lifecycle);
+
+        try
+        {
+            releaseObserver!.SetValue(process, (Action<string>)(label =>
+            {
+                receipts.Enqueue(label);
+                if (label == "attribute list buffer")
+                {
+                    throw new InvalidOperationException(sentinel);
+                }
+            }));
+
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+
+            Task dispose = Task.Run(process.Dispose);
+            await dispose.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(ExpectedFullDisposeOrder, process.TeardownOrderForTests);
+            Assert.Equal(ExpectedFullDisposeOrder, receipts);
+            Assert.Equal(ProcessOwnershipFailureClass.None, process.FailureClass);
+            Assert.DoesNotContain(process.TeardownFailures,
+                evidence => evidence.Contains(sentinel, StringComparison.Ordinal));
+            Assert.False((bool)retainedResources!.GetValue(process)!);
+            Assert.Equal("Disposed", lifecycle!.GetValue(process)!.ToString());
+        }
+        finally
+        {
+            releaseObserver!.SetValue(process, null);
+            process.Dispose();
+        }
+    }
+
     // ---- Group 11: unrelated-process isolation, deterministic receipts, repeated-run cleanup ---------
 
     [Fact]
