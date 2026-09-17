@@ -83,30 +83,26 @@
   "expectedGithubState": "OPEN",
   "id": "GH-57",
   "kind": "github-issue",
-  "lifecycle": "ResolvingFindings",
-  "lifecycleLabel": "resolving-findings",
+  "lifecycle": "ReviewRequired",
+  "lifecycleLabel": "review-required",
   "nextAction": "Resolve F11 with realistic Issue #57 and PR #110 coverage; rerun focused verification and independent rereview; do not run the final gate.",
   "number": 57,
   "owner": "ahmad",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
   "review": {
     "author": "AhmadKrarha",
-    "epoch": "4",
+    "epoch": "5",
     "executionId": "GH-57:G57-TPO",
     "findings": [
-      "Fixed: F10 fail-closed projection comment observation",
-      "Fixed: F8 production-shaped authenticated PR evidence",
-      "Fixed: F9 canonical repository-bound owner authority"
+      "Fixed: F11 independent canonical Issue and PR identities"
     ],
     "peer": "Abood-essa",
     "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
-    "requestHead": "b7687c43017368896e10a8e2aa132e0203411750"
+    "requestHead": "ede91d77caa286fe313de04514a2fafaf8689a05"
   },
-  "reviewEpoch": "4",
+  "reviewEpoch": "5",
   "reviewFindings": [
-    "Fixed: F10 fail-closed projection comment observation",
-    "Fixed: F8 production-shaped authenticated PR evidence",
-    "Fixed: F9 canonical repository-bound owner authority"
+    "Fixed: F11 independent canonical Issue and PR identities"
   ],
   "reviewPeer": "Abood-essa",
   "schemaVersion": 1,
