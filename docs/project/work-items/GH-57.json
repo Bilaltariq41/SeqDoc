@@ -3,112 +3,21 @@
   "branch": "feature/issue-57-transactional-project-operations",
   "checkpointId": "G57-TPO",
   "checkpointPath": "docs/work/governance/G57-TPO",
-  "claims": [
-    {
-      "kind": "exclusive",
-      "value": "execution"
-    },
-    {
-      "kind": "exclusive",
-      "value": "github-projection"
-    },
-    {
-      "kind": "exclusive",
-      "value": "registry"
-    },
-    {
-      "kind": "governance-tool",
-      "value": "tools/governance/work_state.py"
-    },
-    {
-      "kind": "path",
-      "value": ".github/workflows/work-state.yml"
-    },
-    {
-      "kind": "path",
-      "value": "agents.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/delegated-contribution-workflow.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/execution.json"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/issue-readiness.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/project-operations.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/work-items/gh-57.json"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/work-state.schema.json"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/workflow.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/readme.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/work/governance/g57-tpo/checkpoint.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/work/governance/g57-tpo/ledger.md"
-    },
-    {
-      "kind": "path",
-      "value": "tests/governance/test_work_state.py"
-    },
-    {
-      "kind": "path",
-      "value": "tools/governance/work_state.py"
-    }
-  ],
   "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
   "dependencies": [],
-  "executionId": "GH-57:G57-TPO",
   "expectedGithubState": "OPEN",
   "id": "GH-57",
   "kind": "github-issue",
-  "lifecycle": "ReviewRequired",
-  "lifecycleLabel": "review-required",
-  "nextAction": "Resolve F11 with realistic Issue #57 and PR #110 coverage; rerun focused verification and independent rereview; do not run the final gate.",
+  "lifecycle": "Blocked",
+  "lifecycleLabel": "blocked",
+  "nextAction": "Preserve PR #110 and obtain a separately authorized decision for F12 test-only completion, split, transfer, takeover, or rejection. Do not run the final gate.",
   "number": 57,
   "owner": "ahmad",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
-  "review": {
-    "author": "AhmadKrarha",
-    "epoch": "5",
-    "executionId": "GH-57:G57-TPO",
-    "findings": [
-      "Fixed: F11 independent canonical Issue and PR identities"
-    ],
-    "peer": "Abood-essa",
-    "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
-    "requestHead": "ede91d77caa286fe313de04514a2fafaf8689a05"
-  },
-  "reviewEpoch": "5",
-  "reviewFindings": [
-    "Fixed: F11 independent canonical Issue and PR identities"
-  ],
-  "reviewPeer": "Abood-essa",
   "schemaVersion": 1,
-  "selectedForExecution": true,
+  "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
-  "statusReason": "Rereview found F11: canonical repository binding incorrectly equates Issue #57 with PR #110 instead of validating their independent identities.",
+  "statusReason": "Two post-rereview repair rounds did not obtain approval. F12 remains: no successful two-peer closeout revalidation test covers the real Issue #57 / PR #110 identity shape and changed or deleted receipt rejection.",
   "takeover": {
     "authorizationHead": "07319b35ad2d7c1d2ee12f6c1438ad0e13e7afde",
     "authorizationReceipts": [
@@ -128,6 +37,5 @@
     "startHead": "5ab1b19027339aabfd8175317b31e0afe5e9cc3d"
   },
   "title": "[Governance] Transactional project operations and repository-native handoff",
-  "track": "governance",
-  "worktreeId": "feature-issue-57-transactional-ops"
+  "track": "governance"
 }
