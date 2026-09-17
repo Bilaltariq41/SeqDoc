@@ -96,8 +96,8 @@ Focused verification passed 28/28 tests with 1 platform-dependent symlink skip. 
 - F4: **Fixed** — reviews use strict `gh api --paginate --slurp` page-array flattening and require reviewer login plus
   `type == User`.
 
-Current receipt migration is **pending the owner comment**. No GitHub write, block/resume, handoff, rereview, or final
-gate was performed.
+The earlier owner-receipt migration note is superseded by the authenticated two-peer resume below. No rereview or final
+gate is claimed.
 
 ## Authorized two-peer takeover route
 
@@ -111,3 +111,14 @@ gate was performed.
   accepted, while extra final LFs, trailing spaces, blank lines, and all other changes fail. Hashing uses the canonical
   marker with exactly one final LF, resolving the live-receipt compatibility boundary without weakening identity checks.
 - State remains **Blocked**. No resume invocation, GitHub write, lifecycle invocation, rereview, or final gate is claimed.
+
+## Live two-peer resume
+
+- `resume` succeeded at start head `5ab1b19027339aabfd8175317b31e0afe5e9cc3d`, using authorization head
+  `07319b35ad2d7c1d2ee12f6c1438ad0e13e7afde` and exact peer comments `5713964023` / `5714397001`.
+- Canonical resume state was committed as `e1aa578`. Post-resume focused verification passed **28/28**, with **1
+  skipped**; validation reported **50 valid work items** and projection reported **current**.
+- Review dispositions: **F1 Fixed** — authenticated owner/two-peer authorization routes and strict receipt validation;
+  **F2 Fixed** — authenticated attribution boundary; **F3 Fixed** — strict paginated review observation; **F4 Fixed** —
+  human reviewer identity enforcement.
+- No rereview or final gate was run or claimed.
