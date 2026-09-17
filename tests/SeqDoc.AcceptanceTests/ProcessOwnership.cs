@@ -1504,31 +1504,13 @@ public sealed class ContainedProcess : IDisposable
         }
 
         nint toClose = handle;
+        NativeCallResult result;
         try
         {
-            ResourceReleaseObserverForTests?.Invoke(label);
-            NativeCallResult result = _nativeCalls.CloseHandle?.Invoke(toClose)
+            result = _nativeCalls.CloseHandle?.Invoke(toClose)
                 ?? (NativeMethods.CloseHandle(toClose)
                     ? NativeCallResult.Success()
                     : NativeCallResult.Failure(Marshal.GetLastWin32Error()));
-            if (result.Succeeded)
-            {
-                lock (_lifecycleGate)
-                {
-                    if (handle == toClose)
-                    {
-                        handle = nint.Zero;
-                    }
-                }
-            }
-            lock (_teardownEvidenceGate)
-            {
-                _teardownOrderForTests.Add(label);
-                if (!result.Succeeded)
-                {
-                    _teardownFailures.Add($"CloseHandle({label}) failed: {result.Win32Error}");
-                }
-            }
         }
         catch (Exception ex)
         {
@@ -1537,6 +1519,45 @@ public sealed class ContainedProcess : IDisposable
                 _teardownOrderForTests.Add(label);
                 _teardownFailures.Add($"CloseHandle({label}) threw: {ex.Message}");
             }
+
+            try
+            {
+                ResourceReleaseObserverForTests?.Invoke(label);
+            }
+            catch
+            {
+                // Test-only release notifications are non-authoritative and must not affect cleanup.
+            }
+
+            return;
+        }
+
+        if (result.Succeeded)
+        {
+            lock (_lifecycleGate)
+            {
+                if (handle == toClose)
+                {
+                    handle = nint.Zero;
+                }
+            }
+        }
+        lock (_teardownEvidenceGate)
+        {
+            _teardownOrderForTests.Add(label);
+            if (!result.Succeeded)
+            {
+                _teardownFailures.Add($"CloseHandle({label}) failed: {result.Win32Error}");
+            }
+        }
+
+        try
+        {
+            ResourceReleaseObserverForTests?.Invoke(label);
+        }
+        catch
+        {
+            // Test-only release notifications are non-authoritative and must not affect cleanup.
         }
     }
 
