@@ -13,7 +13,7 @@
   "nextAction": "Implement G57-TPO tests first, then the smallest backward-compatible transactional operations and public guide; stop at ReviewRequired after focused verification and complete-candidate self-review.",
   "number": 57,
   "owner": "ahmad",
-  "pr": null,
+  "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
   "schemaVersion": 1,
   "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
