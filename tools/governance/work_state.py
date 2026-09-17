@@ -31,6 +31,7 @@ SHA = re.compile(r"^[0-9a-f]{40}$")
 NODE_ID = re.compile(r"^[A-Za-z0-9_]{1,100}$")
 URL = re.compile(r"^https://github\.com/[^/]+/[^/]+/(?:issues|pull)/[0-9]+(?:#.*)?$")
 PR_URL = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)(?:#.*)?$")
+ISSUE_COMMENT_URL = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/issues/([0-9]+)#issuecomment-([0-9]+)$")
 BRANCH = re.compile(r"^[A-Za-z0-9._/-]+$")
 ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 EPOCH = re.compile(r"^[0-9]+$")
@@ -151,10 +152,18 @@ def metadata_errors(item):
                   all(valid_finding(value) for value in review["findings"])):
             errors.append("invalid review record")
     takeover = item.get("takeover")
-    if takeover is not None and (not isinstance(takeover, dict) or set(takeover) != {"authorizationReceipt", "reason", "startHead"} or
-                                 not all(isinstance(takeover[key], str) and takeover[key].strip() for key in ("authorizationReceipt", "reason")) or
-                                 not SHA.fullmatch(takeover["startHead"])):
-        errors.append("invalid takeover record")
+    # The three-field shape is readable for migration only.  Mutating operations
+    # require the authenticated shape below.
+    legacy_takeover = {"authorizationReceipt", "reason", "startHead"}
+    authenticated_takeover = legacy_takeover | {"authorizationDigest", "authorizedBy"}
+    if takeover is not None:
+        valid_shape = isinstance(takeover, dict) and (set(takeover) == legacy_takeover or set(takeover) == authenticated_takeover)
+        required_strings = ("authorizationReceipt", "reason", "authorizedBy") if valid_shape and set(takeover) == authenticated_takeover else ("authorizationReceipt", "reason")
+        valid_values = (valid_shape and all(isinstance(takeover.get(key), str) and takeover[key].strip() for key in required_strings)
+                        and SHA.fullmatch(takeover.get("startHead", ""))
+                        and (set(takeover) == legacy_takeover or re.fullmatch(r"[0-9a-f]{64}", takeover.get("authorizationDigest", ""))))
+        if not valid_values:
+            errors.append("invalid takeover record")
     return errors
 
 
@@ -593,20 +602,60 @@ def authenticated_pr(repository, pr):
     return value
 
 
+def takeover_marker(item, execution_id, baseline, start_head):
+    return ("SEQDOC OWNER AUTHORIZATION v1\n"
+            f"Item: {item['id']}\nCheckpoint: {item['checkpointId']}\nExecution: {execution_id}\n"
+            f"Baseline: {baseline}\nStart head: {start_head}\nOperation: bounded maintainer takeover\n")
+
+
+def repository_owner(repository):
+    parts = (repository or "").split("/")
+    if len(parts) != 2 or not all(parts) or any(not re.fullmatch(r"[^\s/]+", part) for part in parts):
+        raise ValueError("repository must be an owner/repo value")
+    return parts[0]
+
+
+def authenticated_takeover(repository, item, execution_id, baseline, start_head, receipt_url):
+    owner = repository_owner(repository)
+    match = ISSUE_COMMENT_URL.fullmatch(receipt_url or "")
+    if not match or "/".join(match.group(1, 2)) != repository or (item.get("number") is not None and int(match.group(3)) != int(item["number"])):
+        raise ValueError("authorization receipt/repository or issue mismatch")
+    try:
+        result = subprocess.run(["gh", "api", f"repos/{repository}/issues/comments/{match.group(4)}"],
+                                capture_output=True, text=True, check=True)
+        value = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, TypeError, json.JSONDecodeError) as error:
+        raise ValueError(f"authenticated authorization receipt observation failed: {error}")
+    expected_issue_url = f"https://api.github.com/repos/{repository}/issues/{item['number']}" if item.get("number") is not None else value.get("issue_url")
+    if not isinstance(value, dict) or value.get("html_url") != receipt_url or value.get("issue_url") != expected_issue_url:
+        raise ValueError("malformed authenticated authorization receipt")
+    user = value.get("user")
+    if (not isinstance(user, dict) or not isinstance(user.get("login"), str) or
+            user["login"].casefold() != owner.casefold() or value.get("author_association") != "OWNER"):
+        raise ValueError("authorization receipt is not an owner comment")
+    body = value.get("body")
+    normalized = body.replace("\r\n", "\n").replace("\r", "\n") if isinstance(body, str) else None
+    marker = takeover_marker(item, execution_id, baseline, start_head)
+    if normalized != marker:
+        raise ValueError("authorization marker mismatch")
+    return user["login"], hashlib.sha256(normalized.encode()).hexdigest()
+
+
 def authenticated_reviews(repository, number, peer, head):
-    command = ["gh", "api", f"repos/{repository}/pulls/{number}/reviews", "--paginate"]
+    command = ["gh", "api", f"repos/{repository}/pulls/{number}/reviews", "--paginate", "--slurp"]
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=True)
         value = json.loads(result.stdout)
     except (OSError, subprocess.SubprocessError, TypeError, json.JSONDecodeError) as error:
         raise ValueError(f"authenticated review observation failed: {error}")
-    if not isinstance(value, list):
+    if not isinstance(value, list) or any(not isinstance(page, list) for page in value):
         raise ValueError("malformed authenticated review observation")
-    for review in value:
+    for review in [review for page in value for review in page]:
         if not isinstance(review, dict) or not {"user", "state", "commit_id"} <= set(review):
             raise ValueError("malformed authenticated review observation")
         user = review["user"]
-        if not isinstance(user, dict) or not isinstance(user.get("login"), str) or not isinstance(review["state"], str) or not isinstance(review["commit_id"], str):
+        if (not isinstance(user, dict) or not isinstance(user.get("login"), str) or
+                user.get("type") != "User" or not isinstance(review["state"], str) or not isinstance(review["commit_id"], str)):
             raise ValueError("malformed authenticated review observation")
         if user["login"] == peer and review["state"] == "APPROVED" and review["commit_id"] == head:
             return
@@ -778,10 +827,18 @@ def resume(root, args):
     if errors:
         print("\n".join(sorted(set(errors))), file=sys.stderr)
         return 1
+    try:
+        authorized_by, digest = authenticated_takeover(args.repository, item, args.execution_id,
+                                                       args.expected_baseline, actual_head,
+                                                       args.authorization_receipt)
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 1
     item.update(lifecycle="ResolvingFindings", lifecycleLabel="resolving-findings", executionId=args.execution_id,
                 worktreeId=args.worktree_id, selectedForExecution=True, claims=claims,
                 nextAction=args.next_action, statusReason=args.reason,
-                takeover={"authorizationReceipt": args.authorization_receipt, "reason": args.reason, "startHead": actual_head})
+                 takeover={"authorizationReceipt": args.authorization_receipt, "authorizationDigest": digest,
+                           "authorizedBy": authorized_by, "reason": args.reason, "startHead": actual_head})
     capsule_path = root / item["checkpointPath"] / "checkpoint.md"
     lines = capsule_path.read_text(encoding="utf-8").splitlines()
     state_index = next((i for i, line in enumerate(lines) if line.strip() == "## State"), None)
@@ -892,6 +949,15 @@ def closeout(root, args):
     observation = None
     if not errors:
         try:
+            takeover = current.get("takeover") if current else None
+            if takeover is not None:
+                if not isinstance(takeover, dict) or not {"authorizationDigest", "authorizedBy"} <= set(takeover):
+                    raise ValueError("authenticated takeover receipt is required before closeout")
+                authorized_by, digest = authenticated_takeover(args.repository, current, args.execution_id,
+                                                               current.get("baseline"), takeover.get("startHead"),
+                                                               takeover.get("authorizationReceipt"))
+                if digest != takeover.get("authorizationDigest") or authorized_by != takeover.get("authorizedBy"):
+                    raise ValueError("authorization receipt digest or identity mismatch")
             match = PR_URL.fullmatch(args.pr or "")
             if not match:
                 raise ValueError("malformed PR URL")
@@ -904,6 +970,9 @@ def closeout(root, args):
             if merge_sha != args.merge_sha:
                 raise ValueError("merge SHA mismatch")
             authenticated_reviews(args.repository, number, review.get("peer"), observation["headRefOid"])
+            authenticated_author = observation["author"]["login"]
+            if authenticated_author != review.get("author") or args.attribution != authenticated_author:
+                raise ValueError("closeout attribution does not match authenticated PR author")
         except ValueError as error:
             errors.append(str(error))
     if errors:
@@ -911,7 +980,7 @@ def closeout(root, args):
         return 1
     candidate = copy.deepcopy(items)
     item = next(value for value in candidate if value["id"] == current["id"])
-    item.update(lifecycle="Closed", lifecycleLabel=None, expectedGithubState="CLOSED" if item.get("kind") == "github-issue" else item.get("expectedGithubState"), selectedForExecution=False, claims=[], closeout={"executionId": args.execution_id, "pr": args.pr, "head": args.head, "mergeSha": args.merge_sha, "focused": args.focused_receipt, "final": args.final_receipt, "attribution": args.attribution, "findings": ["resolved"]})
+    item.update(lifecycle="Closed", lifecycleLabel=None, expectedGithubState="CLOSED" if item.get("kind") == "github-issue" else item.get("expectedGithubState"), selectedForExecution=False, claims=[], closeout={"executionId": args.execution_id, "pr": args.pr, "head": args.head, "mergeSha": args.merge_sha, "focused": args.focused_receipt, "final": args.final_receipt, "attribution": observation["author"]["login"], "findings": ["resolved"]})
     item.pop("executionId", None); item.pop("worktreeId", None); item.pop("review", None)
     recipient = None
     if args.select_id:

@@ -182,7 +182,8 @@ class WorkStateTests(unittest.TestCase):
             candidate = self.synthetic(second=True)
             item_path = candidate / "docs/project/work-items/A.json"
             item = json.loads(item_path.read_text(encoding="utf-8"))
-            item["lifecycle"], item["lifecycleLabel"] = "Blocked", "blocked"
+            item.update(kind="github-issue", number=1, owner="assigned-collaborator", sourceUrl="https://github.com/repo-owner/r/issues/1",
+                        expectedGithubState="OPEN", lifecycle="Blocked", lifecycleLabel="blocked")
             item["statusReason"] = "pending authorization"
             item_path.write_text(ws.dump(item), encoding="utf-8")
             capsule = candidate / "docs/work/checkpoints/A/checkpoint.md"
@@ -191,13 +192,21 @@ class WorkStateTests(unittest.TestCase):
             return candidate, item
 
         start_head = "1" * 40
+        receipt_url = "https://github.com/repo-owner/r/issues/1#issuecomment-123"
+        marker = ("SEQDOC OWNER AUTHORIZATION v1\nItem: A\nCheckpoint: A\nExecution: takeover-1\n"
+                  "Baseline: " + "a" * 40 + "\nStart head: " + start_head +
+                  "\nOperation: bounded maintainer takeover\n")
+        authorization = {"html_url":receipt_url, "issue_url":"https://api.github.com/repos/repo-owner/r/issues/1",
+                         "user":{"login":"Repo-Owner"}, "author_association":"OWNER", "body":marker}
         candidate, original = blocked_root()
-        with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)) as observed:
+        with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)) as observed, \
+             patch("subprocess.run", return_value=type("R",(),{"stdout":json.dumps(authorization)})()):
             code, output = self.operation(candidate, "resume", id="A", execution_id="takeover-1", worktree_id="resume-a",
                                           expected_baseline=original["baseline"], current_head=start_head,
                                           current_branch="feature/a", clean=True, start_head=start_head,
-                                          claim=["SRC\\Repair/../repair.py"], authorization_receipt="owner-approved-epoch-1",
-                                          reason="resume after bounded takeover", next_action="rerun focused verification")
+                                           claim=["SRC\\Repair/../repair.py"], authorization_receipt=receipt_url,
+                                           reason="resume after bounded takeover", next_action="rerun focused verification",
+                                           repository="repo-owner/r")
         self.assertEqual(code, 0, output)
         observed.assert_called_once()
         resumed = json.loads((candidate / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
@@ -210,10 +219,24 @@ class WorkStateTests(unittest.TestCase):
         self.assertNotIn("pending authorization", json.dumps(resumed).lower())
         self.assertTrue(resumed["selectedForExecution"])
         self.assertEqual(resumed["claims"], [{"kind":"path", "value":"src/repair.py"}])
-        self.assertEqual(resumed["takeover"], {"authorizationReceipt":"owner-approved-epoch-1",
-                                               "reason":"resume after bounded takeover", "startHead":start_head})
+        self.assertEqual(resumed["takeover"], {"authorizationReceipt":receipt_url,
+                                               "authorizationDigest":__import__("hashlib").sha256(marker.encode()).hexdigest(),
+                                               "authorizedBy":"Repo-Owner", "reason":"resume after bounded takeover", "startHead":start_head})
         self.assertIn("`ResolvingFindings`", (candidate / "docs/work/checkpoints/A/checkpoint.md").read_text(encoding="utf-8"))
         self.assertEqual(ws.validate(candidate), 0)
+        for login, association in (("assigned-collaborator", "COLLABORATOR"),
+                                   ("assigned-collaborator", "OWNER"), ("different-owner", "OWNER")):
+            candidate, original = blocked_root()
+            rejected_authorization = dict(authorization, user={"login":login}, author_association=association)
+            before = {p: p.read_bytes() for p in candidate.rglob("*") if p.is_file()}
+            with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)), \
+                 patch("subprocess.run", return_value=type("R",(),{"stdout":json.dumps(rejected_authorization)})()):
+                self.assertNotEqual(self.operation(candidate, "resume", id="A", execution_id="takeover-1", worktree_id="resume-a",
+                                                   expected_baseline=original["baseline"], current_head=start_head,
+                                                   current_branch="feature/a", clean=True, start_head=start_head,
+                                                   claim="repair.py", authorization_receipt=receipt_url, repository="repo-owner/r",
+                                                   reason="resume after bounded takeover", next_action="rerun focused verification")[0], 0)
+            self.assertEqual(before, {p: p.read_bytes() for p in before})
         before = {p: p.read_bytes() for p in candidate.rglob("*") if p.is_file()}
         with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)):
             self.assertNotEqual(self.operation(candidate, "resume", id="A", execution_id="takeover-2", worktree_id="resume-b",
@@ -261,12 +284,14 @@ class WorkStateTests(unittest.TestCase):
                 raise OSError("resume rollback test")
             return replace(source, destination)
         with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)):
-            with patch("os.replace", side_effect=fail_after_one):
-                code, _ = self.operation(candidate, "resume", id="A", execution_id="takeover-1", worktree_id="resume-a",
+            with patch("subprocess.run", return_value=type("R",(),{"stdout":json.dumps(authorization)})()):
+                with patch("os.replace", side_effect=fail_after_one):
+                    code, _ = self.operation(candidate, "resume", id="A", execution_id="takeover-1", worktree_id="resume-a",
                                           expected_baseline=original["baseline"], current_head=start_head,
                                           current_branch="feature/a", clean=True, start_head=start_head,
-                                          claim="repair.py", authorization_receipt="owner-approved",
-                                          reason="bounded resume", next_action="rerun focused verification")
+                                          claim="repair.py", authorization_receipt=receipt_url,
+                                                     reason="bounded resume", next_action="rerun focused verification",
+                                                     repository="repo-owner/r")
         self.assertNotEqual(code, 0)
         self.assertGreaterEqual(replacements[0], 2)
         self.assertEqual(before, {p: p.read_bytes() for p in before})
@@ -513,7 +538,7 @@ class WorkStateTests(unittest.TestCase):
                                             head="a" * 40, observed_head="a" * 40, observed_author="external-author",
                                             peer="reviewer", epoch="1", finding=["Fixed: focused verification"])[0], 0)
             self.assertEqual(self.operation(root, "closeout", id="A", execution_id="a", select_id="B", focused_receipt="focused",
-                                            final_receipt="final", attribution="tester", pr="https://github.com/o/r/pull/1",
+                                             final_receipt="final", attribution="external-author", pr="https://github.com/o/r/pull/1",
                                             head="a" * 40, observed_head="a" * 40, peer="reviewer",
                                             merge_sha="a" * 40)[0], 0)
         state = json.loads((root / "docs/project/work-items/B.json").read_text(encoding="utf-8"))
@@ -827,9 +852,13 @@ class WorkStateTests(unittest.TestCase):
               "author":{"login":"actual-author", "id":"U_kgDODXRwzA", "is_bot":False,
                          "name":"Actual Author", "url":"https://github.com/actual-author"},
               "headRefOid":h1,"mergeCommit":None,"reviewDecision":"APPROVED"}
-        def gh_view(merged=False, head=h2, review_state="APPROVED", review_head=h2, review_peer="reviewer", merge_sha="a"*40):
+        def gh_view(merged=False, head=h2, review_state="APPROVED", review_head=h2, review_peer="reviewer", merge_sha="a"*40, review_type="User", malformed_reviews=False):
             view = dict(pr, state="MERGED" if merged else "OPEN", headRefOid=head, mergeCommit={"oid":merge_sha} if merged else None)
-            reviews = [{"user":{"login":review_peer}, "state":review_state, "commit_id":review_head}]
+            user = {"login":review_peer}
+            if review_type != "missing":
+                user["type"] = review_type
+            reviews = ["malformed"] if malformed_reviews else [[{"user":{"login":"other", "type":"User"}, "state":"COMMENTED", "commit_id":h1}],
+                       [{"user":user, "state":review_state, "commit_id":review_head}]]
             def run(command, *args, **kwargs):
                 text = " ".join(command) if isinstance(command, (list, tuple)) else str(command)
                 return type("R",(),{"stdout":json.dumps(reviews if "reviews" in text else view)})()
@@ -849,16 +878,19 @@ class WorkStateTests(unittest.TestCase):
                                       (dict(merged=True, review_head=h3), h2),
                                       (dict(merged=True, review_peer="other"), h2),
                                       (dict(merged=True), h1), (dict(merged=True), h3),
-                                      (dict(merged=True, review_state="COMMENTED"), h2)):
+                                      (dict(merged=True, review_state="COMMENTED"), h2),
+                                      (dict(merged=True, review_type="Bot"), h2), (dict(merged=True, review_type="App"), h2),
+                                      (dict(merged=True, review_type="missing"), h2), (dict(merged=True, review_type=7), h2),
+                                      (dict(merged=True, malformed_reviews=True), h2)):
             with patch("subprocess.run", side_effect=gh_view(**variant)):
                 rejected, _ = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
-                                              focused_receipt="focused", final_receipt="final", attribution="tester",
+                                               focused_receipt="focused", final_receipt="final", attribution="actual-author",
                                               pr="https://github.com/o/r/pull/1", head=caller_head,
                                               observed_head="spoofed", peer="reviewer", merge_sha="a"*40)
             self.assertNotEqual(rejected, 0, variant)
         with patch("subprocess.run", side_effect=gh_view(merged=True)):
             close_code, close_packet = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
-                                                   focused_receipt="focused", final_receipt="final", attribution="tester",
+                                                    focused_receipt="focused", final_receipt="final", attribution="actual-author",
                                                    pr="https://github.com/o/r/pull/1", head=h2,
                                                    observed_head="spoofed", peer="reviewer", merge_sha="a" * 40)
         self.assertEqual(close_code, 0, close_packet)
@@ -868,7 +900,7 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(closed.get("claims"), [])
         self.assertEqual(closed["closeout"], {"executionId":"a", "pr":"https://github.com/o/r/pull/1",
                                                "head":h2, "mergeSha":"a"*40, "focused":"focused",
-                                               "final":"final", "attribution":"tester", "findings":["resolved"]})
+                                                "final":"final", "attribution":"actual-author", "findings":["resolved"]})
         self.assertNotEqual(dependent.get("lifecycle"), "Active")
         self.assertEqual(dependent.get("claims"), None)
         self.assertIn("`Closed`", (root / "docs/work/checkpoints/A/checkpoint.md").read_text(encoding="utf-8"))

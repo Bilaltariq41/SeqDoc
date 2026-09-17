@@ -2,7 +2,7 @@
 
 ## State
 
-`ReviewRequired`
+`ResolvingFindings`
 
 ## Authority
 
@@ -127,3 +127,11 @@ receipt, reason, and start head; the supplied reason and next action become `sta
 selected or conflicting executions and atomically updates the capsule and registry.
 This does not authorize automatic repair, GitHub writes, lifecycle changes outside the operation, or the final gate.
 State remains `Blocked` until the explicitly authorized resume operation is invoked after publication.
+
+## Review finding repair boundary
+
+F1 through F4 require authenticated owner-comment receipts, revalidated closeout
+receipts, authenticated attribution, strict slur-pagination, and human reviewer
+identity. The existing takeover record predates that receipt and remains only
+temporary validation-compatible evidence; it must be replaced by an authenticated
+`Blocked` -> resume cycle before rereview or the final gate.

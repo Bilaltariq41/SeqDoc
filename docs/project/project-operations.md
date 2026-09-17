@@ -74,6 +74,24 @@ complete; it never activates or selects the dependent.
 
 ## Recovery, cancellation, and projection
 
+### Authenticated takeover and closeout
+
+`resume` re-fetches an owner Issue-comment receipt from the same repository and
+issue. The authenticated login must equal the repository owner from the validated
+`owner/repo` argument, compared case-insensitively; the assigned contributor in
+`item.owner` is not used. The association must be `OWNER`, and the normalized
+body must exactly bind item, checkpoint, execution, baseline, actual start head,
+and operation. The exact authenticated login is stored with the URL,
+SHA-256 body digest, authenticated login, reason, and start head. `closeout`
+revalidates that receipt and digest. Paginated reviews use `gh api --paginate
+--slurp`, require page arrays, flatten them, and accept only a matching
+`User` reviewer. Closeout attribution must match both authenticated PR author
+and stored handoff author; only the authenticated author is persisted.
+
+The pre-existing three-field takeover record is readable for migration only;
+it is not closeout-authorizable and must be replaced by an authenticated
+`Blocked` -> resume cycle before rereview or the final gate.
+
 Cancellation uses the legal `transition` operation and follows the same journaled transaction. An interrupted process
 leaves its untracked worktree-local journal for `recover`; a successfully rolled-back operation removes it. Run
 `project --dry-run` to show exact bounded label commands; apply only

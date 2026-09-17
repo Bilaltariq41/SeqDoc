@@ -83,3 +83,18 @@ Focused verification passed 28/28 tests with 1 platform-dependent symlink skip. 
 - The first resumed focused run exposed one stale Blocked-only read assertion. It was repaired to derive exact
   execution expectations from canonical selection.
 - Focused verification now reports **28 passed, 1 skipped**. No review or final gate is claimed.
+
+## Independent review findings F1-F4
+
+- F1: **Fixed** — resume derives the repository owner from validated `owner/repo`, compares the authenticated comment
+  login case-insensitively (never against assigned contributor `item.owner`), requires `OWNER` association, and stores
+  the exact authenticated login with URL, body digest, reason, and start head.
+- F2: **Fixed** — closeout re-fetches and revalidates the takeover receipt and digest; the legacy three-field record is
+  readable only for migration and cannot authorize closure.
+- F3: **Fixed** — closeout requires attribution to equal the authenticated PR author and stored handoff author, and
+  persists only the authenticated author.
+- F4: **Fixed** — reviews use strict `gh api --paginate --slurp` page-array flattening and require reviewer login plus
+  `type == User`.
+
+Current receipt migration is **pending the owner comment**. No GitHub write, block/resume, handoff, rereview, or final
+gate was performed.
