@@ -578,8 +578,23 @@ def pr_parts(value, repository):
     return int(match.group(3))
 
 
+def canonical_repository_binding(item, repository):
+    source = item.get("sourceUrl")
+    source_match = re.fullmatch(r"https://github\.com/([^/]+)/([^/]+)/issues/([0-9]+)", source or "")
+    pr_match = re.fullmatch(PR_URL.pattern, item.get("pr") or "", re.IGNORECASE)
+    if item.get("kind") != "github-issue" or not source_match or not pr_match:
+        raise ValueError("canonical repository identity is missing or malformed")
+    if (source_match.group(1).casefold(), source_match.group(2).casefold()) != tuple(part.casefold() for part in repository.split("/")):
+        raise ValueError("canonical repository identity mismatch")
+    if (pr_match.group(1).casefold(), pr_match.group(2).casefold()) != (source_match.group(1).casefold(), source_match.group(2).casefold()):
+        raise ValueError("canonical repository identity mismatch")
+    if source_match.group(3) != str(item.get("number")) or pr_match.group(3) != source_match.group(3):
+        raise ValueError("canonical issue identity mismatch")
+    return int(source_match.group(3))
+
+
 def authenticated_pr(repository, pr):
-    match = PR_URL.fullmatch(pr or "")
+    match = re.fullmatch(PR_URL.pattern, pr or "", re.IGNORECASE)
     if not match:
         raise ValueError("malformed PR URL")
     number = int(match.group(3))
@@ -590,14 +605,14 @@ def authenticated_pr(repository, pr):
         value = json.loads(result.stdout)
     except (OSError, subprocess.SubprocessError, TypeError, json.JSONDecodeError) as error:
         raise ValueError(f"authenticated PR observation failed: {error}")
-    test_seam = isinstance(value, dict) and "reviewDecision" not in value
-    required = {"number", "state", "isDraft", "author", "headRefOid"} | ({"mergeCommit"} if not test_seam else set())
-    if not isinstance(value, dict) or "/".join(match.group(1, 2)) != repository and not test_seam or not required <= set(value) or set(value) - required - {"reviewDecision", "mergeCommit", "url"} or value["number"] != number or value["state"] not in {"OPEN", "CLOSED", "MERGED"} or not isinstance(value["isDraft"], bool):
+    required = {"number", "state", "isDraft", "author", "headRefOid", "mergeCommit", "reviewDecision"}
+    if (not isinstance(value, dict) or (match.group(1).casefold(), match.group(2).casefold()) != tuple(part.casefold() for part in repository.split("/")) or
+            not required <= set(value) or set(value) - required - {"url"} or value["number"] != number or
+            value["state"] not in {"OPEN", "CLOSED", "MERGED"} or not isinstance(value["isDraft"], bool) or
+            value["reviewDecision"] is not None and not isinstance(value["reviewDecision"], str)):
         raise ValueError("malformed authenticated PR observation")
-    if "url" in value and value["url"] != pr:
+    if "url" in value and (not isinstance(value["url"], str) or value["url"].casefold() != pr.casefold()):
         raise ValueError("authenticated PR URL mismatch")
-    if "reviewDecision" in value and value["reviewDecision"] is not None and not isinstance(value["reviewDecision"], str):
-        raise ValueError("malformed authenticated PR review decision")
     author = value["author"]
     if not isinstance(author, dict) or not isinstance(author.get("login"), str) or not author["login"].strip() or not ID.fullmatch(author["login"]):
         raise ValueError("malformed authenticated PR author")
@@ -645,7 +660,8 @@ def repository_owner(repository):
 def authenticated_takeover(repository, item, execution_id, baseline, start_head, receipt_url):
     owner = repository_owner(repository)
     match = ISSUE_COMMENT_URL.fullmatch(receipt_url or "")
-    if not match or "/".join(match.group(1, 2)) != repository or (item.get("number") is not None and int(match.group(3)) != int(item["number"])):
+    if (not match or (match.group(1).casefold(), match.group(2).casefold()) != tuple(part.casefold() for part in repository.split("/")) or
+            (item.get("number") is not None and match.group(3) != str(item["number"]))):
         raise ValueError("authorization receipt/repository or issue mismatch")
     try:
         result = subprocess.run(["gh", "api", f"repos/{repository}/issues/comments/{match.group(4)}"],
@@ -671,12 +687,12 @@ def authenticated_peer_takeovers(repository, item, execution_id, baseline, start
         raise ValueError("exactly two distinct peer authorization receipts are required")
     if not isinstance(authorization_head, str) or not SHA.fullmatch(authorization_head):
         raise ValueError("authorization head must be a lowercase SHA")
-    if item.get("pr"):
-        pr_parts(item["pr"], repository)
+    canonical_repository_binding(item, repository)
     observed = []
     for receipt_url in receipts:
         match = ISSUE_COMMENT_URL.fullmatch(receipt_url or "")
-        if not match or "/".join(match.group(1, 2)) != repository or int(match.group(3)) != int(item.get("number", match.group(3))):
+        if (not match or (match.group(1).casefold(), match.group(2).casefold()) != tuple(part.casefold() for part in repository.split("/")) or
+                match.group(3) != str(item.get("number"))):
             raise ValueError("peer authorization receipt/repository or issue mismatch")
         try:
             result = subprocess.run(["gh", "api", f"repos/{repository}/issues/comments/{match.group(4)}"], capture_output=True, text=True, check=True)
@@ -867,6 +883,11 @@ def resume(root, args):
         errors.append("baseline identity mismatch")
     if item and (not item.get("checkpointId") or not item.get("checkpointPath") or not (root / item["checkpointPath"] / "checkpoint.md").is_file()):
         errors.append("checkpoint is missing")
+    if item and item.get("kind") == "github-issue":
+        try:
+            canonical_repository_binding(item, args.repository)
+        except ValueError as error:
+            errors.append(str(error))
     try:
         actual_head, actual_branch, clean = observe_git(root)
     except ValueError as error:
@@ -1059,8 +1080,7 @@ def closeout(root, args):
                 raise ValueError("malformed PR URL")
             number = int(match.group(3))
             observation = authenticated_pr(args.repository, args.pr)
-            legacy_mock_merge = "reviewDecision" not in observation and observation.get("mergeCommit")
-            if (observation["state"] != "MERGED" and not legacy_mock_merge) or not SHA.match(observation["headRefOid"]) or observation["headRefOid"] != args.head or not observation.get("mergeCommit"):
+            if observation["state"] != "MERGED" or not SHA.match(observation["headRefOid"]) or observation["headRefOid"] != args.head or not observation.get("mergeCommit"):
                 raise ValueError("PR is not merged at the stored head")
             merge_sha = observation["mergeCommit"]["oid"]
             if merge_sha != args.merge_sha:
@@ -1263,6 +1283,12 @@ def github_projection(args, root):
         if not observed:
             print(f"GH-{item['number']}: missing", file=sys.stderr)
             return 1
+        if args.command == "project":
+            comments = observed.get("comments")
+            if (not isinstance(comments, list) or
+                    any(not isinstance(comment, dict) or not isinstance(comment.get("body"), str) for comment in comments)):
+                print(f"GH-{item['number']}: malformed comments", file=sys.stderr)
+                return 1
         expected = LABELS.get(item["lifecycle"])
         attached = {label.get("name") for label in observed.get("labels", []) if isinstance(label, dict)}
         if observed.get("state") != item.get("expectedGithubState"):

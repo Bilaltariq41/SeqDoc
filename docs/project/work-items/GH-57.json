@@ -83,9 +83,9 @@
   "expectedGithubState": "OPEN",
   "id": "GH-57",
   "kind": "github-issue",
-  "lifecycle": "ReviewRequired",
-  "lifecycleLabel": "review-required",
-  "nextAction": "Run focused verification and independent complete-candidate rereview; do not run the final gate until all findings are resolved.",
+  "lifecycle": "ResolvingFindings",
+  "lifecycleLabel": "resolving-findings",
+  "nextAction": "Resolve G57-TPO-F8 through F10 in one batch; rerun focused verification and independent rereview; do not run the final gate.",
   "number": 57,
   "owner": "ahmad",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
@@ -114,7 +114,7 @@
   "schemaVersion": 1,
   "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
-  "statusReason": "Abood-essa and Qhatahet authorized the bounded maintainer takeover through exact authenticated Issue #57 receipts.",
+  "statusReason": "Independent rereview found three unresolved fail-open boundaries: runtime PR test seam, owner-receipt repository binding, and malformed projection comment omission.",
   "takeover": {
     "authorizationHead": "07319b35ad2d7c1d2ee12f6c1438ad0e13e7afde",
     "authorizationReceipts": [

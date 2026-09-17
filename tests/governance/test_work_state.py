@@ -938,8 +938,12 @@ class WorkStateTests(unittest.TestCase):
               "author":{"login":"actual-author", "id":"U_kgDODXRwzA", "is_bot":False,
                          "name":"Actual Author", "url":"https://github.com/actual-author"},
               "headRefOid":h1,"mergeCommit":None,"reviewDecision":"APPROVED"}
-        def gh_view(merged=False, head=h2, review_state="APPROVED", review_head=h2, review_peer="reviewer", merge_sha="a"*40, review_type="User", malformed_reviews=False):
+        def gh_view(merged=False, head=h2, review_state="APPROVED", review_head=h2, review_peer="reviewer", merge_sha="a"*40, review_type="User", malformed_reviews=False, state=None, omit=()):
             view = dict(pr, state="MERGED" if merged else "OPEN", headRefOid=head, mergeCommit={"oid":merge_sha} if merged else None)
+            if state is not None:
+                view["state"] = state
+            for field in omit:
+                view.pop(field, None)
             user = {"login":review_peer}
             if review_type != "missing":
                 user["type"] = review_type
@@ -967,13 +971,27 @@ class WorkStateTests(unittest.TestCase):
                                       (dict(merged=True, review_state="COMMENTED"), h2),
                                       (dict(merged=True, review_type="Bot"), h2), (dict(merged=True, review_type="App"), h2),
                                       (dict(merged=True, review_type="missing"), h2), (dict(merged=True, review_type=7), h2),
-                                      (dict(merged=True, malformed_reviews=True), h2)):
+                                      (dict(merged=True, malformed_reviews=True), h2),
+                                      (dict(merged=True, state="OPEN"), h2), (dict(merged=True, state="CLOSED"), h2)):
             with patch("subprocess.run", side_effect=gh_view(**variant)):
                 rejected, _ = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
                                                focused_receipt="focused", final_receipt="final", attribution="actual-author",
                                               pr="https://github.com/o/r/pull/1", head=caller_head,
                                               observed_head="spoofed", peer="reviewer", merge_sha="a"*40)
             self.assertNotEqual(rejected, 0, variant)
+        for field in ("number", "state", "isDraft", "author", "headRefOid", "mergeCommit", "reviewDecision"):
+            with patch("subprocess.run", side_effect=gh_view(merged=True, omit=(field,))):
+                rejected, _ = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
+                                              focused_receipt="focused", final_receipt="final", attribution="actual-author",
+                                              pr="https://github.com/o/r/pull/1", head=h2,
+                                              observed_head="spoofed", peer="reviewer", merge_sha="a"*40)
+            self.assertNotEqual(rejected, 0, field)
+        with patch("subprocess.run", side_effect=gh_view(merged=True)):
+            rejected, _ = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
+                                          focused_receipt="focused", final_receipt="final", attribution="actual-author",
+                                          repository="other/r", pr="https://github.com/o/r/pull/1", head=h2,
+                                          observed_head="spoofed", peer="reviewer", merge_sha="a"*40)
+        self.assertNotEqual(rejected, 0)
         with patch("subprocess.run", side_effect=gh_view(merged=True)):
             close_code, close_packet = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
                                                     focused_receipt="focused", final_receipt="final", attribution="actual-author",
@@ -1011,7 +1029,7 @@ class WorkStateTests(unittest.TestCase):
                     expectedGithubState="OPEN")
         item_path.write_text(ws.dump(item), encoding="utf-8")
         self.assertEqual(ws.validate(root), 0)
-        drift = json.dumps([{"number": 1, "state": "OPEN", "labels": [{"name": "blocked"}, {"name": "keep"}]}])
+        drift = json.dumps([{"number": 1, "state": "OPEN", "labels": [{"name": "blocked"}, {"name": "keep"}], "comments": []}])
         with patch("subprocess.run", return_value=type("R", (), {"stdout": drift})()) as run:
             code, output = self.operation(root, "project", dry_run=True)
         self.assertEqual(code, 0, output)
@@ -1019,13 +1037,13 @@ class WorkStateTests(unittest.TestCase):
         self.assertNotIn("--remove-label keep", output)
         self.assertIn("--add-label ready", output)
         self.assertIn("DRY-RUN", output)
-        remote = json.dumps([{"number": 1, "state": "OPEN", "labels": [{"name": "ready"}, {"name": "keep"}]}])
+        remote = json.dumps([{"number": 1, "state": "OPEN", "labels": [{"name": "ready"}, {"name": "keep"}], "comments": []}])
         with patch("subprocess.run", return_value=type("R", (), {"stdout": remote})()) as run:
             self.assertEqual(self.operation(root, "project")[0], 0)
-            self.assertEqual(run.call_count, 1)
+            self.assertEqual(run.call_count, 2)
         with patch("subprocess.run", side_effect=PermissionError("forbidden")):
             self.assertNotEqual(self.operation(root, "project")[0], 0)
-        drift = json.dumps([{"number": 1, "state": "OPEN", "labels": [{"name": "blocked"}]}])
+        drift = json.dumps([{"number": 1, "state": "OPEN", "labels": [{"name": "blocked"}], "comments": []}])
         with patch("subprocess.run", side_effect=[type("R", (), {"stdout": drift})(), OSError("write failed")]):
             self.assertNotEqual(self.operation(root, "project")[0], 0)
         closed_drift = json.dumps([{"number": 1, "state": "CLOSED", "labels": [{"name": "blocked"}],
@@ -1055,6 +1073,12 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertEqual(run.call_count, 1)
         self.assertNotIn("--body", output)
+        for comments in (None, {}, "comment", [{}], [{"body": 7}], [{"id": 1}]):
+            malformed = json.dumps([{"number": 1, "state": "OPEN", "labels": [], "comments": comments}])
+            with patch("subprocess.run", return_value=type("R", (), {"stdout": malformed})()) as run:
+                code, output = self.operation(root, "project")
+            self.assertNotEqual(code, 0, comments)
+            self.assertEqual(run.call_count, 1, comments)
 
     def test_real_registry_and_checked_in_projection_are_read_only(self):
         registry = {p: p.read_bytes() for p in (ROOT / "docs/project/work-items").glob("*.json")}

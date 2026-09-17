@@ -122,3 +122,16 @@ gate is claimed.
   **F2 Fixed** — authenticated attribution boundary; **F3 Fixed** — strict paginated review observation; **F4 Fixed** —
   human reviewer identity enforcement.
 - No rereview or final gate was run or claimed.
+
+## Rereview finding repairs (F8-F10)
+
+- F8: **Fixed** — removed runtime test seams and legacy merge compatibility. Authenticated PR observation now requires
+  all seven production fields plus repository, PR number, and metadata validation; closeout requires literal `MERGED`,
+  exact final head, merge object/SHA, and authenticated review. Tests retain production-shaped mocks.
+- F9: **Fixed** — canonical GitHub issue identity binds source URL, supplied repository, item number, receipt URL, and
+  PR repository/number case-insensitively for owner/repo and exactly for issue number, before observation or writes. The
+  same binding helper is used by the peer route, including cross-repository same-number rejection coverage.
+- F10: **Fixed** — project validates that comments are present as a list of dictionaries with string bodies before
+  computing actions; malformed or missing comments abort before any write subprocess, while empty and unrelated valid
+  lists remain actionable.
+- These are repair dispositions only; no rereview or final gate is claimed.

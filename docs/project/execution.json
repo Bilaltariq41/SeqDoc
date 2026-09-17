@@ -90,7 +90,7 @@
   ],
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Run focused verification and independent complete-candidate rereview; do not run the final gate until all findings are resolved.",
+  "nextAction": "Resolve G57-TPO-F8 through F10 in one batch; rerun focused verification and independent rereview; do not run the final gate.",
   "schemaVersion": 2,
   "sourceId": "GH-57"
 }
