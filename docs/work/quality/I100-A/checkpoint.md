@@ -2,7 +2,7 @@
 
 ## State
 
-`ReviewRequired`
+`Blocked`
 
 ## Authority and frozen state
 
@@ -463,6 +463,16 @@ independent review are required. The final gate and Ahmad request remain withhel
 Head `d09d236` passed 68/68 focused tests under isolated SDK 10.0.302. Complete independent review found no issues and
 marked the final `CloseTracked` observer finding Fixed; all Ahmad and earlier reviewer findings remain Fixed. I100-A is
 ready for Ahmad's latest-head formal review. The final gate remains withheld until Ahmad approves.
+
+### Ahmad latest-head re-review result
+
+Ahmad reviewed exact PR head `6fee7f5271a4ee7ce5d4626af02e631f6d36f51d` and returned `BLOCK`. The High finding
+is that exceptional construction unwind can record failed termination/wait, then close or retain resources without a
+bounded process-family-zero proof. The focused regression checks managed-task quiescence but not family exit. Ahmad
+also found a Medium frozen-allowlist discrepancy for `SeqDoc.slnx`,
+`docs/project/delegated-contribution-workflow.md`, and the stub `packages.lock.json`, plus Low stale post-create
+assignment wording/seams. The frozen High-severity stop condition fired: I100-A is Blocked, the branch and attribution
+are preserved, and no final gate or GH-107 work is authorized.
 
 ### Owner platform-floor amendment
 

@@ -427,3 +427,12 @@ The `d09d236` repair runs native close and ownership/evidence handling before is
 SDK 10.0.302 lane passed 68/68, and complete independent review returned PASS with no findings. All Ahmad and reviewer
 findings are Fixed. I100-A moved to ReviewRequired for Ahmad's latest-head formal review; the final gate remains
 withheld.
+
+## Ahmad latest-head re-review result
+
+Ahmad reviewed exact head `6fee7f5271a4ee7ce5d4626af02e631f6d36f51d` and returned `BLOCK`. One High finding
+remains: construction unwind can continue after failed termination/wait without proving the contained family reached
+zero; the current regression proves only managed-task quiescence. One Medium finding records three changed paths
+outside the frozen allowlist, and one Low finding records stale `AssignProcessToJobObject` wording/seams and private
+test coupling. I100-A returned to Blocked under its frozen High-severity stop condition. No final gate or GH-107 work
+ran.
