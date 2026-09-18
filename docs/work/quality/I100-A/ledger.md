@@ -545,3 +545,7 @@ Focused verification passed 76/76 at `7f0b4a1`. Complete independent review neve
 defects: the coordinator is test-only rather than production authority, raw pre-transfer unwind can lose ownership
 without publishing a cleanup owner, and ledger acquire/release rules can hide duplicate or synthesize stale ownership.
 I100-A returned to Blocked under the frozen stop rule; no Ahmad request or final gate ran.
+
+The owner authorized repair of I100-A-F6, F7, and F8 on the existing PR. The six grouped tests may be strengthened
+without increasing the 76-test total. Production coordinator authority, sole ledger ownership, and strict slot
+identity must all pass focused verification and complete independent review before Ahmad is requested again.

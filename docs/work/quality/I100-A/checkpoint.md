@@ -2,7 +2,7 @@
 
 ## State
 
-`Blocked`
+`Building`
 
 ## Authority and frozen state
 
@@ -680,6 +680,12 @@ release can be swallowed while the transferred action no-ops, returning no `Clea
 acquisition is silently ignored and a failed release of an already released slot can synthesize new ownership, breaking
 stable slot identity. The frozen High stop rule returned I100-A to Blocked. No Ahmad request, final gate, merge, or
 GH-107 work is authorized.
+
+The owner authorized repair of all three independent High redesign findings on PR #109. Scope is limited to making
+the lifecycle coordinator the actual production authority, making the typed ledger the sole owner before and after
+transfer, and rejecting duplicate acquisition or stale release without synthesizing ownership. Existing six grouped
+tests may be strengthened but the 76-test cap remains. Focused verification and complete independent review are
+required before Ahmad; the final gate and GH-107 remain prohibited.
 
 ### Owner platform-floor amendment
 

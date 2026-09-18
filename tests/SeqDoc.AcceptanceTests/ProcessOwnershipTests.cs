@@ -2185,6 +2185,58 @@ public sealed class ProcessOwnershipTests
                 result.Process?.Dispose();
             }
         }
+
+        // F7: a close failure before ownership transfer must leave the raw native owner reachable.
+        // AfterJobCreated has acquired a job but has not created a child, so this is deterministic and
+        // cannot accidentally depend on process-family timing.
+        var nativeCalls = new ProcessOwnershipNativeCalls();
+        var close = FindInstanceTestSeam("CloseHandle", typeof(Func<nint, NativeCallResult>));
+        Assert.NotNull(close);
+        int closeAttempts = 0;
+        nint failedJob = nint.Zero;
+        close!.SetValue(nativeCalls, (Func<nint, NativeCallResult>)(handle =>
+        {
+            if (Interlocked.Increment(ref closeAttempts) == 1)
+            {
+                failedJob = handle;
+                return NativeCallResult.Failure(8601);
+            }
+
+            return NativeMethods.CloseHandle(handle)
+                ? NativeCallResult.Success()
+                : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+        }));
+        ProcessOwnershipConstructionResult failedConstruction = ContainedProcess.Start(
+            NewOptions(["sleep", "1000"], nativeCalls: nativeCalls), ConstructionFaultPoint.AfterJobCreated);
+        try
+        {
+            Assert.False(failedConstruction.Succeeded);
+            Assert.Contains("8601", failedConstruction.Detail, StringComparison.Ordinal);
+            Assert.NotNull(failedConstruction.CleanupOwner);
+            Assert.NotEqual(nint.Zero, failedJob);
+            object firstSnapshot = GetTypedOwnershipSnapshot(failedConstruction);
+            object firstJob = ((System.Collections.IEnumerable)GetRequiredProperty(firstSnapshot, "NativeResources"))
+                .Cast<object>().Single(entry => GetRequiredProperty(entry, "Kind").ToString() == "JobHandle");
+            Assert.Equal("Owned", GetRequiredProperty(firstJob, "State").ToString());
+            Assert.Equal(failedJob, ConvertToNativeInt(GetRequiredProperty(firstJob, "Value")));
+            Assert.Equal(1, Convert.ToInt32(GetRequiredProperty(firstJob, "Attempts"), CultureInfo.InvariantCulture));
+            Assert.Contains("8601", GetRequiredProperty(firstJob, "Evidence").ToString(), StringComparison.Ordinal);
+
+            failedConstruction.CleanupOwner!.Dispose();
+            object secondSnapshot = GetTypedOwnershipSnapshot(failedConstruction.CleanupOwner);
+            object secondJob = ((System.Collections.IEnumerable)GetRequiredProperty(secondSnapshot, "NativeResources"))
+                .Cast<object>().Single(entry => GetRequiredProperty(entry, "Kind").ToString() == "JobHandle");
+            Assert.Equal("Released", GetRequiredProperty(secondJob, "State").ToString());
+            Assert.Equal(nint.Zero, ConvertToNativeInt(GetRequiredProperty(secondJob, "Value")));
+            Assert.True(Convert.ToInt32(GetRequiredProperty(secondJob, "Attempts"), CultureInfo.InvariantCulture) >= 2);
+            Assert.Equal("Owned", GetRequiredProperty(firstJob, "State").ToString());
+            Assert.Equal(failedJob, ConvertToNativeInt(GetRequiredProperty(firstJob, "Value")));
+        }
+        finally
+        {
+            close.SetValue(nativeCalls, null);
+            failedConstruction.CleanupOwner?.Dispose();
+        }
     }
 
     [Fact]
@@ -2229,7 +2281,7 @@ public sealed class ProcessOwnershipTests
     }
 
     [Fact]
-    public void LifecycleEpochsRejectStaleCompletionsAndJoinOneRetryableTerminalOperation()
+    public async Task LifecycleEpochsRejectStaleCompletionsAndJoinOneRetryableTerminalOperation()
     {
         var assembly = typeof(ContainedProcess).Assembly;
         Type coordinator = assembly.GetType("SeqDoc.AcceptanceTests.ProcessOwnershipLifecycleCoordinator")
@@ -2279,6 +2331,91 @@ public sealed class ProcessOwnershipTests
         Assert.Equal(receipts.Select(receipt => ToInt64(GetRequiredProperty(receipt, "OperationId"))),
             receipts.Select(receipt => ToInt64(GetRequiredProperty(receipt, "OperationId"))).OrderBy(id => id));
         Assert.NotSame(GetRequiredProperty(instance, "ImmutableEvidence"), GetRequiredProperty(instance, "ImmutableEvidence"));
+
+        // F6: the coordinator must be the production ContainedProcess authority, not merely a directly
+        // instantiated protocol fixture.  A clean child must publish an accepted family-proof receipt.
+        var clean = ContainedProcess.Start(NewOptions(["echo", "lifecycle", "proof"]));
+        Assert.True(clean.Succeeded, clean.Detail);
+        using (ContainedProcess cleanProcess = clean.Process!)
+        {
+            ProcessOwnershipWaitResult cleanWait = await cleanProcess.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            Assert.Equal(ProcessOwnershipFailureClass.None, cleanWait.FailureClass);
+            object cleanReceipts = GetRequiredLifecycleReceipts(cleanProcess);
+            Assert.Contains(((System.Collections.IEnumerable)cleanReceipts).Cast<object>(), receipt =>
+                GetRequiredProperty(receipt, "Kind").ToString() == "FamilyProof"
+                && (bool)GetRequiredProperty(receipt, "Accepted")
+                && ToInt64(GetRequiredProperty(receipt, "OperationId")) > 0);
+        }
+
+        // The real terminal path must serialize concurrent callers, permit a retry after a failed native
+        // attempt, and use a later family-proof epoch after a successful native termination.
+        var firstTerminalEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstTerminal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int nativeTerminalCalls = 0;
+        var retryCalls = new ProcessOwnershipNativeCalls
+        {
+            TerminateJobObject = (job, exitCode) =>
+            {
+                if (Interlocked.Increment(ref nativeTerminalCalls) == 1)
+                {
+                    firstTerminalEntered.SetResult();
+                    releaseFirstTerminal.Task.GetAwaiter().GetResult();
+                    return NativeCallResult.Failure(8602);
+                }
+
+                return NativeMethods.TerminateJobObject(job, exitCode)
+                    ? NativeCallResult.Success()
+                    : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+            },
+        };
+        var retryResult = ContainedProcess.Start(NewOptions(["sleep", "5000"], nativeCalls: retryCalls));
+        Assert.True(retryResult.Succeeded, retryResult.Detail);
+        using (ContainedProcess retryProcess = retryResult.Process!)
+        {
+            Task<bool> first = Task.Run(retryProcess.Terminate);
+            await firstTerminalEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Task<bool> joined = Task.Run(retryProcess.Terminate);
+            Assert.True(SpinWait.SpinUntil(
+                () => LifecycleIds(GetRequiredLifecycleReceipts(retryProcess), "Terminal").Length >= 2,
+                TimeSpan.FromSeconds(5)), "The second caller did not join the in-flight terminal operation.");
+            releaseFirstTerminal.SetResult();
+            await Task.WhenAll(first, joined);
+            object afterFailedTerminal = GetRequiredLifecycleReceipts(retryProcess);
+            long[] firstIds = LifecycleIds(afterFailedTerminal, "Terminal");
+            Assert.True(firstIds.Length >= 2);
+            Assert.Equal(firstIds[0], firstIds[1]);
+
+            Assert.True(retryProcess.Terminate());
+            long[] afterRetryIds = LifecycleIds(GetRequiredLifecycleReceipts(retryProcess), "Terminal");
+            Assert.Contains(afterRetryIds, id => id > firstIds[0]);
+        }
+
+        var proofBarriers = new ProcessOwnershipLifecycleBarriers();
+        int proofTerminalCalls = 0;
+        var proofCalls = new ProcessOwnershipNativeCalls
+        {
+            LifecycleBarriers = proofBarriers,
+            TerminateJobObject = (job, exitCode) =>
+            {
+                Interlocked.Increment(ref proofTerminalCalls);
+                return NativeMethods.TerminateJobObject(job, exitCode)
+                    ? NativeCallResult.Success()
+                    : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+            },
+        };
+        var proofResult = ContainedProcess.Start(NewOptions(["sleep", "5000"], nativeCalls: proofCalls));
+        Assert.True(proofResult.Succeeded, proofResult.Detail);
+        using (ContainedProcess proofProcess = proofResult.Process!)
+        {
+            Task<bool> terminal = Task.Run(proofProcess.Terminate);
+            Assert.True(proofBarriers.WaitForFamilyProofPending(TimeSpan.FromSeconds(5)));
+            long terminalId = LifecycleIds(GetRequiredLifecycleReceipts(proofProcess), "Terminal").Single();
+            proofBarriers.ReleaseActiveProcessZero();
+            Assert.True(await terminal);
+            long[] allIds = LifecycleIds(GetRequiredLifecycleReceipts(proofProcess), "FamilyProof");
+            Assert.Contains(allIds, id => id > terminalId);
+            Assert.Equal(1, proofTerminalCalls);
+        }
     }
 
     [Fact]
@@ -2346,6 +2483,33 @@ public sealed class ProcessOwnershipTests
             close.SetValue(nativeCalls, null);
             result.Process?.Dispose();
         }
+
+        // F8: the internal ledger is strict about identity.  Duplicate acquisition and a failed release
+        // against an already released slot must not synthesize or mutate ownership.
+        Type ledgerType = assembly.GetType("SeqDoc.AcceptanceTests.NativeOwnershipLedger")
+            ?? throw new Xunit.Sdk.XunitException("Missing typed native ownership ledger.");
+        object ledger = Activator.CreateInstance(ledgerType)!;
+        Type resourceKind = assembly.GetType("SeqDoc.AcceptanceTests.NativeResourceKind")!;
+        object kind = Enum.Parse(resourceKind, "JobHandle");
+        MethodInfo acquire = ledgerType.GetMethod("Acquire", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        MethodInfo release = ledgerType.GetMethod("AttemptRelease", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        MethodInfo snapshotMethod = ledgerType.GetMethod("Snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        nint value = (nint)0x1234;
+        acquire.Invoke(ledger, [kind, value, "test acquire"]);
+        object beforeDuplicate = snapshotMethod.Invoke(ledger, null)!;
+        TargetInvocationException duplicate = Assert.Throws<TargetInvocationException>(() =>
+            acquire.Invoke(ledger, [kind, value, "duplicate acquire"]));
+        Assert.IsType<InvalidOperationException>(duplicate.InnerException);
+        object afterDuplicate = snapshotMethod.Invoke(ledger, null)!;
+        Assert.Equal(SnapshotProjection(beforeDuplicate), SnapshotProjection(afterDuplicate));
+
+        release.Invoke(ledger, [kind, true, 0, "test release", value]);
+        object released = snapshotMethod.Invoke(ledger, null)!;
+        TargetInvocationException stale = Assert.Throws<TargetInvocationException>(() =>
+            release.Invoke(ledger, [kind, false, 8603, "stale failed release", value]));
+        Assert.IsType<InvalidOperationException>(stale.InnerException);
+        object afterStale = snapshotMethod.Invoke(ledger, null)!;
+        Assert.Equal(SnapshotProjection(released), SnapshotProjection(afterStale));
     }
 
     [Fact]
@@ -2610,6 +2774,45 @@ public sealed class ProcessOwnershipTests
 
         throw new Xunit.Sdk.XunitException("No typed ownership snapshot is observable.");
     }
+
+    private static object GetRequiredLifecycleReceipts(object process)
+    {
+        foreach (string name in new[] { "LifecycleOperationReceiptsForTests", "LifecycleSnapshotForTests" })
+        {
+            PropertyInfo? property = process.GetType().GetProperty(name,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (property?.GetValue(process) is object snapshot)
+            {
+                if (name == "LifecycleSnapshotForTests")
+                {
+                    PropertyInfo? receipts = snapshot.GetType().GetProperty("OperationReceipts",
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (receipts?.GetValue(snapshot) is object nested)
+                    {
+                        return nested;
+                    }
+                }
+
+                return snapshot;
+            }
+        }
+
+        throw new Xunit.Sdk.XunitException("Production ContainedProcess does not expose typed lifecycle receipts.");
+    }
+
+    private static long[] LifecycleIds(object receipts, string kind) =>
+        ((System.Collections.IEnumerable)receipts).Cast<object>()
+            .Where(receipt => GetRequiredProperty(receipt, "Kind").ToString() == kind)
+            .Select(receipt => ToInt64(GetRequiredProperty(receipt, "OperationId")))
+            .ToArray();
+
+    private static string[] SnapshotProjection(object snapshot) =>
+        ((System.Collections.IEnumerable)GetRequiredProperty(snapshot, "NativeResources")).Cast<object>()
+            .Select(entry => string.Join("|",
+                GetRequiredProperty(entry, "Kind"), GetRequiredProperty(entry, "State"),
+                GetRequiredProperty(entry, "Value"), GetRequiredProperty(entry, "Attempts"),
+                GetRequiredProperty(entry, "Evidence"), GetRequiredProperty(entry, "Error") ?? ""))
+            .ToArray();
 
     private static object GetRequiredProperty(object owner, string name) =>
         owner.GetType().GetProperty(name,
