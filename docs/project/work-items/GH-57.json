@@ -3,112 +3,21 @@
   "branch": "feature/issue-57-transactional-project-operations",
   "checkpointId": "G57-TPO",
   "checkpointPath": "docs/work/governance/G57-TPO",
-  "claims": [
-    {
-      "kind": "exclusive",
-      "value": "execution"
-    },
-    {
-      "kind": "exclusive",
-      "value": "github-projection"
-    },
-    {
-      "kind": "exclusive",
-      "value": "registry"
-    },
-    {
-      "kind": "governance-tool",
-      "value": "tools/governance/work_state.py"
-    },
-    {
-      "kind": "path",
-      "value": ".github/workflows/work-state.yml"
-    },
-    {
-      "kind": "path",
-      "value": "agents.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/delegated-contribution-workflow.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/execution.json"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/issue-readiness.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/project-operations.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/work-items/gh-57.json"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/work-state.schema.json"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/workflow.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/readme.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/work/governance/g57-tpo/checkpoint.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/work/governance/g57-tpo/ledger.md"
-    },
-    {
-      "kind": "path",
-      "value": "tests/governance/test_work_state.py"
-    },
-    {
-      "kind": "path",
-      "value": "tools/governance/work_state.py"
-    }
-  ],
   "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
   "dependencies": [],
-  "executionId": "GH-57:G57-TPO",
   "expectedGithubState": "OPEN",
   "id": "GH-57",
   "kind": "github-issue",
-  "lifecycle": "ReviewRequired",
-  "lifecycleLabel": "review-required",
-  "nextAction": "Add only the F12 two-peer closeout revalidation tests, run focused verification, and request independent rereview; do not run the final gate before approval.",
+  "lifecycle": "Blocked",
+  "lifecycleLabel": "blocked",
+  "nextAction": "Preserve PR #110 and obtain separate authorization for one F13 regression and casefolded identity repair, focused verification, and independent rereview. Do not run the final gate.",
   "number": 57,
   "owner": "ahmad",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
-  "review": {
-    "author": "AhmadKrarha",
-    "epoch": "6",
-    "executionId": "GH-57:G57-TPO",
-    "findings": [
-      "Fixed: F12 realistic two-peer closeout revalidation coverage"
-    ],
-    "peer": "Abood-essa",
-    "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
-    "requestHead": "443b17b7ffb836547709fa2476f1d8db5437745a"
-  },
-  "reviewEpoch": "6",
-  "reviewFindings": [
-    "Fixed: F12 realistic two-peer closeout revalidation coverage"
-  ],
-  "reviewPeer": "Abood-essa",
   "schemaVersion": 1,
-  "selectedForExecution": true,
+  "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
-  "statusReason": "Abood-essa and Qhatahet authorized the F12 test-only bounded takeover through exact authenticated Issue #57 receipts.",
+  "statusReason": "F13 remains outside the F12 test-only takeover scope: casing-only variants can bypass the distinct non-author peer check.",
   "takeover": {
     "authorizationHead": "d3453f08067bc9dedd159a8b66bf082cbd070cac",
     "authorizationReceipts": [
@@ -128,6 +37,5 @@
     "startHead": "d3453f08067bc9dedd159a8b66bf082cbd070cac"
   },
   "title": "[Governance] Transactional project operations and repository-native handoff",
-  "track": "governance",
-  "worktreeId": "feature-issue-57-transactional-ops"
+  "track": "governance"
 }
