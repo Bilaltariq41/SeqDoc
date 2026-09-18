@@ -666,6 +666,21 @@ test/stub process remained at inspection, generated source-tree staging director
 --check` passed. The explicit stop condition returned I100-A to Blocked with the complete worktree preserved. No
 independent review, final gate, merge, or GH-107 work ran.
 
+The owner authorized one surgical repair solely for the remaining descendant-closes-pipes failure. Pipe EOF must not
+substitute for bounded family proof; an unproven active family must retain `ProcessFailed`, invoke terminal cleanup, and
+prove `ACTIVE_PROCESS_ZERO`. Focused verification must reach 76/76 before independent review; otherwise I100-A returns
+to Blocked. The final gate and GH-107 remain prohibited.
+
+#### Independent redesign review stop
+
+Head `7f0b4a1` passed 76/76 focused tests, but mandatory complete review found three new High defects. I100-A-F6: the
+new lifecycle coordinator is exercised only by reflection tests; production still classifies through the legacy
+lifecycle gate/tasks/failure tracker. I100-A-F7: pre-transfer raw unwind remains a parallel owner, and a failed raw
+release can be swallowed while the transferred action no-ops, returning no `CleanupOwner`. I100-A-F8: duplicate
+acquisition is silently ignored and a failed release of an already released slot can synthesize new ownership, breaking
+stable slot identity. The frozen High stop rule returned I100-A to Blocked. No Ahmad request, final gate, merge, or
+GH-107 work is authorized.
+
 ### Owner platform-floor amendment
 
 Abood selected the evidence-backed repair: require Windows 10 / Windows Server 2016 x64 or newer and use

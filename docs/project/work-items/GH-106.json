@@ -10,14 +10,14 @@
   "kind": "github-issue",
   "lifecycle": "Blocked",
   "lifecycleLabel": "blocked",
-  "nextAction": "Owner decision required. Preserve the single remaining descendant-EOF failure and all partial redesign edits; do not repair, review, run final gate, merge, or begin GH-107 without separate authorization.",
+  "nextAction": "Owner decision required. Preserve head 7f0b4a1 and worktree; do not repair/transfer, run final gate, request Ahmad, merge, or begin GH-107 without separate authorization.",
   "number": 106,
   "owner": "abood",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/109",
   "schemaVersion": 1,
   "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/106",
-  "statusReason": "Final bounded takeover focused verification under isolated SDK 10.0.302 reached 75/76. ParentExitWithDescendantPipeClosureStillTerminatesFamilyAndProvesActiveZero remains red: descendant pipe EOF still suppresses required family enforcement. Stop condition fired; worktree preserved.",
+  "statusReason": "Focused verification passed 76/76 at 7f0b4a1, but mandatory independent review found three new High defects: lifecycle coordinator is not used by production, pre-transfer raw unwind can leak with no CleanupOwner, and ledger slot identity permits duplicate/synthetic ownership. Frozen High stop rule fired.",
   "title": "[Testing] Prove Windows contained-process ownership primitive",
   "track": "quality"
 }

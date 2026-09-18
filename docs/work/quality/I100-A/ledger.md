@@ -535,3 +535,13 @@ with independent review permitted only after 76/76 focused verification. No fina
 Focused verification under isolated SDK 10.0.302 reached 75/76. The only remaining failure is the descendant-closes-
 pipes scenario, where EOF still prevents required family enforcement. The no-red stop rule returned I100-A to Blocked;
 no independent review or final gate ran, and the worktree remains preserved.
+
+The owner authorized one surgical repair limited to descendant pipe EOF versus family proof. Review is permitted only
+after 76/76 focused verification; the final gate and GH-107 remain prohibited.
+
+#### Independent redesign review stop
+
+Focused verification passed 76/76 at `7f0b4a1`. Complete independent review nevertheless found three High structural
+defects: the coordinator is test-only rather than production authority, raw pre-transfer unwind can lose ownership
+without publishing a cleanup owner, and ledger acquire/release rules can hide duplicate or synthesize stale ownership.
+I100-A returned to Blocked under the frozen stop rule; no Ahmad request or final gate ran.
