@@ -549,3 +549,10 @@ I100-A returned to Blocked under the frozen stop rule; no Ahmad request or final
 The owner authorized repair of I100-A-F6, F7, and F8 on the existing PR. The six grouped tests may be strengthened
 without increasing the 76-test total. Production coordinator authority, sole ledger ownership, and strict slot
 identity must all pass focused verification and complete independent review before Ahmad is requested again.
+
+#### F6/F7/F8 repair-limit stop
+
+The strengthened six-group package remained at 76 total and went red 3/73 for F6/F7/F8. Two implementation attempts
+expired after partial edits to `ProcessOwnership.cs`, `ProcessOwnership.Lifecycle.cs`, and
+`ProcessOwnership.Resources.cs`; the current worktree is not known to compile and was not focused-tested. The repair
+limit returned I100-A to Blocked with the worktree preserved. No independent review or final gate ran.

@@ -2,7 +2,7 @@
 
 ## State
 
-`Building`
+`Blocked`
 
 ## Authority and frozen state
 
@@ -686,6 +686,17 @@ the lifecycle coordinator the actual production authority, making the typed ledg
 transfer, and rejecting duplicate acquisition or stale release without synthesizing ownership. Existing six grouped
 tests may be strengthened but the 76-test cap remains. Focused verification and complete independent review are
 required before Ahmad; the final gate and GH-107 remain prohibited.
+
+#### F6/F7/F8 repair-limit stop
+
+The strengthened existing groups produced 73/76 with exact red evidence for production coordinator use, reachable
+pre-transfer ownership, and strict slot identity. Two implementation attempts then exhausted their execution limits
+without a compilable candidate. The preserved tree partially removes legacy lifecycle fields and unwind scaffolding,
+but coordinator compatibility/authority, typed construction cleanup, raw mirror handling, and a malformed ownership
+predicate remain incomplete. No focused command ran after these edits. No matching SeqDoc test/stub process or generated
+source-tree staging directory was present at inspection, and `git diff --check` passed. The two-repair limit returned
+I100-A to Blocked; no continuation, transfer, revert, compile, gate, Ahmad request, merge, or GH-107 work is authorized
+without a new owner decision.
 
 ### Owner platform-floor amendment
 
