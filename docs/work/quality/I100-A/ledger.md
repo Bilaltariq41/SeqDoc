@@ -503,3 +503,15 @@ verification remained red and timed out. Explicit failures remained in failed-cl
 drain-family classification, and relocated output text. No final count was emitted. The frozen stop rule returned
 I100-A to Blocked; no final gate or GH-107 work ran, and the worktree was preserved without committing the incomplete
 candidate or generated staging output.
+
+The owner authorized one bounded same-owner continuation for the four recorded failures plus generated staging-artifact
+cleanup. The continuation may proceed to independent review only after a green focused lane and must return to Blocked
+on remaining red or a new High safety finding. No final gate or GH-107 work is authorized.
+
+#### Bounded continuation stop
+
+The last verified continuation result was 72/76. Four failures remained: two drain/family `ProcessFailed`
+classifications and two failed-close ownership/snapshot assertions. The owner then made unverified ledger retry edits
+before exhausting the continuation. Generated source-tree staging directories were removed and no matching live
+process remained at inspection. The mandatory stop rule returned I100-A to Blocked with the partial worktree preserved;
+no independent review or final gate ran.

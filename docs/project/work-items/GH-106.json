@@ -10,14 +10,14 @@
   "kind": "github-issue",
   "lifecycle": "Blocked",
   "lifecycleLabel": "blocked",
-  "nextAction": "Owner decision required. Preserve the incomplete candidate and generated staging artifacts; do not transfer, continue repair, run final gate, merge, or begin GH-107 without separate authorization.",
+  "nextAction": "Owner decision required. Do not continue or transfer the unverified candidate, run focused/final gates, merge, or begin GH-107 without separate authorization. Preserve all partial files and evidence.",
   "number": 106,
   "owner": "abood",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/109",
   "schemaVersion": 1,
   "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/106",
-  "statusReason": "The single bounded ownership-ledger redesign candidate remained red and timed out: failed-close ownership/snapshots and drain-family classification are incomplete, and staged relocation output mismatches. Frozen stop rule fired; worktree and attribution preserved.",
+  "statusReason": "The owner-authorized bounded continuation did not achieve verified green: last focused run was 72/76 with four failures in drain-family classification and failed-close ledger retention; later ledger retry edits are unverified. Stop condition fired; worktree preserved.",
   "title": "[Testing] Prove Windows contained-process ownership primitive",
   "track": "quality"
 }

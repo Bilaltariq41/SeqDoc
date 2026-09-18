@@ -619,6 +619,23 @@ the timeout path may have retained tasks/resources during the run. The frozen st
 the complete worktree, untracked partial files, and generated staging directories preserved. No transfer, further
 repair, final gate, merge, or GH-107 work is authorized without a new owner decision.
 
+The owner authorized one bounded continuation on the preserved worktree for only the four recorded failures: checked
+close ownership, real ledger snapshot publication/retry, drain-family classification, and relocated output assertion.
+The same implementation owner must remove generated staging directories from repository paths and run focused
+verification. Continue to independent review only if green; return to Blocked if red or if review finds a High safety
+defect. The final gate and GH-107 remain prohibited.
+
+#### Bounded continuation stop
+
+The same implementation owner removed both generated source-tree staging directories and continued the four named
+repairs. The last verified focused run was 72 passed, 4 failed, 0 skipped: the known drain test and deterministic
+barrier still classified `ProcessFailed`, synchronized teardown did not retain typed failed-close ownership, and the
+failed-release snapshot contained no matching retained entry. Later `HasOwned`/`RetryOwned`, deferred parent-close
+retry, disposal retry, and owned-resource detection edits were not verified before the bounded continuation ended.
+No matching test/stub process remained running when checked, and both generated source-tree staging directories are
+absent. I100-A is Blocked with the unverified worktree preserved; no further command, transfer, final gate, merge, or
+GH-107 work is authorized without a new owner decision.
+
 ### Owner platform-floor amendment
 
 Abood selected the evidence-backed repair: require Windows 10 / Windows Server 2016 x64 or newer and use
