@@ -3,39 +3,115 @@
   "branch": "feature/issue-57-transactional-project-operations",
   "checkpointId": "G57-TPO",
   "checkpointPath": "docs/work/governance/G57-TPO",
+  "claims": [
+    {
+      "kind": "exclusive",
+      "value": "execution"
+    },
+    {
+      "kind": "exclusive",
+      "value": "github-projection"
+    },
+    {
+      "kind": "exclusive",
+      "value": "registry"
+    },
+    {
+      "kind": "governance-tool",
+      "value": "tools/governance/work_state.py"
+    },
+    {
+      "kind": "path",
+      "value": ".github/workflows/work-state.yml"
+    },
+    {
+      "kind": "path",
+      "value": "agents.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/delegated-contribution-workflow.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/execution.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/issue-readiness.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/project-operations.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/work-items/gh-57.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/work-state.schema.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/workflow.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/readme.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/work/governance/g57-tpo/checkpoint.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/work/governance/g57-tpo/ledger.md"
+    },
+    {
+      "kind": "path",
+      "value": "tests/governance/test_work_state.py"
+    },
+    {
+      "kind": "path",
+      "value": "tools/governance/work_state.py"
+    }
+  ],
   "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
   "dependencies": [],
+  "executionId": "GH-57:G57-TPO",
   "expectedGithubState": "OPEN",
   "id": "GH-57",
   "kind": "github-issue",
-  "lifecycle": "Blocked",
-  "lifecycleLabel": "blocked",
-  "nextAction": "Preserve PR #110 and obtain a separately authorized decision for F12 test-only completion, split, transfer, takeover, or rejection. Do not run the final gate.",
+  "lifecycle": "ResolvingFindings",
+  "lifecycleLabel": "resolving-findings",
+  "nextAction": "Add only the F12 two-peer closeout revalidation tests, run focused verification, and request independent rereview; do not run the final gate before approval.",
   "number": 57,
   "owner": "ahmad",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
   "schemaVersion": 1,
-  "selectedForExecution": false,
+  "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
-  "statusReason": "Two post-rereview repair rounds did not obtain approval. F12 remains: no successful two-peer closeout revalidation test covers the real Issue #57 / PR #110 identity shape and changed or deleted receipt rejection.",
+  "statusReason": "Abood-essa and Qhatahet authorized the F12 test-only bounded takeover through exact authenticated Issue #57 receipts.",
   "takeover": {
-    "authorizationHead": "07319b35ad2d7c1d2ee12f6c1438ad0e13e7afde",
+    "authorizationHead": "d3453f08067bc9dedd159a8b66bf082cbd070cac",
     "authorizationReceipts": [
       {
-        "authorizationDigest": "afdfae732f342f9552df4e4148e205ca2e507b89761f31087bada5588774d27d",
+        "authorizationDigest": "315bb6135d9e82057afe06f087ea80fdd2ba356baeb1b0e21543648374b07c12",
         "authorizedBy": "Abood-essa",
-        "url": "https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5713964023"
+        "url": "https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5716001245"
       },
       {
-        "authorizationDigest": "ef811c949096f6c0101920d33a45186a001a62179390de033d970d5f9c808348",
+        "authorizationDigest": "57cce3bde30d37dd64f7545bb3dedca1a7c2ffebfff74b5e081bd990109f684f",
         "authorizedBy": "Qhatahet",
-        "url": "https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5714397001"
+        "url": "https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5715444371"
       }
     ],
     "mode": "two-peer",
-    "reason": "Abood-essa and Qhatahet authorized the bounded maintainer takeover through exact authenticated Issue #57 receipts.",
-    "startHead": "5ab1b19027339aabfd8175317b31e0afe5e9cc3d"
+    "reason": "Abood-essa and Qhatahet authorized the F12 test-only bounded takeover through exact authenticated Issue #57 receipts.",
+    "startHead": "d3453f08067bc9dedd159a8b66bf082cbd070cac"
   },
   "title": "[Governance] Transactional project operations and repository-native handoff",
-  "track": "governance"
+  "track": "governance",
+  "worktreeId": "feature-issue-57-transactional-ops"
 }
