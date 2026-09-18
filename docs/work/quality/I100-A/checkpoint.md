@@ -2,7 +2,7 @@
 
 ## State
 
-`Building`
+`Blocked`
 
 ## Authority and frozen state
 
@@ -607,6 +607,17 @@ the final gate, merge, close GH-106, or begin GH-107 before Ahmad approves.
 
 The owner authorized implementation of this exact frozen plan at `50b70e4`. No broader architecture, path, test
 budget, final gate, merge, or GH-107 work is authorized.
+
+#### Frozen redesign implementation stop
+
+The single bounded implementation candidate did not reach green before its implementation budget ended. The focused
+command exceeded 120 seconds and reported four explicit failures: synchronized teardown did not retain failed-close
+ownership; the typed ownership snapshot exposed only a fallback entry instead of the retained resource; the real
+drain/family barrier still classified `ProcessFailed`; and relocated stub output differed from the asserted payload.
+The ledger, coordinator, and staging target are partial. No matching test process remained running when checked, but
+the timeout path may have retained tasks/resources during the run. The frozen stop rule fired: I100-A is Blocked with
+the complete worktree, untracked partial files, and generated staging directories preserved. No transfer, further
+repair, final gate, merge, or GH-107 work is authorized without a new owner decision.
 
 ### Owner platform-floor amendment
 

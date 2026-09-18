@@ -1,10 +1,10 @@
 {
-  "activeCheckpointId": "I100-A",
-  "activeCheckpointPath": "docs/work/quality/I100-A",
+  "activeCheckpointId": null,
+  "activeCheckpointPath": null,
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
-  "mode": "active",
-  "nextAction": "Add at most six grouped red claims, implement the ledger/coordinator/staged-stub candidate, run focused SDK 10.0.302 verification and complete independent review; block on remaining red or a new High safety finding. Withhold final gate and GH-107.",
+  "mode": "idle",
+  "nextAction": "No work item is selected.",
   "schemaVersion": 1,
-  "sourceId": "GH-106"
+  "sourceId": null
 }
