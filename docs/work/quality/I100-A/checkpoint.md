@@ -70,6 +70,9 @@ inheritance guarantees. Do not add a package solely to avoid establishing those 
 - `tests/SeqDoc.AcceptanceTests.ProcessOwnershipStub/SeqDoc.AcceptanceTests.ProcessOwnershipStub.csproj`
 - `tests/SeqDoc.AcceptanceTests.ProcessOwnershipStub/Program.cs`
 - `tests/SeqDoc.AcceptanceTests/ProcessOwnership.cs`
+- `tests/SeqDoc.AcceptanceTests/ProcessOwnership.Resources.cs`
+- `tests/SeqDoc.AcceptanceTests/ProcessOwnership.Lifecycle.cs`
+- `tests/SeqDoc.AcceptanceTests/ProcessOwnership.Native.cs`
 - `tests/SeqDoc.AcceptanceTests/ProcessOwnershipTests.cs`
 - `tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj`
 - `tests/SeqDoc.AcceptanceTests.ProcessOwnershipStub/packages.lock.json`
@@ -522,6 +525,85 @@ task; this is a concrete cause of the disclosed intermittent `DrainIncomplete` v
 stub resolution walks from `AppContext.BaseDirectory` to a literal `tests` ancestor, so relocated or shadow-copied test
 output fails independently of the primitive. I100-A is Blocked; preserve the branch and do not run the final gate or
 GH-107 without owner disposition.
+
+### Frozen ownership-ledger redesign plan
+
+Ahmad approved option 2—the table-driven ownership ledger with one lifecycle coordinator—as the design direction at
+https://github.com/Bilaltariq41/SeqDoc/pull/109#issuecomment-5731669533. This section incorporates every condition of
+that approval and is the frozen implementation plan. The existing public `ContainedProcess`, construction result,
+wait result, options, and failure-class interfaces remain compatible; the redesign is internal.
+
+#### Exact resource inventory
+
+The coordinator preallocates typed slots before the first native acquisition. Native slots are: stdin child-read,
+stdin parent-write, stdout parent-read, stdout child-write, stderr parent-read, stderr child-write, handle-list buffer,
+job handle, completion-port handle, job-list buffer, initialized attribute-list buffer, command-line buffer,
+environment-block buffer, process handle, and primary-thread handle. Managed slots are: completion-monitor CTS/task,
+drain CTS, stdout-drain task, stderr-drain task, process-wait task, terminal-operation task, family-proof task, and
+disposal task.
+
+Each native slot records typed kind, stable acquisition sequence, native value, ownership state, release prerequisite,
+attempt count, and exact error/evidence. A failed release remains `Owned`, retains the unchanged native value, records
+the exact failed attempt, and is eligible for deterministic retry. `Disposed` is legal only when every native slot is
+released and every required managed slot is quiescent. Attribute-list deletion precedes its job-list and handle-list
+payload release. No label string selects native behavior.
+
+#### Lifecycle and operation epochs
+
+One lifecycle coordinator is the only writer of lifecycle and failure classification. It creates monotonically
+increasing operation IDs for wait, terminal, family-proof, drain, and disposal epochs. Every asynchronous completion
+carries its operation ID; a completion is ignored when its ID no longer matches the active slot, preventing stale work
+from mutating a later lifecycle epoch.
+
+Family proof is monotonic and retryable: `Unknown` may become `Proven`; timeout is `TimedOutUnproven`, never proof of
+activity and never `Proven`. Later proof epochs remain legal until zero is proven. Drain completion and immediate child
+exit are facts only and cannot classify family state. Wait classification awaits the shared bounded family-proof result
+before recording `ProcessFailed`; terminal enforcement follows only a bounded unproven result or exact job accounting
+that still reports activity.
+
+Only one terminal attempt may be in flight. Concurrent callers join it. A failed native terminal attempt permits a
+later terminal epoch. A successful native termination is not repeated merely because family proof is delayed; later
+epochs retry proof only. Construction failure, normal disposal, and retained cleanup all use the same ledger release
+engine and immutable ordered evidence snapshots.
+
+#### Exact staged-stub contract
+
+`SeqDoc.AcceptanceTests.csproj` defines `ProcessOwnershipStubStageDir` as
+`$(TargetDir)process-ownership-stub\` and an exact `StageProcessOwnershipStub` target running after `Build` and before
+`VSTest`. The target removes the prior stage directory, invokes MSBuild `Build` on
+`SeqDoc.AcceptanceTests.ProcessOwnershipStub.csproj` with the current `Configuration` and `TargetFramework`,
+`OutputPath=$(ProcessOwnershipStubStageDir)`, `AppendTargetFrameworkToOutputPath=false`, and
+`AppendRuntimeIdentifierToOutputPath=false`, then fails when the staged apphost executable is absent. Building directly
+into that directory stages the executable, DLL, deps/runtimeconfig files, and runtime dependencies together.
+
+Tests resolve only
+`Path.Combine(AppContext.BaseDirectory, "process-ownership-stub", "SeqDoc.AcceptanceTests.ProcessOwnershipStub.exe")`.
+They do not inspect repository, configuration, TFM, `bin`, or `tests` directory names. A relocation test copies the
+staged directory and proves resolution/launch independent of checkout layout. `ReferenceOutputAssembly=false` remains;
+the stub contributes no compile-time types.
+
+#### Frozen tests and stop rule
+
+All existing 70 focused tests remain; no assertion may be weakened or removed. Add at most six grouped claims:
+
+1. every pre-resume parent-copy close failure remains owned and retries without resume;
+2. every construction fault leaves each acquired slot with exactly one reachable owner;
+3. drain-first/family-proof-later ordering cannot produce a false `ProcessFailed`;
+4. bounded unproven family state and terminal retry/concurrency are deterministic across operation epochs;
+5. retained release failures preserve value, error, retry evidence, reverse order, and immutable snapshots;
+6. staged stub resolution and launch survive relocated output.
+
+One Test Writer establishes red evidence, then one implementation owner delivers the complete candidate across the
+typed pipeline and removes the old raw-field/unwind/classification paths. Focused verification remains:
+
+```powershell
+dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~ProcessOwnershipTests
+```
+
+If focused verification remains red after the bounded repair candidate, or independent review finds a new High defect
+in ownership, release retry, lifecycle epochs, family proof, terminal serialization, or staging, return I100-A to
+`Blocked` with the branch preserved. If green and independently clean, stop at `ReviewRequired` for Ahmad. Do not run
+the final gate, merge, close GH-106, or begin GH-107 before Ahmad approves.
 
 ### Owner platform-floor amendment
 

@@ -481,3 +481,13 @@ race records `ProcessFailed` before the bounded family-proof task finishes, expl
 25-second instability. The Medium finding is also accurate: runtime stub discovery depends on a literal repository
 `tests/bin/<Config>/<Tfm>` layout instead of staged output or MSBuild metadata. I100-A returned to Blocked with no final
 gate or GH-107 work.
+
+### Frozen redesign direction
+
+Ahmad approved the table-driven ownership ledger with one lifecycle coordinator as design direction, subject to an
+amended frozen plan before implementation authorization. The checkpoint now enumerates all 15 native and 8 managed
+slots, failed-release ownership/error/retry semantics, operation IDs that reject stale asynchronous results, monotonic
+retryable family proof, one in-flight terminal attempt with later failed-attempt retry, the exact
+`StageProcessOwnershipStub` MSBuild contract, a six-group test cap retaining all 70 tests, three new partial-file paths,
+and the required Blocked stop rule. This publication does not itself authorize implementation, the final gate, merge,
+or GH-107.
