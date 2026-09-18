@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Reflection;
 using System.Text;
 using RuntimeArchitecture = System.Runtime.InteropServices.Architecture;
 using Xunit;
@@ -1985,6 +1986,393 @@ public sealed class ProcessOwnershipTests
         Assert.DoesNotContain("PATH", environment.Keys, StringComparer.OrdinalIgnoreCase);
     }
 
+    // ---- I100-A frozen ledger/coordinator RED package (six grouped claims) -----------------------------
+
+    [Fact]
+    public void PreResumeParentCopyCloseFailuresAreCheckedOwnedAndRetryable()
+    {
+        // The four parent-side copies are closed before ResumeThread.  Fail one deterministic close per
+        // run; a failed close must not be forgotten or treated as EOF/success.
+        var failures = new List<string>();
+        for (int ordinal = 1; ordinal <= 4; ordinal++)
+        {
+            int closeCalls = 0;
+            string marker = Path.Combine(Path.GetTempPath(), $"seqdoc-i100a-pre-resume-{Guid.NewGuid():N}.marker");
+            nint duplicateProcess = nint.Zero;
+            nint duplicateJob = nint.Zero;
+            var postCreate = FindStaticTestSeam("PostCreateProcessObserverForTests", typeof(Action<nint, nint>));
+            Assert.NotNull(postCreate);
+            postCreate!.SetValue(null, (Action<nint, nint>)((job, process) =>
+            {
+                DuplicateCurrentHandle(process, out duplicateProcess);
+                DuplicateCurrentHandle(job, out duplicateJob);
+            }));
+            var calls = new ProcessOwnershipNativeCalls
+            {
+                CloseHandle = handle =>
+                {
+                    int call = Interlocked.Increment(ref closeCalls);
+                    if (call == ordinal)
+                    {
+                        return NativeCallResult.Failure(8300 + ordinal);
+                    }
+
+                    return NativeMethods.CloseHandle(handle)
+                        ? NativeCallResult.Success()
+                        : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+                },
+            };
+
+            var result = ContainedProcess.Start(
+                NewOptions(["sleep-with-marker", marker, "5000"], nativeCalls: calls));
+
+            try
+            {
+                if (result.Succeeded || result.FailureClass != ProcessOwnershipFailureClass.ProcessConstructionFailed
+                    || !(result.Detail ?? string.Empty).Contains((8300 + ordinal).ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)
+                    || (result.Detail ?? string.Empty).Contains("EOF", StringComparison.OrdinalIgnoreCase))
+                {
+                    failures.Add($"ordinal {ordinal}: {result.FailureClass}, '{result.Detail}'");
+                }
+                if (File.Exists(marker))
+                {
+                    failures.Add($"ordinal {ordinal}: child resumed and created marker");
+                }
+
+                // A bounded unwind may finish with no owner; if it cannot, the returned owner must remain
+                // reachable and retryable rather than silently losing the failed native value.
+                if (result.CleanupOwner is not null)
+                {
+                    Assert.True(result.CleanupOwner.Terminate() || result.CleanupOwner.FailureClass != ProcessOwnershipFailureClass.None);
+                    result.CleanupOwner.Dispose();
+                }
+            }
+            finally
+            {
+                postCreate.SetValue(null, null);
+                result.Process?.Terminate();
+                result.Process?.Dispose();
+                result.CleanupOwner?.Dispose();
+                if (duplicateJob != nint.Zero && QueryJobActiveProcesses(duplicateJob) > 0)
+                {
+                    NativeMethods.TerminateJobObject(duplicateJob, uint.MaxValue);
+                    _ = NativeMethods.WaitForSingleObject(duplicateProcess, 5000);
+                }
+                if (duplicateProcess != nint.Zero)
+                {
+                    NativeMethods.CloseHandle(duplicateProcess);
+                }
+                if (duplicateJob != nint.Zero)
+                {
+                    NativeMethods.CloseHandle(duplicateJob);
+                }
+                File.Delete(marker);
+            }
+        }
+
+        Assert.Empty(failures);
+    }
+
+    [Fact]
+    public void ConstructionFaultsExposeOneTypedReachableLedgerForEveryAcquiredNativeSlot()
+    {
+        var assembly = typeof(ContainedProcess).Assembly;
+        Type resourceKind = assembly.GetType("SeqDoc.AcceptanceTests.NativeResourceKind")
+            ?? throw new Xunit.Sdk.XunitException("Frozen ledger contract is missing NativeResourceKind.");
+        Assert.True(resourceKind.IsEnum);
+        string[] inventory = Enum.GetNames(resourceKind);
+        Assert.Equal(15, inventory.Length);
+        foreach (string expected in new[]
+        {
+            "StdinChildRead", "StdinParentWrite", "StdoutParentRead", "StdoutChildWrite",
+            "StderrParentRead", "StderrChildWrite", "HandleListBuffer", "JobHandle",
+            "CompletionPortHandle", "JobListBuffer", "AttributeListBuffer", "CommandLineBuffer",
+            "EnvironmentBlockBuffer", "ProcessHandle", "PrimaryThreadHandle",
+        })
+        {
+            Assert.Contains(expected, inventory);
+        }
+
+        Type snapshot = assembly.GetType("SeqDoc.AcceptanceTests.NativeResourceSnapshot")
+            ?? throw new Xunit.Sdk.XunitException("Frozen ledger contract is missing NativeResourceSnapshot.");
+        Assert.NotNull(snapshot.GetProperty("Kind"));
+        Assert.NotNull(snapshot.GetProperty("AcquisitionSequence"));
+        Assert.NotNull(snapshot.GetProperty("Value"));
+        Assert.NotNull(snapshot.GetProperty("State"));
+        Assert.NotNull(snapshot.GetProperty("Attempts"));
+        Assert.NotNull(snapshot.GetProperty("Evidence"));
+
+        Type ownership = assembly.GetType("SeqDoc.AcceptanceTests.ProcessOwnershipSnapshot")
+            ?? throw new Xunit.Sdk.XunitException("Construction faults have no typed ownership snapshot.");
+        Assert.NotNull(ownership.GetProperty("NativeResources"));
+        Assert.NotNull(ownership.GetProperty("Immutable"));
+
+        // Shape is only the admission check.  Every frozen construction point must publish the actual
+        // result ledger, including the post-transfer/pre-monitor point; an empty or synthetic ledger is
+        // not evidence of ownership.
+        foreach (ConstructionFaultPoint fault in Enum.GetValues<ConstructionFaultPoint>()
+            .Where(fault => fault != ConstructionFaultPoint.None))
+        {
+            var result = ContainedProcess.Start(
+                NewOptions(["sleep", "1000"], nativeCalls: new ProcessOwnershipNativeCalls
+                {
+                    TerminateJobObject = (_, _) => NativeCallResult.Failure(8510),
+                    WaitForSingleObject = (_, _) => NativeWaitResult.Failed(8511),
+                }), fault);
+            try
+            {
+                Assert.False(result.Succeeded);
+                object ledger = GetTypedOwnershipSnapshot(result);
+                var resources = GetRequiredProperty(ledger, "NativeResources") as System.Collections.IEnumerable;
+                Assert.NotNull(resources);
+                var entries = resources!.Cast<object>().ToArray();
+                Assert.NotEmpty(entries);
+                var kinds = entries.Select(entry => GetRequiredProperty(entry, "Kind")).ToArray();
+                Assert.Equal(kinds.Length, kinds.Distinct().Count());
+                var sequences = entries.Select(entry => Convert.ToInt64(GetRequiredProperty(entry, "AcquisitionSequence"), CultureInfo.InvariantCulture)).ToArray();
+                Assert.All(sequences, sequence => Assert.True(sequence > 0));
+                Assert.Equal(sequences.Length, sequences.Distinct().Count());
+                Assert.Equal(sequences.OrderBy(sequence => sequence), sequences);
+                foreach (object entry in entries)
+                {
+                    string state = GetRequiredProperty(entry, "State").ToString()!;
+                    Assert.True(state is "Owned" or "Released");
+                    nint value = ConvertToNativeInt(GetRequiredProperty(entry, "Value"));
+                    if (state == "Owned")
+                    {
+                        Assert.NotEqual(nint.Zero, value);
+                    }
+                }
+
+                if (result.CleanupOwner is null)
+                {
+                    Assert.All(entries, entry => Assert.Equal("Released", GetRequiredProperty(entry, "State").ToString()));
+                }
+                var immutable = entries.ToArray();
+                result.CleanupOwner?.Dispose();
+                Assert.Equal(immutable.Select(entry => GetRequiredProperty(entry, "State").ToString()),
+                    entries.Select(entry => GetRequiredProperty(entry, "State").ToString()));
+            }
+            finally
+            {
+                result.CleanupOwner?.Dispose();
+                result.Process?.Terminate();
+                result.Process?.Dispose();
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DrainCompletionWaitsForTheActiveFamilyProofEpochBeforeClassification()
+    {
+        var assembly = typeof(ContainedProcess).Assembly;
+        Type barrier = assembly.GetType("SeqDoc.AcceptanceTests.ProcessOwnershipLifecycleBarriers")
+            ?? throw new Xunit.Sdk.XunitException("Missing deterministic lifecycle barrier adapter.");
+        Assert.NotNull(barrier.GetMethod("WaitForDrainsCompleted"));
+        Assert.NotNull(barrier.GetMethod("WaitForFamilyProofPending"));
+        Assert.NotNull(barrier.GetMethod("ReleaseActiveProcessZero"));
+
+        var nativeCalls = new ProcessOwnershipNativeCalls();
+        var lifecycle = typeof(ProcessOwnershipNativeCalls).GetProperty("LifecycleBarriers",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(lifecycle);
+        object barriers = Activator.CreateInstance(barrier)!;
+        lifecycle!.SetValue(nativeCalls, barriers);
+        var result = ContainedProcess.Start(NewOptions(["echo", "barrier-out", "barrier-err"], nativeCalls: nativeCalls));
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        Task<ProcessOwnershipWaitResult> waitTask = process.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+        Assert.True((bool)barrier.GetMethod("WaitForDrainsCompleted")!.Invoke(
+            barriers, [TimeSpan.FromSeconds(5)])!);
+        Assert.True((bool)barrier.GetMethod("WaitForFamilyProofPending")!.Invoke(
+            barriers, [TimeSpan.FromSeconds(5)])!);
+        Assert.False(waitTask.IsCompleted);
+        Assert.Equal(ProcessOwnershipFailureClass.None, process.FailureClass);
+        Assert.False(process.TerminateJobObjectWasCalled);
+        barrier.GetMethod("ReleaseActiveProcessZero")!.Invoke(barriers, null);
+        var wait = await waitTask;
+        Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+        Assert.False(process.TerminateJobObjectWasCalled);
+
+        Type receipt = assembly.GetType("SeqDoc.AcceptanceTests.LifecycleOperationReceipt")
+            ?? throw new Xunit.Sdk.XunitException("Missing typed lifecycle operation receipt.");
+        Assert.NotNull(receipt.GetProperty("Kind"));
+        Assert.NotNull(receipt.GetProperty("OperationId"));
+        Assert.NotNull(receipt.GetProperty("Epoch"));
+        Assert.NotNull(receipt.GetProperty("Accepted"));
+        Assert.NotNull(receipt.GetProperty("Stale"));
+    }
+
+    [Fact]
+    public void LifecycleEpochsRejectStaleCompletionsAndJoinOneRetryableTerminalOperation()
+    {
+        var assembly = typeof(ContainedProcess).Assembly;
+        Type coordinator = assembly.GetType("SeqDoc.AcceptanceTests.ProcessOwnershipLifecycleCoordinator")
+            ?? throw new Xunit.Sdk.XunitException("Missing single lifecycle coordinator.");
+        Assert.NotNull(coordinator.GetMethod("BeginEpoch"));
+        Assert.NotNull(coordinator.GetMethod("AcceptCompletion"));
+        Assert.NotNull(coordinator.GetMethod("JoinTerminalOperation"));
+        Assert.NotNull(coordinator.GetMethod("RetryTerminalOperation"));
+        Assert.NotNull(coordinator.GetProperty("OperationReceipts"));
+        Assert.NotNull(coordinator.GetProperty("ImmutableEvidence"));
+
+        // Exact internal protocol exercised below: BeginFamilyProofEpoch() and
+        // JoinTerminalOperation() return immutable receipts; completion consumes (operationId,
+        // nativeSuccess, familyProven); RetryTerminalOperation() starts no second native attempt
+        // after success and instead returns/joins a newer family-proof receipt.
+        object instance = Activator.CreateInstance(coordinator)!;
+        var begin = coordinator.GetMethod("BeginFamilyProofEpoch")!;
+        var completeFamily = coordinator.GetMethod("CompleteFamilyProofEpoch")!;
+        var join = coordinator.GetMethod("JoinTerminalOperation")!;
+        var retry = coordinator.GetMethod("RetryTerminalOperation")!;
+        object familyN = begin.Invoke(instance, null)!;
+        object familyN1 = begin.Invoke(instance, null)!;
+        object stale = completeFamily.Invoke(instance,
+            [ToInt64(GetRequiredProperty(familyN, "OperationId")), false, true])!;
+        Assert.False((bool)GetRequiredProperty(stale, "Accepted"));
+        Assert.True((bool)GetRequiredProperty(stale, "Stale"));
+        object accepted = completeFamily.Invoke(instance,
+            [ToInt64(GetRequiredProperty(familyN1, "OperationId")), true, true])!;
+        Assert.True((bool)GetRequiredProperty(accepted, "Accepted"));
+
+        object terminalA = join.Invoke(instance, null)!;
+        object terminalB = join.Invoke(instance, null)!;
+        Assert.Equal(GetRequiredProperty(terminalA, "OperationId"), GetRequiredProperty(terminalB, "OperationId"));
+        object failed = coordinator.GetMethod("CompleteTerminalOperation")!.Invoke(instance,
+            [ToInt64(GetRequiredProperty(terminalA, "OperationId")), false])!;
+        Assert.True((bool)GetRequiredProperty(failed, "Accepted"));
+        object retryReceipt = retry.Invoke(instance, null)!;
+        Assert.True(ToInt64(GetRequiredProperty(retryReceipt, "OperationId"))
+            > ToInt64(GetRequiredProperty(terminalA, "OperationId")));
+        object success = coordinator.GetMethod("CompleteTerminalOperation")!.Invoke(instance,
+            [ToInt64(GetRequiredProperty(retryReceipt, "OperationId")), true])!;
+        Assert.True((bool)GetRequiredProperty(success, "Accepted"));
+        object proofRetry = retry.Invoke(instance, null)!;
+        Assert.NotEqual(GetRequiredProperty(retryReceipt, "OperationId"), GetRequiredProperty(proofRetry, "OperationId"));
+        var receipts = ((System.Collections.IEnumerable)GetRequiredProperty(instance, "OperationReceipts"))
+            .Cast<object>().ToArray();
+        Assert.Equal(receipts.Select(receipt => ToInt64(GetRequiredProperty(receipt, "OperationId"))),
+            receipts.Select(receipt => ToInt64(GetRequiredProperty(receipt, "OperationId"))).OrderBy(id => id));
+        Assert.NotSame(GetRequiredProperty(instance, "ImmutableEvidence"), GetRequiredProperty(instance, "ImmutableEvidence"));
+    }
+
+    [Fact]
+    public async Task FailedReleaseRetainsNativeValueAndImmutableOrderedRetryEvidence()
+    {
+        var assembly = typeof(ContainedProcess).Assembly;
+        Type snapshot = assembly.GetType("SeqDoc.AcceptanceTests.NativeResourceSnapshot")
+            ?? throw new Xunit.Sdk.XunitException("Failed release has no typed resource snapshot.");
+        Assert.NotNull(snapshot.GetProperty("Value"));
+        Assert.NotNull(snapshot.GetProperty("State"));
+        Assert.NotNull(snapshot.GetProperty("Attempt"));
+        Assert.NotNull(snapshot.GetProperty("Error"));
+        Assert.NotNull(snapshot.GetProperty("ReleaseOrder"));
+        Assert.NotNull(snapshot.GetProperty("IsImmutable"));
+
+        var nativeCalls = new ProcessOwnershipNativeCalls();
+        var close = FindInstanceTestSeam("CloseHandle", typeof(Func<nint, NativeCallResult>));
+        Assert.NotNull(close);
+        int failures = 0;
+        nint failedHandle = nint.Zero;
+        close!.SetValue(nativeCalls, (Func<nint, NativeCallResult>)(handle =>
+            Interlocked.Increment(ref failures) == 1
+                ? (failedHandle = handle, NativeCallResult.Failure(8401)).Item2
+                : NativeMethods.CloseHandle(handle)
+                    ? NativeCallResult.Success()
+                    : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error())));
+        var result = ContainedProcess.Start(NewOptions(["echo", "out", "err"], nativeCalls: nativeCalls));
+        Assert.True(result.Succeeded, result.Detail);
+        try
+        {
+            await result.Process!.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            result.Process.Dispose();
+            Assert.Contains(result.Process.TeardownFailures,
+                evidence => evidence.Contains("8401", StringComparison.Ordinal));
+            Assert.True(result.Process.HasRetainedFamilyResourcesForTests || result.Process.FailureClass == ProcessOwnershipFailureClass.TeardownDegraded);
+            object firstSnapshot = GetTypedOwnershipSnapshot(result.Process);
+            var firstEntries = ((System.Collections.IEnumerable)GetRequiredProperty(firstSnapshot, "NativeResources"))
+                .Cast<object>().ToArray();
+            Assert.Contains(firstEntries, entry => GetRequiredProperty(entry, "State").ToString() == "Owned"
+                && ConvertToNativeInt(GetRequiredProperty(entry, "Value")) == failedHandle
+                && Convert.ToInt32(GetRequiredProperty(entry, "Attempts"), CultureInfo.InvariantCulture) == 1
+                && GetRequiredProperty(entry, "Evidence").ToString()!.Contains("8401", StringComparison.Ordinal));
+            var immutableFirst = firstEntries.Select(entry =>
+                (GetRequiredProperty(entry, "Kind").ToString(), GetRequiredProperty(entry, "State").ToString(),
+                    ConvertToNativeInt(GetRequiredProperty(entry, "Value")))).ToArray();
+            result.Process.Dispose();
+            object secondSnapshot = GetTypedOwnershipSnapshot(result.Process);
+            var secondEntries = ((System.Collections.IEnumerable)GetRequiredProperty(secondSnapshot, "NativeResources"))
+                .Cast<object>().ToArray();
+            Assert.DoesNotContain(secondEntries, entry => GetRequiredProperty(entry, "State").ToString() == "Owned");
+            Assert.Equal(immutableFirst, firstEntries.Select(entry =>
+                (GetRequiredProperty(entry, "Kind").ToString(), GetRequiredProperty(entry, "State").ToString(),
+                    ConvertToNativeInt(GetRequiredProperty(entry, "Value")))));
+            Assert.Equal(firstEntries.Length, secondEntries.Length);
+            Assert.True(result.Process.TeardownOrderForTests.Count > 0);
+        }
+        finally
+        {
+            close.SetValue(nativeCalls, null);
+            result.Process?.Dispose();
+        }
+    }
+
+    [Fact]
+    public void StagedStubUsesRelocatableBaseDirectoryAndContainsCompleteRuntimePayload()
+    {
+        string stage = Path.Combine(AppContext.BaseDirectory, "process-ownership-stub");
+        Assert.True(Directory.Exists(stage), $"Expected staged stub directory '{stage}'.");
+        Assert.True(File.Exists(Path.Combine(stage, "SeqDoc.AcceptanceTests.ProcessOwnershipStub.exe")));
+        Assert.NotEmpty(Directory.EnumerateFiles(stage, "*.dll", SearchOption.TopDirectoryOnly));
+        Assert.NotEmpty(Directory.EnumerateFiles(stage, "*.deps.json", SearchOption.TopDirectoryOnly));
+        Assert.NotEmpty(Directory.EnumerateFiles(stage, "*.runtimeconfig.json", SearchOption.TopDirectoryOnly));
+
+        var resolver = typeof(ProcessOwnershipTests).GetMethod(
+            "ResolveStubExecutablePath",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic,
+            binder: null,
+            types: [typeof(string)],
+            modifiers: null);
+        Assert.NotNull(resolver);
+        string relocated = Path.Combine(Path.GetTempPath(), "seqdoc-i100a-relocated-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(relocated);
+        try
+        {
+            string relocatedStage = Path.Combine(relocated, "process-ownership-stub");
+            CopyDirectory(stage, relocatedStage);
+            string path = (string)resolver!.Invoke(null, [relocated])!;
+            Assert.Equal(Path.Combine(relocatedStage, "SeqDoc.AcceptanceTests.ProcessOwnershipStub.exe"), path);
+            Assert.True(File.Exists(path));
+            using var child = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = path,
+                    Arguments = "echo relocated-out relocated-err",
+                    WorkingDirectory = relocated,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                },
+            };
+            Assert.True(child.Start());
+            string stdout = child.StandardOutput.ReadToEnd();
+            string stderr = child.StandardError.ReadToEnd();
+            child.WaitForExit(5000);
+            Assert.Equal(0, child.ExitCode);
+            Assert.Equal("relocated-out\r\n", stdout);
+            Assert.Equal("relocated-err\r\n", stderr);
+        }
+        finally
+        {
+            if (Directory.Exists(relocated))
+            {
+                Directory.Delete(relocated, recursive: true);
+            }
+        }
+    }
+
     // ---- shared helpers --------------------------------------------------------------------------------
 
     private static ProcessOwnershipOptions NewOptions(
@@ -2190,4 +2578,46 @@ public sealed class ProcessOwnershipTests
 
         return -1;
     }
+
+    private static void CopyDirectory(string source, string destination)
+    {
+        Directory.CreateDirectory(destination);
+        foreach (string file in Directory.EnumerateFiles(source))
+        {
+            File.Copy(file, Path.Combine(destination, Path.GetFileName(file)));
+        }
+
+        foreach (string directory in Directory.EnumerateDirectories(source))
+        {
+            CopyDirectory(directory, Path.Combine(destination, Path.GetFileName(directory)));
+        }
+    }
+
+    private static object GetTypedOwnershipSnapshot(object owner)
+    {
+        foreach (string name in new[] { "OwnershipSnapshot", "ResourceSnapshot", "ConstructionSnapshot" })
+        {
+            PropertyInfo? property = owner.GetType().GetProperty(name,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (property?.GetValue(owner) is object snapshot)
+            {
+                return snapshot;
+            }
+        }
+
+        throw new Xunit.Sdk.XunitException("No typed ownership snapshot is observable.");
+    }
+
+    private static object GetRequiredProperty(object owner, string name) =>
+        owner.GetType().GetProperty(name,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(owner)
+        ?? throw new Xunit.Sdk.XunitException($"Missing required typed property {name} on {owner.GetType().Name}.");
+
+    private static nint ConvertToNativeInt(object value) => value switch
+    {
+        nint native => native,
+        _ => (nint)Convert.ToInt64(value, CultureInfo.InvariantCulture),
+    };
+
+    private static long ToInt64(object value) => Convert.ToInt64(value, CultureInfo.InvariantCulture);
 }

@@ -2,7 +2,7 @@
 
 ## State
 
-`Blocked`
+`Building`
 
 ## Authority and frozen state
 
@@ -604,6 +604,9 @@ If focused verification remains red after the bounded repair candidate, or indep
 in ownership, release retry, lifecycle epochs, family proof, terminal serialization, or staging, return I100-A to
 `Blocked` with the branch preserved. If green and independently clean, stop at `ReviewRequired` for Ahmad. Do not run
 the final gate, merge, close GH-106, or begin GH-107 before Ahmad approves.
+
+The owner authorized implementation of this exact frozen plan at `50b70e4`. No broader architecture, path, test
+budget, final gate, merge, or GH-107 work is authorized.
 
 ### Owner platform-floor amendment
 

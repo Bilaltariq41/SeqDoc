@@ -491,3 +491,6 @@ retryable family proof, one in-flight terminal attempt with later failed-attempt
 `StageProcessOwnershipStub` MSBuild contract, a six-group test cap retaining all 70 tests, three new partial-file paths,
 and the required Blocked stop rule. This publication does not itself authorize implementation, the final gate, merge,
 or GH-107.
+
+The owner subsequently authorized implementation of the exact frozen plan at `50b70e4`; I100-A returned to Active
+under its six-group test cap and mandatory Blocked stop rule.
