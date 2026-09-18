@@ -83,12 +83,28 @@
   "expectedGithubState": "OPEN",
   "id": "GH-57",
   "kind": "github-issue",
-  "lifecycle": "ResolvingFindings",
-  "lifecycleLabel": "resolving-findings",
+  "lifecycle": "ReviewRequired",
+  "lifecycleLabel": "review-required",
   "nextAction": "Add only the F12 two-peer closeout revalidation tests, run focused verification, and request independent rereview; do not run the final gate before approval.",
   "number": 57,
   "owner": "ahmad",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
+  "review": {
+    "author": "AhmadKrarha",
+    "epoch": "6",
+    "executionId": "GH-57:G57-TPO",
+    "findings": [
+      "Fixed: F12 realistic two-peer closeout revalidation coverage"
+    ],
+    "peer": "Abood-essa",
+    "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
+    "requestHead": "443b17b7ffb836547709fa2476f1d8db5437745a"
+  },
+  "reviewEpoch": "6",
+  "reviewFindings": [
+    "Fixed: F12 realistic two-peer closeout revalidation coverage"
+  ],
+  "reviewPeer": "Abood-essa",
   "schemaVersion": 1,
   "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
