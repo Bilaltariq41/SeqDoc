@@ -22,6 +22,10 @@ execution, status, parallel-workstreams, labels, or capsule state. `Ready` permi
 the frozen contract/baseline; `Active` means that implementation has started. Both authorize implementation, while at
 most one selected record authorizes the root Orchestrator; zero selected records represent an idle Orchestrator.
 
+For transactional preparation, activation, review handoff, closeout, promotion, recovery, and bounded GitHub projection,
+follow [`docs/project/project-operations.md`](docs/project/project-operations.md). Normalize and lease claims before
+parallel work; never persist absolute worktree paths or raw session data.
+
 Issue bodies and comments are specification and amendment inputs; accepted changes belong in the current issue,
 checkpoint, and risk evidence. The canonical work-item records remain lifecycle and execution authority. Update
 applicable canonical records when the current outcome requires it; preserve strategy files unless genuinely needed.

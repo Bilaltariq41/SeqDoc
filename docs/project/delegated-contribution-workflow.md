@@ -9,6 +9,10 @@ one focused verification command. Findings continue on the same PR; the worker r
 necessary acceptance work until the latest head is ready. Block only for an external dependency, conflicting active
 work, or T4 action.
 
+Use the transactional `handoff` packet for the review boundary. It authenticates the observed PR head and author,
+rejects the contributor as peer, and records the review epoch atomically. `closeout` consumes the focused/final receipts,
+finding dispositions, merge identity, attribution, and required peer evidence in one transaction.
+
 For each finding, record a repair trace:
 
 | Finding | Production repair | Producer/boundary test | Observable assertion | Residual boundary |

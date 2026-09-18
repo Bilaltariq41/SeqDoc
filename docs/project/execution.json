@@ -2,9 +2,10 @@
   "activeCheckpointId": null,
   "activeCheckpointPath": null,
   "activePlanPath": null,
+  "executions": [],
   "generatedBy": "tools/governance/work_state.py",
   "mode": "idle",
   "nextAction": "No work item is selected.",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "sourceId": null
 }

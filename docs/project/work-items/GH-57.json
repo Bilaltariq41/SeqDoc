@@ -1,23 +1,41 @@
 {
-  "baseline": "3c86171e13f2001824289e5cda79276ba78d6169",
-  "branch": null,
-  "checkpointId": null,
-  "checkpointPath": null,
+  "baseline": "ab6e3e1cf16213ee5346506b16949fa32c4ddfa4",
+  "branch": "feature/issue-57-transactional-project-operations",
+  "checkpointId": "G57-TPO",
+  "checkpointPath": "docs/work/governance/G57-TPO",
   "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
   "dependencies": [],
   "expectedGithubState": "OPEN",
   "id": "GH-57",
   "kind": "github-issue",
-  "lifecycle": "Ready",
-  "lifecycleLabel": "ready",
-  "nextAction": "Any contributor may claim this item, create or update its checkpoint capsule, self-review readiness, and implement without a separate readiness PR.",
+  "lifecycle": "Blocked",
+  "lifecycleLabel": "blocked",
+  "nextAction": "Preserve PR #110 and obtain separate authorization for one F13 regression and casefolded identity repair, focused verification, and independent rereview. Do not run the final gate.",
   "number": 57,
-  "owner": "unassigned",
-  "pr": null,
+  "owner": "ahmad",
+  "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
   "schemaVersion": 1,
   "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
-  "statusReason": "Ready and contributor-claimable. Any contributor may record and freeze the baseline, create or update the capsule, self-review readiness, and implement without a separate readiness PR or human approval. Includes transactional project operations, repository-native handoff, and parallel execution evidence.",
+  "statusReason": "F13 remains outside the F12 test-only takeover scope: casing-only variants can bypass the distinct non-author peer check.",
+  "takeover": {
+    "authorizationHead": "d3453f08067bc9dedd159a8b66bf082cbd070cac",
+    "authorizationReceipts": [
+      {
+        "authorizationDigest": "315bb6135d9e82057afe06f087ea80fdd2ba356baeb1b0e21543648374b07c12",
+        "authorizedBy": "Abood-essa",
+        "url": "https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5716001245"
+      },
+      {
+        "authorizationDigest": "57cce3bde30d37dd64f7545bb3dedca1a7c2ffebfff74b5e081bd990109f684f",
+        "authorizedBy": "Qhatahet",
+        "url": "https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5715444371"
+      }
+    ],
+    "mode": "two-peer",
+    "reason": "Abood-essa and Qhatahet authorized the F12 test-only bounded takeover through exact authenticated Issue #57 receipts.",
+    "startHead": "d3453f08067bc9dedd159a8b66bf082cbd070cac"
+  },
   "title": "[Governance] Transactional project operations and repository-native handoff",
   "track": "governance"
 }

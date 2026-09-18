@@ -4,6 +4,10 @@ The typed record under `docs/project/work-items/` is the sole current-state auth
 specification authority. GitHub labels, `execution.json`, status, parallel topology, and checkpoint state are generated
 projections or historical explanation; none is manual lifecycle authority.
 
+For repository operations, readiness also includes a complete checkpoint capsule and explicit typed path, fixture,
+governance-tool, and exclusive-resource claims. Claims are normalized before conflict checks; activation records an
+observed baseline, HEAD, branch, clean worktree, and stable execution identity.
+
 ## Readiness audit
 
 An eligible unassigned contributor may claim the item, record and freeze the baseline and checkpoint capsule on their

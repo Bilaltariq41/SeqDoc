@@ -1,0 +1,123 @@
+# Repository project operations
+
+The registry in `docs/project/work-items/` is authoritative. `execution.json`, checkpoint state, and GitHub labels are
+derived views. A fresh clone reconstructs state with `validate`, then `project-execution`; operators must not hand-edit
+those projections. The governance tool accepts only repository-relative claims, normalizes slash style, dot segments,
+and Windows case, and rejects ancestor overlap and absolute paths.
+
+## Authority and permissions
+
+| Operation | Write permission | Source of truth |
+|---|---|---|
+| `prepare`, `activate`, `resume`, `handoff`, `closeout`, `promote`, `recover` | assigned Write collaborator on the branch; `resume` is owner-authorized takeover only | registry and capsule |
+| `validate`, `project-execution --check`, `check-github` | read-only | registry / observed remote |
+| `project` and `sync-github` | maintainer-approved issue-label permission | registry, then remote |
+| T4 access/settings, rulesets, secrets, apps, visibility, transfer, archive/delete, or bypass | owner only | GitHub controls |
+
+Branch protection remains outside this tool. GitHub projection is secondary, preserves unrelated labels, and must fail
+loudly on permission errors, malformed remote data, drift, or partial writes. Tokens, local paths, and session exports
+are never packets or comments.
+
+## Fresh-clone command sequence
+
+```text
+python -B tools/governance/work_state.py validate --root .
+python -B tools/governance/work_state.py project-execution --root . --check
+python -B tools/governance/work_state.py prepare --root . --id GH-57
+python -B tools/governance/work_state.py activate --root . --id ITEM --execution-id EXEC --expected-baseline aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-branch BRANCH --clean --worktree-id WORKTREE --claim path/to/file --dry-run
+python -B tools/governance/work_state.py resume --root . --id ITEM --execution-id EXEC --worktree-id WORKTREE --expected-baseline aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --start-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-branch BRANCH --clean --claim path/to/file --authorization-receipt OWNER_RECEIPT --reason "bounded takeover"
+python -B tools/governance/work_state.py resume --root . --id ITEM --execution-id EXEC --worktree-id WORKTREE --expected-baseline aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --start-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-branch BRANCH --clean --claim path/to/file --authorization-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --peer-authorization-receipt PEER_RECEIPT_1 --peer-authorization-receipt PEER_RECEIPT_2 --reason "bounded takeover"
+python -B tools/governance/work_state.py handoff --root . --id ITEM --execution-id EXEC --pr PR_URL --head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --peer PEER --epoch EPOCH --finding "Fixed: receipt"
+python -B tools/governance/work_state.py closeout --root . --id ITEM --execution-id EXEC --pr PR_URL --head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --peer PEER --findings resolved --focused-receipt FOCUSED --final-receipt FINAL --attribution AUTHOR --merge-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+```
+
+`activate` observes Git directly whenever the root is a checkout and compares supplied values as expectations. Synthetic
+registries must supply equivalent observed evidence. `prepare --scaffold` derives `docs/work/checkpoints/<id>` only
+when identity is absent, or accepts a relative `--checkpoint-id`/`--checkpoint-path`; it rejects absolute, parent, and
+root-level capsule paths and writes the record and placeholder atomically.
+
+## Readiness, claims, and activation
+
+`prepare --id ITEM` validates one complete canonical capsule: objective, targets, non-goals, risks, existing coverage,
+budget, focused and final commands, review boundary, and acceptance proof. Unknown evidence is a blocking placeholder;
+it is not silently inferred. `activate` requires an eligible item, closed dependencies, exact frozen baseline, observed
+HEAD/branch/clean worktree identity, a stable execution and worktree ID, and normalized typed claims. Use `--dry-run`
+first. Claims may cover fixtures, governance tools, and exclusive resources; equal exclusive claims conflict.
+
+`resume` is the sole owner-authorized takeover operation. It accepts only a `Blocked` item, moves it directly to
+`ResolvingFindings`, and observes the actual Git HEAD, branch, and clean status from the checkout. Explicit
+`current_head`, `start_head`, and `next_action` values are required; both heads must be lowercase 40-character SHAs
+equal to the observed HEAD. The branch must match the preserved item branch. A non-empty authorization receipt and
+reason are required, and become the takeover's receipt/reason; `next_action` becomes the selected execution's next
+action. The operation preserves the item's baseline, owner, branch, checkpoint, contract, and PR, rejects any
+selected or overlapping execution (including repeated resume), and atomically writes the registry, capsule, and
+execution projection. It does not activate dependents, write GitHub, change lifecycle outside this transition, or run
+the final gate.
+
+Each operation validates the complete candidate before writing. Payloads are sorted and journaled with a deterministic
+generation identity. In-process failures restore every replaced file. `recover` never overwrites a newer generation;
+when evidence is insufficient it refuses and tells the operator to inspect the journal and rerun or restore from version
+control.
+
+## Parallel work and review
+
+Execution instances are independent records in the sorted `executions` projection. Legacy root selection fields remain
+for compatibility. Disjoint claims may run concurrently; closeout releases only its instance. `handoff` requires the
+authenticated current PR author, current head, non-author peer, and a review epoch; stale SHA and author-as-peer are
+rejected. Findings are sorted and must receive deterministic dispositions before closure.
+
+`handoff` invokes authenticated `gh pr view` internally and requires an open, non-draft PR, current head, observed author, and a non-author peer. The first handoff from `Active` uses epoch 1; a repair handoff from `ResolvingFindings` requires a larger integer epoch, an advanced PR head, the same peer (or explicit `--allow-peer-change`), and complete dispositions stored in sorted order. It replaces the authenticated `requestHead` boundary and returns the capsule to `ReviewRequired`. Observed caller fields are test seams only; handoff requests review and does not claim approval.
+
+`closeout` invokes authenticated PR and paginated review observations, requiring a merged PR, its actual final head and merge SHA, and an exact-final-head `APPROVED` review by the stored peer. The handoff request head is retained only as a historical boundary; the caller's closeout head must match the authenticated final head. It requires matching execution/PR identity, focused and final receipts, attribution, resolved findings,
+and review evidence. It closes atomically and either leaves the root idle or selects an already-complete recipient.
+`resume` has two mutually exclusive authorization routes: one authenticated owner receipt, or exactly two repeated
+authenticated peer receipts plus `authorization_head`. Peer receipts are same-repository, same-issue human comments with
+OWNER/MEMBER/COLLABORATOR association and an exact normalized marker bound to item, checkpoint, execution, baseline,
+authorization head, and authenticated login. Comment IDs and logins must be distinct, neither peer may author the
+item PR, and the authorization head must be an authenticated local ancestor of the observed start head. Persisted
+takeovers use `mode: owner` or `mode: two-peer`; closeout reauthenticates both peer comments, digests, identities, PR
+author, and ancestry. The legacy three-field record remains readable only for the current blocked migration record.
+
+Owner and peer bodies share strict normalization: CRLF and CR become LF; zero or
+one final LF is accepted, but additional final LFs, trailing spaces, blank lines,
+or any other change are rejected. The digest always covers the canonical marker
+with exactly one final LF.
+
+`promote` changes only a blocked or draft dependent to `Ready` after every dependency is `Closed` and its capsule is
+complete; it never activates or selects the dependent.
+
+## Recovery, cancellation, and projection
+
+### Authenticated takeover and closeout
+
+`resume` re-fetches an owner Issue-comment receipt from the same repository and
+issue. The authenticated login must equal the repository owner from the validated
+`owner/repo` argument, compared case-insensitively; the assigned contributor in
+`item.owner` is not used. The association must be `OWNER`, and the normalized
+body must exactly bind item, checkpoint, execution, baseline, actual start head,
+and operation. The exact authenticated login is stored with the URL,
+SHA-256 body digest, authenticated login, reason, and start head. `closeout`
+revalidates that receipt and digest. Paginated reviews use `gh api --paginate
+--slurp`, require page arrays, flatten them, and accept only a matching
+`User` reviewer. Closeout attribution must match both authenticated PR author
+and stored handoff author; only the authenticated author is persisted.
+
+The pre-existing three-field takeover record is readable for migration only;
+it is not closeout-authorizable and must be replaced by an authenticated
+`Blocked` -> resume cycle before rereview or the final gate.
+
+Cancellation uses the legal `transition` operation and follows the same journaled transaction. An interrupted process
+leaves its untracked worktree-local journal for `recover`; a successfully rolled-back operation removes it. Run
+`project --dry-run` to show exact bounded label commands; apply only
+with the required permission. The workflow validates on pull requests and synchronizes labels only after a protected
+push to `main`; it never mutates pull-request heads.
+
+Review identities and attribution are supplied from authenticated observed data, not PR text. Periodically review the
+Write collaborator list, GitHub token scopes, branch protection, and owner-only T4 access; remove unused access and
+confirm that projection credentials remain least-privilege.
+
+`project --dry-run` first reads issue state, lifecycle labels, and comments. A state mismatch aborts before any write.
+Marker comments use an exact `seqdoc-state-v1:<item>:<lifecycle>` marker; start and closure packets are distinct and only an exact duplicate is suppressed. Unrelated labels are never
+removed. `sync-github` retains lifecycle-label creation and update behavior. Neither operation changes registry files or
+PR heads. `recover` accepts only a fully validated relative-path journal whose current bytes match an original or target
+hash; malformed, outside-root, newer, or partially described journals remain untouched and require manual inspection.
