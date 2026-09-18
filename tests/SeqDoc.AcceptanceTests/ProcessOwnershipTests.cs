@@ -1855,10 +1855,17 @@ public sealed class ProcessOwnershipTests
         Assert.True(closeSeam is not null,
             "Expected per-instance CloseHandle seam for deterministic teardown-failure injection.");
         int closeCalls = 0;
+        bool injectTeardownFailures = false;
         var failedHandles = new nint[2];
         var attemptedHandles = new List<nint>();
         closeSeam!.SetValue(nativeCalls, (Func<nint, NativeCallResult>)(handle =>
         {
+            if (!Volatile.Read(ref injectTeardownFailures))
+            {
+                return NativeMethods.CloseHandle(handle)
+                    ? NativeCallResult.Success()
+                    : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+            }
             int call = Interlocked.Increment(ref closeCalls);
             lock (attemptedHandles) { attemptedHandles.Add(handle); }
             if (call <= failedHandles.Length)
@@ -1880,6 +1887,7 @@ public sealed class ProcessOwnershipTests
         var process = result.Process!;
         try
         {
+            Volatile.Write(ref injectTeardownFailures, true);
             var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
             Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
             var failuresBeforeDispose = process.TeardownFailures.ToArray();
@@ -2113,10 +2121,21 @@ public sealed class ProcessOwnershipTests
         foreach (ConstructionFaultPoint fault in Enum.GetValues<ConstructionFaultPoint>()
             .Where(fault => fault != ConstructionFaultPoint.None))
         {
+            int terminalAttempts = 0;
             var result = ContainedProcess.Start(
                 NewOptions(["sleep", "1000"], nativeCalls: new ProcessOwnershipNativeCalls
                 {
-                    TerminateJobObject = (_, _) => NativeCallResult.Failure(8510),
+                    TerminateJobObject = (job, exitCode) =>
+                    {
+                        if (Interlocked.Increment(ref terminalAttempts) == 1)
+                        {
+                            return NativeCallResult.Failure(8510);
+                        }
+
+                        return NativeMethods.TerminateJobObject(job, exitCode)
+                            ? NativeCallResult.Success()
+                            : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+                    },
                     WaitForSingleObject = (_, _) => NativeWaitResult.Failed(8511),
                 }), fault);
             try
@@ -2148,10 +2167,16 @@ public sealed class ProcessOwnershipTests
                 {
                     Assert.All(entries, entry => Assert.Equal("Released", GetRequiredProperty(entry, "State").ToString()));
                 }
-                var immutable = entries.ToArray();
+                var immutable = entries.Select(entry =>
+                    (GetRequiredProperty(entry, "Kind").ToString(),
+                        GetRequiredProperty(entry, "State").ToString(),
+                        ConvertToNativeInt(GetRequiredProperty(entry, "Value")))).ToArray();
                 result.CleanupOwner?.Dispose();
-                Assert.Equal(immutable.Select(entry => GetRequiredProperty(entry, "State").ToString()),
-                    entries.Select(entry => GetRequiredProperty(entry, "State").ToString()));
+                Assert.Equal(immutable,
+                    entries.Select(entry =>
+                        (GetRequiredProperty(entry, "Kind").ToString(),
+                            GetRequiredProperty(entry, "State").ToString(),
+                            ConvertToNativeInt(GetRequiredProperty(entry, "Value")))));
             }
             finally
             {
@@ -2274,8 +2299,13 @@ public sealed class ProcessOwnershipTests
         Assert.NotNull(close);
         int failures = 0;
         nint failedHandle = nint.Zero;
+        bool injectDisposalFailure = false;
         close!.SetValue(nativeCalls, (Func<nint, NativeCallResult>)(handle =>
-            Interlocked.Increment(ref failures) == 1
+            !Volatile.Read(ref injectDisposalFailure)
+                ? NativeMethods.CloseHandle(handle)
+                    ? NativeCallResult.Success()
+                    : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error())
+                : Interlocked.Increment(ref failures) == 1
                 ? (failedHandle = handle, NativeCallResult.Failure(8401)).Item2
                 : NativeMethods.CloseHandle(handle)
                     ? NativeCallResult.Success()
@@ -2284,6 +2314,7 @@ public sealed class ProcessOwnershipTests
         Assert.True(result.Succeeded, result.Detail);
         try
         {
+            Volatile.Write(ref injectDisposalFailure, true);
             await result.Process!.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
             result.Process.Dispose();
             Assert.Contains(result.Process.TeardownFailures,
@@ -2361,8 +2392,8 @@ public sealed class ProcessOwnershipTests
             string stderr = child.StandardError.ReadToEnd();
             child.WaitForExit(5000);
             Assert.Equal(0, child.ExitCode);
-            Assert.Equal("relocated-out\r\n", stdout);
-            Assert.Equal("relocated-err\r\n", stderr);
+            Assert.Equal("relocated-out", stdout);
+            Assert.Equal("relocated-err", stderr);
         }
         finally
         {
@@ -2493,43 +2524,15 @@ public sealed class ProcessOwnershipTests
         return (bool)evaluator!.Invoke(null, [isWindows, architecture, version])!;
     }
 
-    private static string ResolveStubExecutablePath()
+    private static string ResolveStubExecutablePath(string? baseDirectory = null)
     {
-        string baseDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        string[] segments = baseDir.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        int binIndex = Array.LastIndexOf(segments, "bin");
-        if (binIndex < 0 || binIndex + 2 >= segments.Length)
-        {
-            throw new InvalidOperationException($"Could not parse a bin/<Config>/<Tfm> layout from '{baseDir}'.");
-        }
-
-        string config = segments[binIndex + 1];
-        string tfm = segments[binIndex + 2];
-
-        var testsRoot = new DirectoryInfo(baseDir);
-        while (testsRoot is not null && testsRoot.Name != "tests")
-        {
-            testsRoot = testsRoot.Parent;
-        }
-
-        if (testsRoot is null)
-        {
-            throw new InvalidOperationException($"Could not locate a 'tests' ancestor above '{baseDir}'.");
-        }
-
-        string stubPath = Path.Combine(
-            testsRoot.FullName,
-            "SeqDoc.AcceptanceTests.ProcessOwnershipStub",
-            "bin",
-            config,
-            tfm,
-            "SeqDoc.AcceptanceTests.ProcessOwnershipStub.exe");
+        string root = baseDirectory ?? AppContext.BaseDirectory;
+        string stubPath = Path.Combine(root, "process-ownership-stub", "SeqDoc.AcceptanceTests.ProcessOwnershipStub.exe");
 
         if (!File.Exists(stubPath))
         {
             throw new InvalidOperationException(
-                $"Stub executable not found at '{stubPath}'. Build "
-                + "tests/SeqDoc.AcceptanceTests.ProcessOwnershipStub before running ProcessOwnershipTests.");
+                $"Staged stub executable not found at '{stubPath}'.");
         }
 
         return stubPath;

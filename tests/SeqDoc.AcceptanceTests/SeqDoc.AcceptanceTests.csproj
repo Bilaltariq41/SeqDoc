@@ -18,7 +18,20 @@
          PROC_THREAD_ATTRIBUTE_LIST handle-inheritance restriction and job-object completion-port
          buffers in ProcessOwnership.cs. Never set on the stub project. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ProcessOwnershipStubStageDir>$(TargetDir)process-ownership-stub\</ProcessOwnershipStubStageDir>
   </PropertyGroup>
+
+  <Target Name="StageProcessOwnershipStub" AfterTargets="Build" BeforeTargets="VSTest">
+    <PropertyGroup>
+      <ProcessOwnershipStubStageDir>$([System.IO.Path]::GetDirectoryName('$(TargetPath)'))\process-ownership-stub\</ProcessOwnershipStubStageDir>
+    </PropertyGroup>
+    <RemoveDir Directories="$(ProcessOwnershipStubStageDir)" />
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\SeqDoc.AcceptanceTests.ProcessOwnershipStub\SeqDoc.AcceptanceTests.ProcessOwnershipStub.csproj"
+             Targets="Build"
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);OutputPath=$([System.IO.Path]::GetFullPath('$(ProcessOwnershipStubStageDir)'));AppendTargetFrameworkToOutputPath=false;AppendRuntimeIdentifierToOutputPath=false" />
+    <Error Condition="!Exists('$(ProcessOwnershipStubStageDir)SeqDoc.AcceptanceTests.ProcessOwnershipStub.exe')"
+           Text="The staged ProcessOwnership stub apphost was not produced." />
+  </Target>
 
   <ItemGroup>
     <Compile Include="..\SeqDoc.Testing\ExternalCorpusResolver.cs" Link="ExternalCorpusResolver.cs" />
