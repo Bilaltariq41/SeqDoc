@@ -653,6 +653,19 @@ source-tree staging directories remain absent. The takeover stop rule returned I
 preserved. No further repair, verification, transfer, final gate, merge, or GH-107 work is authorized without a new
 owner decision.
 
+The owner authorized one final bounded takeover limited to the current IDE0011 brace errors and the two remaining
+descendant-family focused failures. Focused verification must reach 76/76 before independent review; otherwise I100-A
+returns to Blocked. The final gate and GH-107 remain prohibited.
+
+#### Final bounded takeover stop
+
+The isolated SDK 10.0.302 focused command completed without timeout at 75 passed, 1 failed, 0 skipped. The direct live
+grandchild case is now green. `ParentExitWithDescendantPipeClosureStillTerminatesFamilyAndProvesActiveZero` remains red:
+descendant pipe EOF still suppresses the required family-active classification and terminal enforcement. No matching
+test/stub process remained at inspection, generated source-tree staging directories remain absent, and `git diff
+--check` passed. The explicit stop condition returned I100-A to Blocked with the complete worktree preserved. No
+independent review, final gate, merge, or GH-107 work ran.
+
 ### Owner platform-floor amendment
 
 Abood selected the evidence-backed repair: require Windows 10 / Windows Server 2016 x64 or newer and use

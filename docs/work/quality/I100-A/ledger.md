@@ -526,3 +526,12 @@ The fresh takeover reached a verified 74/76 before two descendant-family classif
 drain-before-proof tracking edits are unverified and currently fail IDE0011 at `ProcessOwnership.cs:1605-1606`. No
 matching live test/stub process or source-tree staging output remained at inspection. I100-A returned to Blocked; no
 independent review or final gate ran.
+
+The owner authorized one final bounded takeover for the brace errors and two remaining descendant-family failures,
+with independent review permitted only after 76/76 focused verification. No final gate or GH-107 work is authorized.
+
+#### Final bounded takeover stop
+
+Focused verification under isolated SDK 10.0.302 reached 75/76. The only remaining failure is the descendant-closes-
+pipes scenario, where EOF still prevents required family enforcement. The no-red stop rule returned I100-A to Blocked;
+no independent review or final gate ran, and the worktree remains preserved.

@@ -10,14 +10,14 @@
   "kind": "github-issue",
   "lifecycle": "Blocked",
   "lifecycleLabel": "blocked",
-  "nextAction": "Owner decision required. Do not repair the brace errors or unverified descendant classification, run focused/final gates, transfer again, merge, or begin GH-107 without separate authorization.",
+  "nextAction": "Owner decision required. Preserve the single remaining descendant-EOF failure and all partial redesign edits; do not repair, review, run final gate, merge, or begin GH-107 without separate authorization.",
   "number": 106,
   "owner": "abood",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/109",
   "schemaVersion": 1,
   "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/106",
-  "statusReason": "Fresh checkpoint-builder takeover did not reach verified green. Last completed focused run was 74/76 with two descendant-family classification failures; subsequent unverified edits currently fail IDE0011 at ProcessOwnership.cs lines 1605-1606. Stop condition fired; worktree preserved.",
+  "statusReason": "Final bounded takeover focused verification under isolated SDK 10.0.302 reached 75/76. ParentExitWithDescendantPipeClosureStillTerminatesFamilyAndProvesActiveZero remains red: descendant pipe EOF still suppresses required family enforcement. Stop condition fired; worktree preserved.",
   "title": "[Testing] Prove Windows contained-process ownership primitive",
   "track": "quality"
 }
