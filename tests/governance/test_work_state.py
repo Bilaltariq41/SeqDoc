@@ -948,13 +948,41 @@ class WorkStateTests(unittest.TestCase):
 
     def test_closeout_requires_receipts_identity_and_resolved_findings_and_promotes_only_ready_dependents(self):
         root = self.synthetic(second=True, dependency=True)
+        old_item_path = root / "docs/project/work-items/A.json"
+        canonical_item_path = root / "docs/project/work-items/GH-57.json"
+        old_item_path.rename(canonical_item_path)
+        old_checkpoint = root / "docs/work/checkpoints/A"
+        canonical_checkpoint = root / "docs/work/checkpoints/G57-TPO"
+        old_checkpoint.rename(canonical_checkpoint)
+        item_path = canonical_item_path
+        item = json.loads(item_path.read_text(encoding="utf-8"))
+        item.update(id="GH-57", kind="github-issue", number=57, checkpointId="G57-TPO",
+                    checkpointPath="docs/work/checkpoints/G57-TPO", sourceUrl="https://github.com/o/r/issues/57",
+                    pr="https://github.com/o/r/pull/110", expectedGithubState="OPEN")
+        item_path.write_text(ws.dump(item), encoding="utf-8")
+        dependent_path = root / "docs/project/work-items/B.json"
+        dependent = json.loads(dependent_path.read_text(encoding="utf-8"))
+        dependent["dependencies"] = ["GH-57"]
+        dependent_path.write_text(ws.dump(dependent), encoding="utf-8")
         self.assertEqual(ws.validate(root), 0)
-        self.assertEqual(self.activate(root, execution_id="a", claim="src/a")[0], 0)
+        self.assertEqual(self.activate(root, item="GH-57", execution_id="GH-57:G57-TPO", claim="src/a",
+                                       current_branch="feature/a", worktree_id="worktree-gh57")[0], 0)
         h1, h2, h3 = "d"*40, "e"*40, "f"*40
         pr = {"number":110,"url":"https://github.com/o/r/pull/110","state":"OPEN","isDraft":False,
               "author":{"login":"actual-author", "id":"U_kgDODXRwzA", "is_bot":False,
                          "name":"Actual Author", "url":"https://github.com/actual-author"},
               "headRefOid":h1,"mergeCommit":None,"reviewDecision":"APPROVED"}
+        takeover_head = "07319b35ad2d7c1d2ee12f6c1438ad0e13e7afde"
+        takeover_urls = ["https://github.com/o/r/issues/57#issuecomment-5713964023",
+                         "https://github.com/o/r/issues/57#issuecomment-5714397001"]
+        takeover_logins = ["Abood-essa", "Qhatahet"]
+        def takeover_comment(url, login, association):
+            body = (f"SEQDOC PEER TAKEOVER DECISION v1\nItem: GH-57\nCheckpoint: G57-TPO\nExecution: GH-57:G57-TPO\nBaseline: {'a'*40}\n"
+                    f"Blocked head: {takeover_head}\nPeer: {login}\nDecision: authorize bounded maintainer takeover\n")
+            if login == "Abood-essa":
+                body = body[:-1]
+            return {"html_url":url, "issue_url":"https://api.github.com/repos/o/r/issues/57",
+                    "user":{"login":login, "type":"User"}, "author_association":association, "body":body}
         def gh_view(merged=False, head=h2, review_state="APPROVED", review_head=h2, review_peer="reviewer", merge_sha="a"*40, review_type="User", malformed_reviews=False, state=None, omit=()):
             view = dict(pr, state="MERGED" if merged else "OPEN", headRefOid=head, mergeCommit={"oid":merge_sha} if merged else None)
             if state is not None:
@@ -968,18 +996,31 @@ class WorkStateTests(unittest.TestCase):
                        [{"user":user, "state":review_state, "commit_id":review_head}]]
             def run(command, *args, **kwargs):
                 text = " ".join(command) if isinstance(command, (list, tuple)) else str(command)
+                if "merge-base" in text:
+                    return type("R",(),{"stdout":"", "returncode":0})()
+                if "issues/comments/5713964023" in text:
+                    return type("R",(),{"stdout":json.dumps(takeover_comment(takeover_urls[0], takeover_logins[0], "COLLABORATOR"))})()
+                if "issues/comments/5714397001" in text:
+                    return type("R",(),{"stdout":json.dumps(takeover_comment(takeover_urls[1], takeover_logins[1], "MEMBER"))})()
                 return type("R",(),{"stdout":json.dumps(reviews if "reviews" in text else view)})()
             return run
         with patch("subprocess.run", side_effect=gh_view(head=h1, review_head=h1)) as run:
-            handoff_code, _ = self.operation(root, "handoff", id="A", execution_id="a", pr="https://github.com/o/r/pull/110",
+            handoff_code, _ = self.operation(root, "handoff", id="GH-57", execution_id="GH-57:G57-TPO", pr="https://github.com/o/r/pull/110",
                                              head=h1, observed_head="spoofed", observed_author="spoofed",
                                              peer="reviewer", epoch="1", finding=["Fixed: focused verification receipt"])
         self.assertEqual(handoff_code, 0)
         self.assertEqual(ws.validate(root), 0)
-        handoff_record = json.loads((root / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
+        handoff_record = json.loads((root / "docs/project/work-items/GH-57.json").read_text(encoding="utf-8"))
         self.assertEqual(handoff_record["review"]["requestHead"], h1)
+        canonical_body = lambda login: (f"SEQDOC PEER TAKEOVER DECISION v1\nItem: GH-57\nCheckpoint: G57-TPO\nExecution: GH-57:G57-TPO\nBaseline: {'a'*40}\n"
+                                        f"Blocked head: {takeover_head}\nPeer: {login}\nDecision: authorize bounded maintainer takeover\n")
+        takeover_records = [{"url":url, "authorizationDigest":__import__("hashlib").sha256(canonical_body(login).encode()).hexdigest(), "authorizedBy":login}
+                            for url, login in zip(takeover_urls, takeover_logins)]
+        handoff_record["takeover"] = {"mode":"two-peer", "authorizationHead":takeover_head,
+                                      "authorizationReceipts":takeover_records, "reason":"peer-approved takeover", "startHead":h2}
+        (root / "docs/project/work-items/GH-57.json").write_text(ws.dump(handoff_record), encoding="utf-8")
         for finding in ("open", "unresolved"):
-            self.assertNotEqual(self.operation(root, "closeout", id="A", execution_id="a", findings=finding)[0], 0)
+            self.assertNotEqual(self.operation(root, "closeout", id="GH-57", execution_id="GH-57:G57-TPO", findings=finding)[0], 0)
         for variant, caller_head in ((dict(merged=False), h2), (dict(merged=True, merge_sha="b"*40), h2),
                                       (dict(merged=True, review_head=h1), h2),
                                       (dict(merged=True, review_head=h3), h2),
@@ -991,40 +1032,74 @@ class WorkStateTests(unittest.TestCase):
                                       (dict(merged=True, malformed_reviews=True), h2),
                                       (dict(merged=True, state="OPEN"), h2), (dict(merged=True, state="CLOSED"), h2)):
             with patch("subprocess.run", side_effect=gh_view(**variant)):
-                rejected, _ = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
+                 rejected, _ = self.operation(root, "closeout", id="GH-57", execution_id="GH-57:G57-TPO", findings="resolved",
                                                focused_receipt="focused", final_receipt="final", attribution="actual-author",
                                               pr="https://github.com/o/r/pull/110", head=caller_head,
                                               observed_head="spoofed", peer="reviewer", merge_sha="a"*40)
             self.assertNotEqual(rejected, 0, variant)
         for field in ("number", "state", "isDraft", "author", "headRefOid", "mergeCommit", "reviewDecision"):
             with patch("subprocess.run", side_effect=gh_view(merged=True, omit=(field,))):
-                rejected, _ = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
+                rejected, _ = self.operation(root, "closeout", id="GH-57", execution_id="GH-57:G57-TPO", findings="resolved",
                                               focused_receipt="focused", final_receipt="final", attribution="actual-author",
                                               pr="https://github.com/o/r/pull/110", head=h2,
                                               observed_head="spoofed", peer="reviewer", merge_sha="a"*40)
             self.assertNotEqual(rejected, 0, field)
         with patch("subprocess.run", side_effect=gh_view(merged=True)):
-            rejected, _ = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
+            rejected, _ = self.operation(root, "closeout", id="GH-57", execution_id="GH-57:G57-TPO", findings="resolved",
                                           focused_receipt="focused", final_receipt="final", attribution="actual-author",
                                           repository="other/r", pr="https://github.com/o/r/pull/110", head=h2,
                                           observed_head="spoofed", peer="reviewer", merge_sha="a"*40)
         self.assertNotEqual(rejected, 0)
+        for unavailable in (False, True):
+            before = {p.relative_to(root).as_posix():p.read_bytes() for p in root.rglob("*") if p.is_file()}
+            normal_run = gh_view(merged=True)
+            def takeover_run(command, *args, **kwargs):
+                text = " ".join(command)
+                if "issues/comments/5713964023" in text:
+                    if unavailable:
+                        raise subprocess.CalledProcessError(1, command)
+                    edited = takeover_comment(takeover_urls[0], takeover_logins[0], "COLLABORATOR")
+                    edited["body"] += "edited"
+                    return type("R",(),{"stdout":json.dumps(edited)})()
+                return normal_run(command, *args, **kwargs)
+            with patch("subprocess.run", side_effect=takeover_run):
+                rejected, _ = self.operation(root, "closeout", id="GH-57", execution_id="GH-57:G57-TPO", findings="resolved",
+                                              focused_receipt="focused", final_receipt="final", attribution="actual-author",
+                                              pr="https://github.com/o/r/pull/110", head=h2,
+                                              observed_head="spoofed", peer="reviewer", merge_sha="a"*40)
+            self.assertNotEqual(rejected, 0)
+            after = {p.relative_to(root).as_posix():p.read_bytes() for p in root.rglob("*") if p.is_file()}
+            self.assertEqual(before, after)
         with patch("subprocess.run", side_effect=gh_view(merged=True)):
-            close_code, close_packet = self.operation(root, "closeout", id="A", execution_id="a", findings="resolved",
+            close_code, close_packet = self.operation(root, "closeout", id="GH-57", execution_id="GH-57:G57-TPO", findings="resolved",
                                                     focused_receipt="focused", final_receipt="final", attribution="actual-author",
                                                     pr="https://github.com/o/r/pull/110", head=h2,
                                                    observed_head="spoofed", peer="reviewer", merge_sha="a" * 40)
         self.assertEqual(close_code, 0, close_packet)
         self.assertNotRegex(close_packet, r"(?i)([A-Z]:\\|/Users/|/home/|token|password|session|timestamp|2026-)")
         dependent = json.loads((root / "docs/project/work-items/B.json").read_text(encoding="utf-8"))
-        closed = json.loads((root / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
+        closed = json.loads((root / "docs/project/work-items/GH-57.json").read_text(encoding="utf-8"))
         self.assertEqual(closed.get("claims"), [])
-        self.assertEqual(closed["closeout"], {"executionId":"a", "pr":"https://github.com/o/r/pull/110",
+        self.assertEqual(closed["closeout"], {"executionId":"GH-57:G57-TPO", "pr":"https://github.com/o/r/pull/110",
                                                "head":h2, "mergeSha":"a"*40, "focused":"focused",
-                                                "final":"final", "attribution":"actual-author", "findings":["resolved"]})
+                                                 "final":"final", "attribution":"actual-author", "findings":["resolved"]})
+        self.assertEqual(closed["takeover"]["mode"], "two-peer")
+        self.assertEqual(closed["takeover"]["authorizationHead"], takeover_head)
+        self.assertEqual(closed["takeover"]["authorizationReceipts"], takeover_records)
+        self.assertEqual(closed["id"], "GH-57")
+        self.assertEqual(closed["checkpointId"], "G57-TPO")
+        self.assertEqual(closed["checkpointPath"], "docs/work/checkpoints/G57-TPO")
+        self.assertEqual(closed["pr"], "https://github.com/o/r/pull/110")
+        self.assertEqual(closed["closeout"]["head"], h2)
+        self.assertEqual(closed["closeout"]["mergeSha"], "a"*40)
+        self.assertEqual(closed["closeout"]["attribution"], "actual-author")
+        self.assertNotIn("executionId", closed)
+        self.assertNotIn("worktreeId", closed)
+        self.assertEqual(closed["claims"], [])
+        self.assertNotIn("review", closed)
         self.assertNotEqual(dependent.get("lifecycle"), "Active")
         self.assertEqual(dependent.get("claims"), None)
-        self.assertIn("`Closed`", (root / "docs/work/checkpoints/A/checkpoint.md").read_text(encoding="utf-8"))
+        self.assertIn("`Closed`", (root / "docs/work/checkpoints/G57-TPO/checkpoint.md").read_text(encoding="utf-8"))
         self.assertEqual(ws.validate(root), 0)
         b_capsule = root / "docs/work/checkpoints/B/checkpoint.md"
         complete_b = b_capsule.read_text(encoding="utf-8")

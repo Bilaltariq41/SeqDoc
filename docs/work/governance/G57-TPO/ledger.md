@@ -142,3 +142,12 @@ gate is claimed.
   positive PR numbers are not required to equal issue numbers. Authenticated PR observation separately validates its
   observed number against the PR URL, while all repository, receipt, and fail-closed checks remain intact.
 - This is a repair disposition only; no rereview or final gate is claimed.
+
+## F12 receipt revalidation repair
+
+- F12: **Fixed** — fresh exact peer receipts `5715444371` and `5716001245` are bound to blocked head `d3453f0`.
+  Authenticated resume at `d3453f0` was committed as `c4c7e7c`.
+- F12 adds realistic `GH-57`/`G57-TPO`/`GH-57:G57-TPO`, Issue #57/PR #110 successful two-peer closeout
+  revalidation, plus edited/deleted receipt complete byte-snapshot rejection coverage.
+- No production code changed. Focused verification: **28 passed, 1 platform skip**.
+- This is a repair disposition only; no independent rereview or final gate is claimed.
