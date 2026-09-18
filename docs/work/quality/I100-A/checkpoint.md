@@ -636,6 +636,23 @@ No matching test/stub process remained running when checked, and both generated 
 absent. I100-A is Blocked with the unverified worktree preserved; no further command, transfer, final gate, merge, or
 GH-107 work is authorized without a new owner decision.
 
+The owner authorized a fresh checkpoint-builder takeover of the preserved unverified worktree. Scope is limited to the
+two drain/family classification failures and the two failed-close ledger ownership/snapshot failures. The fresh owner
+must inspect rather than trust prior edits, run focused verification, and proceed to independent review only if 76/76
+is green. Remaining red or a new High safety finding returns I100-A to Blocked. The final gate and GH-107 remain
+prohibited.
+
+#### Fresh takeover stop
+
+The fresh checkpoint-builder improved the last completed focused result to 74 passed, 2 failed, 0 skipped. Both
+remaining failures were descendant-family semantics: direct wait against a live grandchild returned `None` instead of
+`ProcessFailed`, and descendant pipe EOF was mistaken for family exit. The owner then added unverified drain-completion
+tracking and post-proof classification changes; the current tree does not compile because IDE0011 requires braces at
+`ProcessOwnership.cs` lines 1605-1606. No matching SeqDoc test/stub process remained at inspection, and generated
+source-tree staging directories remain absent. The takeover stop rule returned I100-A to Blocked with the worktree
+preserved. No further repair, verification, transfer, final gate, merge, or GH-107 work is authorized without a new
+owner decision.
+
 ### Owner platform-floor amendment
 
 Abood selected the evidence-backed repair: require Windows 10 / Windows Server 2016 x64 or newer and use

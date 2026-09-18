@@ -10,14 +10,14 @@
   "kind": "github-issue",
   "lifecycle": "Blocked",
   "lifecycleLabel": "blocked",
-  "nextAction": "Owner decision required. Do not continue or transfer the unverified candidate, run focused/final gates, merge, or begin GH-107 without separate authorization. Preserve all partial files and evidence.",
+  "nextAction": "Owner decision required. Do not repair the brace errors or unverified descendant classification, run focused/final gates, transfer again, merge, or begin GH-107 without separate authorization.",
   "number": 106,
   "owner": "abood",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/109",
   "schemaVersion": 1,
   "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/106",
-  "statusReason": "The owner-authorized bounded continuation did not achieve verified green: last focused run was 72/76 with four failures in drain-family classification and failed-close ledger retention; later ledger retry edits are unverified. Stop condition fired; worktree preserved.",
+  "statusReason": "Fresh checkpoint-builder takeover did not reach verified green. Last completed focused run was 74/76 with two descendant-family classification failures; subsequent unverified edits currently fail IDE0011 at ProcessOwnership.cs lines 1605-1606. Stop condition fired; worktree preserved.",
   "title": "[Testing] Prove Windows contained-process ownership primitive",
   "track": "quality"
 }

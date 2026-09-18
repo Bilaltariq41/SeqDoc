@@ -515,3 +515,14 @@ classifications and two failed-close ownership/snapshot assertions. The owner th
 before exhausting the continuation. Generated source-tree staging directories were removed and no matching live
 process remained at inspection. The mandatory stop rule returned I100-A to Blocked with the partial worktree preserved;
 no independent review or final gate ran.
+
+The owner authorized a fresh checkpoint-builder takeover limited to the four verified failures on the preserved
+worktree. The takeover is bound to focused verification first and the same red/new-High Blocked stop rule; no final
+gate or GH-107 work is authorized.
+
+#### Fresh takeover stop
+
+The fresh takeover reached a verified 74/76 before two descendant-family classification failures. Its later
+drain-before-proof tracking edits are unverified and currently fail IDE0011 at `ProcessOwnership.cs:1605-1606`. No
+matching live test/stub process or source-tree staging output remained at inspection. I100-A returned to Blocked; no
+independent review or final gate ran.
