@@ -508,6 +508,9 @@ public sealed class ProcessOwnershipTests
         var result = ContainedProcess.Start(NewOptions(["sleep", "5000"]));
         Assert.True(result.Succeeded, result.Detail);
         var process = result.Process!;
+        // F1: a faulted first reservation must not poison a later valid wait on this live process.
+        Task<ProcessOwnershipWaitResult> invalidWait = process.WaitAsync(TimeSpan.FromMilliseconds(-2), CancellationToken.None);
+        await Assert.ThrowsAnyAsync<ArgumentOutOfRangeException>(async () => await invalidWait);
         Task<ProcessOwnershipWaitResult> waitTask = process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
 
         process.Dispose();
@@ -1133,6 +1136,33 @@ public sealed class ProcessOwnershipTests
             var result = ContainedProcess.Start(options, ConstructionFaultPoint.AfterProcessCreatedBeforeResume);
 
             Assert.False(result.Succeeded);
+            object snapshot = GetTypedOwnershipSnapshot(result);
+            object stdinParentWrite = ((System.Collections.IEnumerable)GetRequiredProperty(snapshot, "NativeResources"))
+                .Cast<object>()
+                .Single(entry => GetRequiredProperty(entry, "Kind").ToString() == "StdinParentWrite");
+            Assert.True(ToInt64(GetRequiredProperty(stdinParentWrite, "AcquisitionSequence")) > 0);
+            Assert.Equal("Released", GetRequiredProperty(stdinParentWrite, "State").ToString());
+            Assert.Equal(1, Convert.ToInt32(GetRequiredProperty(stdinParentWrite, "Attempts"), CultureInfo.InvariantCulture));
+            Assert.Equal(nint.Zero, ConvertToNativeInt(GetRequiredProperty(stdinParentWrite, "Value")));
+            int stdinReleaseOrder = Convert.ToInt32(GetRequiredProperty(stdinParentWrite, "ReleaseOrder"), CultureInfo.InvariantCulture);
+            Assert.True(stdinReleaseOrder > 0);
+            string[] laterCleanupKinds =
+            [
+                "ProcessHandle", "PrimaryThreadHandle", "EnvironmentBlockBuffer", "CommandLineBuffer",
+                "AttributeListBuffer", "JobListBuffer", "CompletionPortHandle", "JobHandle", "HandleListBuffer",
+                "StderrParentRead", "StdoutParentRead",
+            ];
+            object[] laterCleanup = ((System.Collections.IEnumerable)GetRequiredProperty(snapshot, "NativeResources"))
+                .Cast<object>()
+                .Where(entry => laterCleanupKinds.Contains(GetRequiredProperty(entry, "Kind").ToString(), StringComparer.Ordinal))
+                .ToArray();
+            Assert.Equal(laterCleanupKinds.Length, laterCleanup.Length);
+            Assert.All(laterCleanup, entry =>
+            {
+                int releaseOrder = Convert.ToInt32(GetRequiredProperty(entry, "ReleaseOrder"), CultureInfo.InvariantCulture);
+                Assert.True(stdinReleaseOrder < releaseOrder,
+                    $"StdinParentWrite release order {stdinReleaseOrder} must precede cleanup release {releaseOrder}.");
+            });
             Assert.Equal(ExpectedPartialUnwindOrder, trace);
         }
         finally
@@ -1154,7 +1184,6 @@ public sealed class ProcessOwnershipTests
         "handle list buffer",
         "stderr pipe handle",
         "stdout pipe handle",
-        "stdin pipe handle",
     };
 
     [Fact]
@@ -2312,6 +2341,19 @@ public sealed class ProcessOwnershipTests
             [ToInt64(GetRequiredProperty(familyN1, "OperationId")), true, true])!;
         Assert.True((bool)GetRequiredProperty(accepted, "Accepted"));
 
+        object waitEpoch = coordinator.GetMethod("BeginEpoch")!.Invoke(instance, ["Wait"])!;
+        object drainEpoch = coordinator.GetMethod("BeginEpoch")!.Invoke(instance, ["Drain"])!;
+        object disposeEpoch = coordinator.GetMethod("BeginEpoch")!.Invoke(instance, ["Dispose"])!;
+        object staleWait = coordinator.GetMethod("AcceptCompletion")!.Invoke(instance,
+            [ToInt64(GetRequiredProperty(waitEpoch, "OperationId")), true])!;
+        Assert.True((bool)GetRequiredProperty(staleWait, "Stale"));
+        Assert.False((bool)GetRequiredProperty(staleWait, "Accepted"));
+        object currentDispose = coordinator.GetMethod("AcceptCompletion")!.Invoke(instance,
+            [ToInt64(GetRequiredProperty(disposeEpoch, "OperationId")), true])!;
+        Assert.True((bool)GetRequiredProperty(currentDispose, "Accepted"));
+        Assert.True(ToInt64(GetRequiredProperty(drainEpoch, "OperationId"))
+            < ToInt64(GetRequiredProperty(disposeEpoch, "OperationId")));
+
         object terminalA = join.Invoke(instance, null)!;
         object terminalB = join.Invoke(instance, null)!;
         Assert.Equal(GetRequiredProperty(terminalA, "OperationId"), GetRequiredProperty(terminalB, "OperationId"));
@@ -2340,11 +2382,21 @@ public sealed class ProcessOwnershipTests
         {
             ProcessOwnershipWaitResult cleanWait = await cleanProcess.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
             Assert.Equal(ProcessOwnershipFailureClass.None, cleanWait.FailureClass);
+            cleanProcess.Dispose();
             object cleanReceipts = GetRequiredLifecycleReceipts(cleanProcess);
-            Assert.Contains(((System.Collections.IEnumerable)cleanReceipts).Cast<object>(), receipt =>
-                GetRequiredProperty(receipt, "Kind").ToString() == "FamilyProof"
-                && (bool)GetRequiredProperty(receipt, "Accepted")
-                && ToInt64(GetRequiredProperty(receipt, "OperationId")) > 0);
+            object[] productionReceipts = ((System.Collections.IEnumerable)cleanReceipts).Cast<object>().ToArray();
+            string[] requiredKinds = ["Wait", "Drain", "Dispose", "FamilyProof"];
+            foreach (string kind in requiredKinds)
+            {
+                object receipt = Assert.Single(productionReceipts, item =>
+                    GetRequiredProperty(item, "Kind").ToString() == kind);
+                Assert.True((bool)GetRequiredProperty(receipt, "Accepted"));
+                Assert.True(ToInt64(GetRequiredProperty(receipt, "OperationId")) > 0);
+            }
+            long[] productionIds = productionReceipts
+                .Select(item => ToInt64(GetRequiredProperty(item, "OperationId")))
+                .ToArray();
+            Assert.Equal(productionIds.Distinct().OrderBy(id => id), productionIds);
         }
 
         // The real terminal path must serialize concurrent callers, permit a retry after a failed native
@@ -2407,13 +2459,19 @@ public sealed class ProcessOwnershipTests
         Assert.True(proofResult.Succeeded, proofResult.Detail);
         using (ContainedProcess proofProcess = proofResult.Process!)
         {
+            proofProcess.ActiveProcessZeroBoundForTests = TimeSpan.FromMilliseconds(150);
             Task<bool> terminal = Task.Run(proofProcess.Terminate);
             Assert.True(proofBarriers.WaitForFamilyProofPending(TimeSpan.FromSeconds(5)));
             long terminalId = LifecycleIds(GetRequiredLifecycleReceipts(proofProcess), "Terminal").Single();
+            Assert.False(await terminal);
+            long firstProofId = LifecycleIds(GetRequiredLifecycleReceipts(proofProcess), "FamilyProof").Single();
+            Task<bool> retryTerminal = Task.Run(proofProcess.Terminate);
+            Assert.True(proofBarriers.WaitForFamilyProofPending(TimeSpan.FromSeconds(5)));
             proofBarriers.ReleaseActiveProcessZero();
-            Assert.True(await terminal);
+            Assert.True(await retryTerminal);
             long[] allIds = LifecycleIds(GetRequiredLifecycleReceipts(proofProcess), "FamilyProof");
-            Assert.Contains(allIds, id => id > terminalId);
+            Assert.Contains(allIds, id => id > firstProofId);
+            Assert.Contains(LifecycleIds(GetRequiredLifecycleReceipts(proofProcess), "Terminal"), id => id > terminalId);
             Assert.Equal(1, proofTerminalCalls);
         }
     }

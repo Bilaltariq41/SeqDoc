@@ -556,3 +556,69 @@ The strengthened six-group package remained at 76 total and went red 3/73 for F6
 expired after partial edits to `ProcessOwnership.cs`, `ProcessOwnership.Lifecycle.cs`, and
 `ProcessOwnership.Resources.cs`; the current worktree is not known to compile and was not focused-tested. The repair
 limit returned I100-A to Blocked with the worktree preserved. No independent review or final gate ran.
+
+The owner authorized external preservation plus exact restoration of the three incomplete implementation files. The
+patch was saved outside the repository with SHA-256
+`210A193A515F94805A6C06697301D10B7EA96A8BB5C3F2AA81F9C5C8D900732B`; the repository returned clean at committed
+red head. F8, F7, and F6 are now three bounded sequential implementation stages, followed by one integrated 76-test
+lane and independent review. No final gate or GH-107 work is authorized.
+
+#### Sequential F8/F7/F6 integration stop
+
+The three stages produced an integrated candidate in `ProcessOwnership.cs`, `ProcessOwnership.Resources.cs`, and
+`ProcessOwnership.Lifecycle.cs`. Orchestrator inspection repaired idempotent disposal, proof-only terminal retry after
+successful native termination, ledger-authoritative ownership checks, disposed-terminal admission, and initialized-only
+attribute-list deletion before the declared focused run. Under isolated SDK 10.0.302, the command reported `Failed 7,
+Passed 69, Skipped 0, Total 76`. Every failure contains the same early-observation signature: four parent-copy releases
+performed during successful construction appear before the expected cleanup sequence; the transfer-fault proof likewise
+rejects those four labels as non-cleanup observations. The mandatory red stop rule returned I100-A to Blocked. The
+worktree is preserved; independent review, the final gate, Ahmad request, merge, and GH-107 remain withheld.
+
+The owner subsequently authorized one bounded repair for the shared early-observation regression only. The repair may
+distinguish successful-construction parent-copy release from cleanup observation, but it must retain typed ledger
+ownership, strict release identity, and all 69 passing behaviors. Tests remain frozen. Full 76-test focused verification
+and a clean independent review are required before any later Ahmad request; the final gate and GH-107 remain withheld.
+
+The first repair reached 74/76. Five of the seven failures were fixed by suppressing cleanup-only observations for the
+four successful-construction parent-copy releases. The remaining two are the same release-order outcome: failed release
+attempts are not added to teardown chronology, and process/thread acquisition sequence currently makes generic reverse
+unwind publish thread before process. A second and final repair may adjust those two implementation boundaries without
+test changes; any remaining red returns the checkpoint to Blocked.
+
+The second repair added failed release attempts to cleanup chronology and aligned process/thread acquisition sequence
+with dependency-safe reverse release. Focused verification reached 75/76. Only the partial-construction unwind order
+test remains red because its expected final stdin observation represents a parent copy that was actually released
+earlier during successful construction setup; suppressing early parent-copy observations removed it entirely. The
+repair limit is exhausted. I100-A returned to Blocked with the candidate preserved and without independent review,
+final gate, Ahmad request, merge, or GH-107 work.
+
+The owner authorized a single existing-test contract correction: omit the already released stdin parent handle from the
+later partial-unwind chronology and assert its exact acquired/released-once typed-ledger state instead. No production
+edit or test-count increase is authorized. The full 76-test focused lane must pass before independent review.
+
+The Test Writer amended only the existing partial-unwind test and retained 76 total tests. Focused verification under
+isolated SDK 10.0.302 passed 76/76 with zero skipped; `git diff --check` passed. The candidate is ready for independent
+review. No final gate has run.
+
+Independent review verdict: FINDINGS (2 High, 3 Medium). I100-A-F1: first-wait task faults can remain permanently cached.
+I100-A-F2: production has no operation IDs/completion admission for wait, drain, and disposal despite the frozen epoch
+contract. I100-A-F3: raw native mirrors still participate in lifecycle native-call decisions. I100-A-F4: the suite lacks
+a production-path proof-only terminal retry after native success plus an initially unproven family epoch. I100-A-F5:
+the stdin amendment proves final slot state but not chronology before later unwind. Per the frozen independent-review
+High stop rule, the candidate returned to Blocked without repairs or final gate.
+
+The owner authorized repair of all five independent-review findings without increasing the 76-test total. A Test Writer
+will strengthen existing grouped claims for F1, F2, F4, and F5; F3 retains direct review evidence. One cohesive
+implementation candidate may modify the three frozen implementation files, followed by focused verification and a new
+independent review. No final gate, Ahmad request, merge, or GH-107 work is authorized yet.
+
+The strengthened existing suite first reported 74/76: F1 reproduced the poisoned second wait and F2 rejected the current
+generic Dispose epoch; F4 proof-only production retry and F5 typed stdin chronology passed. The cohesive repair then
+implemented per-kind wait/drain/dispose completion admission, retryable faulted reservations, deterministic epoch
+receipts, and ledger-sourced native lifecycle values. A final pre-review correction removed global cross-kind coupling
+from production completion checks and made faulted Terminal reservations retryable. Focused verification passed 76/76
+with zero skipped; `git diff --check` passed. All five findings are Fixed pending independent review.
+
+New independent complete-candidate review verdict: PASS, no findings. F1, F2, F3, F4, and F5 are all independently
+confirmed Fixed. The candidate remains at ReviewRequired for Ahmad; the final gate has not run and remains prohibited
+until Ahmad approves.

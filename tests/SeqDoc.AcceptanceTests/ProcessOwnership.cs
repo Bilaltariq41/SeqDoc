@@ -82,6 +82,12 @@ internal readonly record struct NativeWaitResult(uint Result, int Win32Error)
     internal static NativeWaitResult Failed(int error) => new(NativeMethods.WAIT_FAILED, error);
 }
 
+internal enum ReleaseObservationMode
+{
+    Cleanup,
+    ConstructionParentCopy,
+}
+
 internal sealed class ConstructionCleanupCapture
 {
     internal ContainedProcess? Owner { get; set; }
@@ -345,20 +351,7 @@ internal static class ProcessOwnershipEncoding
 /// </summary>
 public sealed partial class ContainedProcess : IDisposable
 {
-    private enum LifecycleState
-    {
-        Running,
-        TerminalRequested,
-        TerminalInProgress,
-        FamilyProofCompleted,
-        FamilyProofFailed,
-        DisposalInProgress,
-        FamilyResourcesRetained,
-        Disposed,
-        ConstructionUnwind,
-    }
-
-    private readonly FailureClassTracker _failures = new();
+    private readonly ProcessOwnershipLifecycleCoordinator _lifecycle = new();
     private readonly List<string> _teardownFailures = new();
     private readonly List<string> _teardownOrderForTests = new();
 
@@ -378,6 +371,7 @@ public sealed partial class ContainedProcess : IDisposable
     private Task<(string Text, bool Truncated)>? _stdOutDrain;
     private Task<(string Text, bool Truncated)>? _stdErrDrain;
     private Task? _completionMonitor;
+    private long _drainOperationId;
     private CancellationTokenSource? _completionMonitorCts;
     private CancellationTokenSource? _drainCts;
     private volatile bool _activeProcessZeroObserved;
@@ -387,16 +381,9 @@ public sealed partial class ContainedProcess : IDisposable
     private bool _familyRetentionEvidenceRecorded;
     private bool _managedLifecycleFailureRecorded;
     private bool _teardownSummaryRecorded;
-    private LifecycleState _lifecycleState = LifecycleState.Running;
-    private readonly object _lifecycleGate = new();
+    private readonly object _resourceGate = new();
     private readonly object _completionMonitorGate = new();
     private readonly object _teardownEvidenceGate = new();
-    private Task<bool>? _terminalTask;
-    private bool? _terminalSucceeded;
-    private bool _terminalOperationSucceeded;
-    private Task<bool>? _familyProofTask;
-    private Task? _disposeTask;
-    private Task<ProcessOwnershipWaitResult>? _waitTask;
     private readonly ProcessOwnershipNativeCalls _nativeCalls;
     private readonly NativeOwnershipLedger _ownershipLedger = new();
     private int _peekFailureRecorded;
@@ -439,7 +426,7 @@ public sealed partial class ContainedProcess : IDisposable
     /// after disposal) — a real caller's only way to learn teardown degraded, since prior test-only
     /// accessors are not production surface.
     /// </summary>
-    public ProcessOwnershipFailureClass FailureClass => _failures.Class;
+    public ProcessOwnershipFailureClass FailureClass => _lifecycle.Class;
 
     /// <summary>GH106-R2-F7: the aggregated teardown failure details recorded during <see cref="Dispose"/>.</summary>
     public IReadOnlyList<string> TeardownFailures
@@ -456,9 +443,9 @@ public sealed partial class ContainedProcess : IDisposable
     {
         get
         {
-            lock (_lifecycleGate)
+            lock (_resourceGate)
             {
-                return _lifecycleState == LifecycleState.FamilyResourcesRetained
+                return _lifecycle.IsState(LifecycleState.FamilyResourcesRetained)
                     && HasOwnedTrackedResource();
             }
         }
@@ -479,7 +466,10 @@ public sealed partial class ContainedProcess : IDisposable
 
     internal Action<string>? ResourceReleaseObserverForTests { get; set; }
 
-    internal IReadOnlyList<string> SecondaryFailures => _failures.SecondaryFailures;
+    internal IReadOnlyList<string> SecondaryFailures => _lifecycle.SecondaryFailures;
+
+    internal IReadOnlyList<LifecycleOperationReceipt> LifecycleOperationReceiptsForTests =>
+        _lifecycle.OperationReceipts.ToArray();
 
     /// <summary>GH106-R2-F2 test-only seam: forces the completion monitor to stop observing ACTIVE_PROCESS_ZERO.</summary>
     internal void StopCompletionMonitorForTests()
@@ -487,7 +477,7 @@ public sealed partial class ContainedProcess : IDisposable
         // This seam models an unavailable completion observation channel, even if a very fast child
         // posted its zero message before the test could cancel the monitor.
         _completionObservationStoppedForTests = true;
-        lock (_lifecycleGate) { _activeProcessZeroObserved = false; }
+        lock (_resourceGate) { _activeProcessZeroObserved = false; }
         _completionMonitorCts?.Cancel();
     }
 
@@ -534,28 +524,27 @@ public sealed partial class ContainedProcess : IDisposable
                 + "primitive never performs a PATH/cwd search (finalized contract decision 2).");
         }
 
-        var unwind = new Stack<Action>();
         var unwindFailures = new List<string>();
         var cleanupCapture = new ConstructionCleanupCapture();
+        var process = new ContainedProcess(options.NativeCalls);
+        cleanupCapture.Process = process;
+        cleanupCapture.Snapshot = process.OwnershipSnapshot;
         try
         {
-            return StartCore(options, faultPoint, unwind, unwindFailures, cleanupCapture);
+            return StartCore(options, faultPoint, process, unwindFailures, cleanupCapture);
         }
         catch (Exception ex)
         {
-            while (unwind.Count > 0)
+            try
             {
-                try
-                {
-                    unwind.Pop().Invoke();
-                }
-                catch
-                {
-                    // Best-effort unwind of a failed construction; the primary ProcessConstructionFailed
-                    // failure below is authoritative regardless of secondary teardown noise here.
-                }
+                process.ConstructionCleanup(options, unwindFailures);
             }
-            cleanupCapture.Snapshot = cleanupCapture.Process?.OwnershipSnapshot;
+            catch (Exception cleanupException)
+            {
+                unwindFailures.Add($"Construction cleanup failed: {cleanupException.Message}");
+            }
+            cleanupCapture.Snapshot = process.OwnershipSnapshot;
+            cleanupCapture.Owner = process.HasOwnedTrackedResource() ? process : null;
 
             string detail = unwindFailures.Count == 0 ? ex.Message
                 : $"{ex.Message} Cleanup failures: {string.Join("; ", unwindFailures)}";
@@ -597,128 +586,20 @@ public sealed partial class ContainedProcess : IDisposable
     }
 
     private static ProcessOwnershipConstructionResult StartCore(
-        ProcessOwnershipOptions options, ConstructionFaultPoint faultPoint, Stack<Action> unwind,
+        ProcessOwnershipOptions options, ConstructionFaultPoint faultPoint, ContainedProcess process,
         List<string> unwindFailures, ConstructionCleanupCapture cleanupCapture)
     {
-        // GH106-R2-F1: closures below capture these locals by reference. Guarding on non-zero and
-        // zeroing after close means a handle already closed manually (see the S4 std-handle cleanup
-        // below) can never be double-closed by a later unwind pop — the exact "closed-once" idiom
-        // Dispose()'s CloseTracked already uses.
-        var process = new ContainedProcess(options.NativeCalls);
-        cleanupCapture.Snapshot = process.OwnershipSnapshot;
         cleanupCapture.Process = process;
-
-        bool CloseIfOpen(ref nint handle, NativeResourceKind kind)
-        {
-            if (handle != nint.Zero)
-            {
-                nint value = handle;
-                NativeCallResult close = ProcessOwnershipNativeAdapter.Close(options.NativeCalls ?? new ProcessOwnershipNativeCalls(), value);
-                process._ownershipLedger.AttemptRelease(kind, close.Succeeded, close.Win32Error,
-                    close.Succeeded ? "parent copy released" : $"parent copy close failed: {close.Win32Error}", value);
-                if (!close.Succeeded)
-                {
-                    unwindFailures.Add($"CloseHandle(parent copy) failed with Win32 error {close.Win32Error}.");
-                    lock (process._teardownEvidenceGate)
-                    {
-                        process._teardownFailures.Add($"CloseHandle(parent copy) failed: {close.Win32Error}");
-                    }
-                    return false;
-                }
-                handle = nint.Zero;
-            }
-            return true;
-        }
-
-        void ReleaseRawHandle(ref nint handle, NativeResourceKind kind, string label)
-        {
-            if (handle == nint.Zero)
-            {
-                return;
-            }
-            NativeCallResult close = ProcessOwnershipNativeAdapter.Close(options.NativeCalls ?? new ProcessOwnershipNativeCalls(), handle);
-            process._ownershipLedger.AttemptRelease(kind, close.Succeeded, close.Win32Error, label);
-            if (!close.Succeeded)
-            {
-                throw Win32("CloseHandle", close.Win32Error);
-            }
-            handle = nint.Zero;
-        }
-
-        void ReleaseRawBuffer(ref nint buffer, NativeResourceKind kind, string label, bool deleteAttribute = false)
-        {
-            if (buffer == nint.Zero)
-            {
-                return;
-            }
-            nint value = buffer;
-            if (deleteAttribute)
-            {
-                DeleteAttributeList(value);
-            }
-            Marshal.FreeHGlobal(value);
-            process._ownershipLedger.AttemptRelease(kind, true, 0, label);
-            buffer = nint.Zero;
-        }
-
-        // GH106-R2-F11 test-only observability: records the exact label order the unwind stack actually
-        // pops in, without changing production behavior (the observer is null in production).
-        int ownershipTransferred = 0;
-        Action transferredCleanup = () =>
-        {
-            if (Volatile.Read(ref ownershipTransferred) == 0)
-            {
-                return;
-            }
-
-            bool cleaned = false;
-            try
-            {
-                cleaned = process.ConstructionCleanup(options, unwindFailures);
-            }
-            catch (Exception ex)
-            {
-                unwindFailures.Add($"Transferred cleanup failed: {ex.Message}");
-                lock (process._lifecycleGate) { process._lifecycleState = LifecycleState.FamilyResourcesRetained; }
-            }
-            finally
-            {
-                if (!cleaned)
-                {
-                    cleanupCapture.Owner = process;
-                }
-                cleanupCapture.Snapshot = process.OwnershipSnapshot;
-            }
-        };
-        unwind.Push(transferredCleanup);
-
-        void PushUnwind(string label, Action action) => unwind.Push(() =>
-        {
-            if (Volatile.Read(ref ownershipTransferred) != 0)
-            {
-                return;
-            }
-
-            try { action(); }
-            catch (Exception ex) { unwindFailures.Add($"{label}: {ex.Message}"); }
-            finally { UnwindStepObserverForTests?.Invoke(label); }
-        });
 
         // --- S1: three std pipes, created non-inheritable by default, then the exact child-side end of
         // each is explicitly marked inheritable (never the parent-side end). ---
         CreatePipePair(out nint stdInRead, out nint stdInWrite);
-        PushUnwind("stdin read handle", () => CloseIfOpen(ref stdInRead, NativeResourceKind.StdinChildRead));
-        PushUnwind("stdin write handle", () => CloseIfOpen(ref stdInWrite, NativeResourceKind.StdinParentWrite));
-        CreatePipePair(out nint stdOutRead, out nint stdOutWrite);
-        PushUnwind("stdout read handle", () => CloseIfOpen(ref stdOutRead, NativeResourceKind.StdoutParentRead));
-        PushUnwind("stdout write handle", () => CloseIfOpen(ref stdOutWrite, NativeResourceKind.StdoutChildWrite));
-        CreatePipePair(out nint stdErrRead, out nint stdErrWrite);
-        PushUnwind("stderr read handle", () => CloseIfOpen(ref stdErrRead, NativeResourceKind.StderrParentRead));
-        PushUnwind("stderr write handle", () => CloseIfOpen(ref stdErrWrite, NativeResourceKind.StderrChildWrite));
         process._ownershipLedger.Acquire(NativeResourceKind.StdinChildRead, stdInRead, "CreatePipe(stdin child read)");
         process._ownershipLedger.Acquire(NativeResourceKind.StdinParentWrite, stdInWrite, "CreatePipe(stdin parent write)");
+        CreatePipePair(out nint stdOutRead, out nint stdOutWrite);
         process._ownershipLedger.Acquire(NativeResourceKind.StdoutParentRead, stdOutRead, "CreatePipe(stdout parent read)");
         process._ownershipLedger.Acquire(NativeResourceKind.StdoutChildWrite, stdOutWrite, "CreatePipe(stdout child write)");
+        CreatePipePair(out nint stdErrRead, out nint stdErrWrite);
         process._ownershipLedger.Acquire(NativeResourceKind.StderrParentRead, stdErrRead, "CreatePipe(stderr parent read)");
         process._ownershipLedger.Acquire(NativeResourceKind.StderrChildWrite, stdErrWrite, "CreatePipe(stderr child write)");
 
@@ -735,7 +616,6 @@ public sealed partial class ContainedProcess : IDisposable
         nint[] inheritable = [stdInRead, stdOutWrite, stdErrWrite];
         nint handleListBuffer = Marshal.AllocHGlobal(nint.Size * inheritable.Length);
         process._ownershipLedger.Acquire(NativeResourceKind.HandleListBuffer, handleListBuffer, "Alloc handle list");
-        PushUnwind("handle list buffer", () => ReleaseRawBuffer(ref handleListBuffer, NativeResourceKind.HandleListBuffer, "handle list buffer"));
 
         // Finalized contract decision 3: this is the exact unsafe native pointer block — the raw
         // PROC_THREAD_ATTRIBUTE_HANDLE_LIST payload UpdateProcThreadAttribute reads directly out of
@@ -756,8 +636,6 @@ public sealed partial class ContainedProcess : IDisposable
             throw Win32("CreateJobObjectW");
         }
         process._ownershipLedger.Acquire(NativeResourceKind.JobHandle, jobHandle, "CreateJobObjectW");
-
-        PushUnwind("job handle", () => ReleaseRawHandle(ref jobHandle, NativeResourceKind.JobHandle, "job handle"));
 
         var limits = default(NativeMethods.JOBOBJECT_EXTENDED_LIMIT_INFORMATION);
         limits.BasicLimitInformation.LimitFlags = NativeMethods.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -791,8 +669,6 @@ public sealed partial class ContainedProcess : IDisposable
         }
         process._ownershipLedger.Acquire(NativeResourceKind.CompletionPortHandle, completionPort, "CreateIoCompletionPort");
 
-        PushUnwind("completion port handle", () => ReleaseRawHandle(ref completionPort, NativeResourceKind.CompletionPortHandle, "completion port handle"));
-
         var associate = new NativeMethods.JOBOBJECT_ASSOCIATE_COMPLETION_PORT
         {
             CompletionKey = jobHandle,
@@ -823,12 +699,9 @@ public sealed partial class ContainedProcess : IDisposable
         nint jobListBuffer = Marshal.AllocHGlobal(nint.Size);
         process._ownershipLedger.Acquire(NativeResourceKind.JobListBuffer, jobListBuffer, "Alloc job list");
         Marshal.WriteIntPtr(jobListBuffer, jobHandle);
-        PushUnwind("job list buffer", () => ReleaseRawBuffer(ref jobListBuffer, NativeResourceKind.JobListBuffer, "job list buffer"));
 
         nint attributeListBuffer = BuildAttributeList(
-            handleListBuffer, inheritable.Length, jobListBuffer, unwind, options.NativeCalls);
-        process._ownershipLedger.Acquire(NativeResourceKind.AttributeListBuffer, attributeListBuffer, "Initialize attribute list");
-        PushUnwind("attribute list buffer", () => ReleaseRawBuffer(ref attributeListBuffer, NativeResourceKind.AttributeListBuffer, "attribute list buffer", true));
+            handleListBuffer, inheritable.Length, jobListBuffer, options.NativeCalls, process._ownershipLedger);
 
         if (faultPoint == ConstructionFaultPoint.AfterAttributeListBuilt)
         {
@@ -839,12 +712,10 @@ public sealed partial class ContainedProcess : IDisposable
         string commandLine = ProcessOwnershipEncoding.BuildCommandLine(options.ExecutablePath, options.Arguments);
         nint commandLineBuffer = Marshal.StringToHGlobalUni(commandLine);
         process._ownershipLedger.Acquire(NativeResourceKind.CommandLineBuffer, commandLineBuffer, "Alloc command line");
-        PushUnwind("command line buffer", () => ReleaseRawBuffer(ref commandLineBuffer, NativeResourceKind.CommandLineBuffer, "command line buffer"));
 
         string environmentBlock = ProcessOwnershipEncoding.BuildEnvironmentBlock(options.Environment);
         nint environmentBuffer = Marshal.StringToHGlobalUni(environmentBlock);
         process._ownershipLedger.Acquire(NativeResourceKind.EnvironmentBlockBuffer, environmentBuffer, "Alloc environment block");
-        PushUnwind("environment block buffer", () => ReleaseRawBuffer(ref environmentBuffer, NativeResourceKind.EnvironmentBlockBuffer, "environment block buffer"));
 
         var startupInfoEx = default(NativeMethods.STARTUPINFOEXW);
         startupInfoEx.StartupInfo.cb = Marshal.SizeOf<NativeMethods.STARTUPINFOEXW>();
@@ -875,24 +746,8 @@ public sealed partial class ContainedProcess : IDisposable
         {
             throw Win32("CreateProcessW");
         }
-        process._ownershipLedger.Acquire(NativeResourceKind.ProcessHandle, processInformation.hProcess, "CreateProcessW process");
         process._ownershipLedger.Acquire(NativeResourceKind.PrimaryThreadHandle, processInformation.hThread, "CreateProcessW primary thread");
-
-        PushUnwind("thread handle", () => ReleaseRawHandle(ref processInformation.hThread, NativeResourceKind.PrimaryThreadHandle, "thread handle"));
-        bool constructionTerminationAttempted = false;
-        PushUnwind("process handle", () =>
-        {
-            if (!constructionTerminationAttempted)
-            {
-                NativeCallResult termination = InvokeTerminateProcess(options, processInformation.hProcess);
-                if (!termination.Succeeded)
-                {
-                    unwindFailures.Add($"TerminateProcess failed with Win32 error {termination.Win32Error}.");
-                }
-            }
-            constructionTerminationAttempted = true;
-            ReleaseRawHandle(ref processInformation.hProcess, NativeResourceKind.ProcessHandle, "process handle");
-        });
+        process._ownershipLedger.Acquire(NativeResourceKind.ProcessHandle, processInformation.hProcess, "CreateProcessW process");
 
         // JOB_LIST admission has completed atomically with CreateProcess. Observe it immediately after
         // both process/thread unwind entries exist, while the new thread is still suspended.
@@ -928,16 +783,6 @@ public sealed partial class ContainedProcess : IDisposable
         nint stdErrChildHandleValue = stdErrWrite;
         nint stdInChildHandleValue = stdInRead;
 
-        bool parentCopiesClosed = true;
-        parentCopiesClosed &= CloseIfOpen(ref stdInRead, NativeResourceKind.StdinChildRead);
-        parentCopiesClosed &= CloseIfOpen(ref stdOutWrite, NativeResourceKind.StdoutChildWrite);
-        parentCopiesClosed &= CloseIfOpen(ref stdErrWrite, NativeResourceKind.StderrChildWrite);
-        parentCopiesClosed &= CloseIfOpen(ref stdInWrite, NativeResourceKind.StdinParentWrite);
-        if (!parentCopiesClosed)
-        {
-            throw Win32("CloseHandle(parent copy)", 8301);
-        }
-
         process._processHandle = processInformation.hProcess;
         process._threadHandle = processInformation.hThread;
         process._jobHandle = jobHandle;
@@ -950,14 +795,25 @@ public sealed partial class ContainedProcess : IDisposable
         process._parentStdOutRead = stdOutRead;
         process._parentStdErrRead = stdErrRead;
         process._parentStdInWrite = stdInWrite;
+
+        bool parentCopiesClosed = true;
+        parentCopiesClosed &= process.ReleaseOwned(NativeResourceKind.StdinChildRead, "stdin child handle", unwindFailures,
+            ReleaseObservationMode.ConstructionParentCopy);
+        parentCopiesClosed &= process.ReleaseOwned(NativeResourceKind.StdoutChildWrite, "stdout child handle", unwindFailures,
+            ReleaseObservationMode.ConstructionParentCopy);
+        parentCopiesClosed &= process.ReleaseOwned(NativeResourceKind.StderrChildWrite, "stderr child handle", unwindFailures,
+            ReleaseObservationMode.ConstructionParentCopy);
+        parentCopiesClosed &= process.ReleaseOwned(NativeResourceKind.StdinParentWrite, "stdin parent handle", unwindFailures,
+            ReleaseObservationMode.ConstructionParentCopy);
+        if (!parentCopiesClosed)
+        {
+            throw Win32("CloseHandle(parent copy)", 8301);
+        }
+
         process.ProcessId = processInformation.dwProcessId;
         process.StdOutChildHandleValueForTests = stdOutChildHandleValue;
         process.StdErrChildHandleValueForTests = stdErrChildHandleValue;
         process.StdInChildHandleValueForTests = stdInChildHandleValue;
-
-        // Transfer ownership before either post-create fault. The token is the sole authority for the
-        // old unwind entries and the preinstalled bottom action; no stack rebuild is needed.
-        Interlocked.Exchange(ref ownershipTransferred, 1);
 
         if (faultPoint == ConstructionFaultPoint.AfterOwnershipTransferBeforeMonitor)
         {
@@ -1003,12 +859,24 @@ public sealed partial class ContainedProcess : IDisposable
             throw Win32("ResumeThread", resume.Win32Error);
         }
 
-        unwind.Clear();
         return ProcessOwnershipConstructionResult.Success(process);
     }
 
     private bool ConstructionCleanup(ProcessOwnershipOptions options, List<string> failures)
     {
+        // Before a process exists there is no family or managed-task proof to establish.  The ledger is
+        // already the sole owner, so release every still-owned slot in reverse acquisition order.
+        if (_ownershipLedger.CurrentOwned(NativeResourceKind.ProcessHandle) is null)
+        {
+            foreach (NativeResourceSnapshot resource in _ownershipLedger.ReverseOwned())
+            {
+                ReleaseOwned(resource.Kind, ResourceLabel(resource.Kind), failures);
+            }
+            bool retained = HasOwnedTrackedResource();
+            _lifecycle.CompleteDispose(retained);
+            return !retained;
+        }
+
         try
         {
             StartCompletionMonitor();
@@ -1016,19 +884,21 @@ public sealed partial class ContainedProcess : IDisposable
         catch (Exception ex)
         {
             failures.Add($"Completion monitor startup failed: {ex.Message}");
-            _failures.Record(ProcessOwnershipFailureClass.ProcessConstructionFailed,
+            _lifecycle.Record(ProcessOwnershipFailureClass.ProcessConstructionFailed,
                 $"Completion monitor startup failed: {ex.Message}");
-            lock (_lifecycleGate) { _lifecycleState = LifecycleState.FamilyResourcesRetained; }
+            _lifecycle.SetState(LifecycleState.FamilyResourcesRetained);
             return false;
         }
 
-        NativeCallResult directTermination = InvokeTerminateProcess(options, _processHandle);
+        nint processHandle = _ownershipLedger.CurrentOwned(NativeResourceKind.ProcessHandle)?.Value ?? nint.Zero;
+        nint jobHandle = _ownershipLedger.CurrentOwned(NativeResourceKind.JobHandle)?.Value ?? nint.Zero;
+        NativeCallResult directTermination = InvokeTerminateProcess(options, processHandle);
         if (!directTermination.Succeeded)
         {
             failures.Add($"TerminateProcess failed with Win32 error {directTermination.Win32Error}.");
         }
 
-        NativeWaitResult directWait = InvokeWaitForSingleObject(options, _processHandle,
+        NativeWaitResult directWait = InvokeWaitForSingleObject(options, processHandle,
             (int)Math.Min(int.MaxValue, _constructionCleanupBound.TotalMilliseconds));
         if (directWait.Result != NativeMethods.WAIT_OBJECT_0)
         {
@@ -1036,14 +906,13 @@ public sealed partial class ContainedProcess : IDisposable
         }
 
         _terminateJobObjectCalled = true;
-        NativeCallResult jobTermination = InvokeTerminateJobObject(_jobHandle, uint.MaxValue);
+        NativeCallResult jobTermination = InvokeTerminateJobObject(jobHandle, uint.MaxValue);
         if (!jobTermination.Succeeded)
         {
             failures.Add($"TerminateJobObject failed with Win32 error {jobTermination.Win32Error}.");
         }
         else
         {
-            _terminalOperationSucceeded = true;
         }
 
         bool familyProven = EnsureFamilyProofAsync(_constructionCleanupBound, CancellationToken.None)
@@ -1058,9 +927,9 @@ public sealed partial class ContainedProcess : IDisposable
         bool managedComplete = monitorComplete && stdoutComplete && stderrComplete;
         if (!familyProven || !managedComplete || !jobTermination.Succeeded)
         {
-            _failures.Record(ProcessOwnershipFailureClass.ProcessConstructionFailed,
+            _lifecycle.Record(ProcessOwnershipFailureClass.ProcessConstructionFailed,
                 "Construction cleanup retained ownership because family zero or managed quiescence was not proven.");
-            lock (_lifecycleGate) { _lifecycleState = LifecycleState.FamilyResourcesRetained; }
+            _lifecycle.SetState(LifecycleState.FamilyResourcesRetained);
             return false;
         }
 
@@ -1070,41 +939,31 @@ public sealed partial class ContainedProcess : IDisposable
         _drainCts?.Dispose();
         _drainCts = null;
 
-        ReleaseConstructionHandle(ref _processHandle, NativeResourceKind.ProcessHandle, "process handle");
-        ReleaseConstructionHandle(ref _threadHandle, NativeResourceKind.PrimaryThreadHandle, "thread handle");
-        ReleaseConstructionBuffer(ref _environmentBlockBuffer, NativeResourceKind.EnvironmentBlockBuffer, "environment block buffer");
-        ReleaseConstructionBuffer(ref _commandLineBuffer, NativeResourceKind.CommandLineBuffer, "command line buffer");
-        ReleaseConstructionBuffer(ref _attributeListBuffer, NativeResourceKind.AttributeListBuffer, "attribute list buffer", true);
-        ReleaseConstructionBuffer(ref _jobListBuffer, NativeResourceKind.JobListBuffer, "job list buffer");
-        ReleaseConstructionHandle(ref _completionPortHandle, NativeResourceKind.CompletionPortHandle, "completion port handle");
-        ReleaseConstructionHandle(ref _jobHandle, NativeResourceKind.JobHandle, "job handle");
-        ReleaseConstructionBuffer(ref _handleListBuffer, NativeResourceKind.HandleListBuffer, "handle list buffer");
-        ReleaseConstructionHandle(ref _parentStdErrRead, NativeResourceKind.StderrParentRead, "stderr pipe handle");
-        ReleaseConstructionHandle(ref _parentStdOutRead, NativeResourceKind.StdoutParentRead, "stdout pipe handle");
-        ReleaseConstructionHandle(ref _parentStdInWrite, NativeResourceKind.StdinParentWrite, "stdin pipe handle");
-        bool resourcesRetained = HasOwnedTrackedResource();
-        lock (_lifecycleGate)
+        foreach (NativeResourceSnapshot resource in _ownershipLedger.ReverseOwned())
         {
-            _lifecycleState = resourcesRetained
-                ? LifecycleState.FamilyResourcesRetained
-                : LifecycleState.Disposed;
+            ReleaseOwned(resource.Kind, ResourceLabel(resource.Kind), failures);
         }
+        bool resourcesRetained = HasOwnedTrackedResource();
+        _lifecycle.CompleteDispose(resourcesRetained);
         return !resourcesRetained;
     }
 
-    private void ReleaseConstructionHandle(ref nint resource, NativeResourceKind kind, string label)
+    private static string ResourceLabel(NativeResourceKind kind) => kind switch
     {
-        CloseTracked(ref resource, kind, label);
-        try { UnwindStepObserverForTests?.Invoke(label); }
-        catch { /* construction trace is test-only and non-authoritative */ }
-    }
-
-    private void ReleaseConstructionBuffer(ref nint resource, NativeResourceKind kind, string label, bool deleteAttributeList = false)
-    {
-        FreeTracked(ref resource, kind, label, deleteAttributeList);
-        try { UnwindStepObserverForTests?.Invoke(label); }
-        catch { /* construction trace is test-only and non-authoritative */ }
-    }
+        NativeResourceKind.AttributeListBuffer => "attribute list buffer",
+        NativeResourceKind.HandleListBuffer => "handle list buffer",
+        NativeResourceKind.JobListBuffer => "job list buffer",
+        NativeResourceKind.CommandLineBuffer => "command line buffer",
+        NativeResourceKind.EnvironmentBlockBuffer => "environment block buffer",
+        NativeResourceKind.ProcessHandle => "process handle",
+        NativeResourceKind.PrimaryThreadHandle => "thread handle",
+        NativeResourceKind.JobHandle => "job handle",
+        NativeResourceKind.CompletionPortHandle => "completion port handle",
+        NativeResourceKind.StdinChildRead or NativeResourceKind.StdinParentWrite => "stdin pipe handle",
+        NativeResourceKind.StdoutParentRead or NativeResourceKind.StdoutChildWrite => "stdout pipe handle",
+        NativeResourceKind.StderrParentRead or NativeResourceKind.StderrChildWrite => "stderr pipe handle",
+        _ => kind.ToString(),
+    };
 
     private bool WaitConstructionTaskResult(Task? task, string label, List<string> failures)
     {
@@ -1129,17 +988,14 @@ public sealed partial class ContainedProcess : IDisposable
     }
 
     public Task<ProcessOwnershipWaitResult> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken)
-    {
-        lock (_lifecycleGate)
-        {
-            ObjectDisposedException.ThrowIf(
-                _lifecycleState is LifecycleState.DisposalInProgress or LifecycleState.Disposed, this);
-            return _waitTask ??= WaitCoreAsync(timeout, cancellationToken);
-        }
-    }
+        => _lifecycle.GetOrStartWait(() => WaitCoreAsync(timeout, cancellationToken));
 
     private async Task<ProcessOwnershipWaitResult> WaitCoreAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
+        if (timeout < TimeSpan.Zero && timeout != Timeout.InfiniteTimeSpan)
+        {
+            throw new ArgumentOutOfRangeException(nameof(timeout));
+        }
         using var timeoutCts = new CancellationTokenSource(timeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token, cancellationToken);
 
@@ -1161,7 +1017,7 @@ public sealed partial class ContainedProcess : IDisposable
             // benign timeout — record it distinctly so it is never misreported as TimedOut.
             if (outcome.WaitFailed)
             {
-                _failures.Record(
+                _lifecycle.Record(
                     ProcessOwnershipFailureClass.ProcessFailed,
                     $"WaitForSingleObject failed with Win32 error {outcome.Win32Error}.");
             }
@@ -1177,11 +1033,11 @@ public sealed partial class ContainedProcess : IDisposable
         {
             if (callerCancelled)
             {
-                _failures.Record(ProcessOwnershipFailureClass.TimedOut, "Wait was cancelled by the caller.");
+                _lifecycle.Record(ProcessOwnershipFailureClass.TimedOut, "Wait was cancelled by the caller.");
             }
             else if (deadlineExpired || !waitFailed)
             {
-                _failures.Record(ProcessOwnershipFailureClass.TimedOut, $"Wait exceeded {timeout}.");
+                _lifecycle.Record(ProcessOwnershipFailureClass.TimedOut, $"Wait exceeded {timeout}.");
             }
 
             // Admission table: explicit TerminateJobObject for timeout/cancellation (never deferred to
@@ -1200,16 +1056,17 @@ public sealed partial class ContainedProcess : IDisposable
         }
         else
         {
-            if (!NativeMethods.GetExitCodeProcess(_processHandle, out uint code))
+            nint processHandle = _ownershipLedger.CurrentOwned(NativeResourceKind.ProcessHandle)?.Value ?? nint.Zero;
+            if (processHandle == nint.Zero || !NativeMethods.GetExitCodeProcess(processHandle, out uint code))
             {
-                _failures.Record(ProcessOwnershipFailureClass.ProcessFailed, "GetExitCodeProcess failed.");
+                _lifecycle.Record(ProcessOwnershipFailureClass.ProcessFailed, "GetExitCodeProcess failed.");
             }
             else
             {
                 exitCode = unchecked((int)code);
                 if (code != 0)
                 {
-                    _failures.Record(
+                    _lifecycle.Record(
                         ProcessOwnershipFailureClass.ProcessFailed, $"Child exited with code {code}.");
                 }
             }
@@ -1290,25 +1147,25 @@ public sealed partial class ContainedProcess : IDisposable
             // DrainIncomplete regardless — never TimedOut, since the process itself already exited (or,
             // for the exited == false branch above, TimedOut was already recorded first and wins by the
             // tracker's first-recorded precedence).
-            _failures.Record(
+            _lifecycle.Record(
                 ProcessOwnershipFailureClass.DrainIncomplete,
                 "A stream did not reach EOF within the wait's own bound; job termination was forced to unblock it.");
         }
 
         if (stdOutTruncated || stdErrTruncated)
         {
-            _failures.Record(ProcessOwnershipFailureClass.DrainIncomplete, "A stream did not reach EOF in time.");
+            _lifecycle.Record(ProcessOwnershipFailureClass.DrainIncomplete, "A stream did not reach EOF in time.");
         }
 
         return new ProcessOwnershipWaitResult
         {
-            FailureClass = _failures.Class,
-            Detail = _failures.Detail,
+            FailureClass = _lifecycle.Class,
+            Detail = _lifecycle.Detail,
             ExitCode = exited ? exitCode : null,
             TimedOut = !exited && deadlineExpired && !callerCancelled && !waitFailed,
             Cancelled = !exited && callerCancelled && !waitFailed,
             ActiveProcessZeroObserved = _activeProcessZeroObserved,
-            SecondaryFailures = _failures.SecondaryFailures.ToArray(),
+            SecondaryFailures = _lifecycle.SecondaryFailures.ToArray(),
             StdOut = new ProcessOwnershipStreamResult(stdOutText, stdOutTruncated),
             StdErr = new ProcessOwnershipStreamResult(stdErrText, stdErrTruncated),
         };
@@ -1320,45 +1177,28 @@ public sealed partial class ContainedProcess : IDisposable
     /// <summary>Terminate phase: forcibly ends every process in the job.</summary>
     public bool Terminate()
     {
-        lock (_lifecycleGate) { ObjectDisposedException.ThrowIf(_lifecycleState == LifecycleState.Disposed, this); }
         return EnsureTerminalAsync().GetAwaiter().GetResult();
     }
 
     public void Dispose()
     {
-        Task disposeTask;
-        lock (_lifecycleGate)
-        {
-            if (_lifecycleState == LifecycleState.Disposed)
-            {
-                return;
-            }
-
-            // Claim disposal synchronously, before scheduling any asynchronous cleanup.  In particular,
-            // this closes the interval in which a caller could otherwise publish a new shared wait after
-            // disposal had begun but before DisposeCoreAsync reached its first lifecycle lock.
-            if (_disposeTask is null)
-            {
-                bool retryRetainedProof = _lifecycleState == LifecycleState.FamilyResourcesRetained;
-                _lifecycleState = LifecycleState.DisposalInProgress;
-                if (retryRetainedProof)
-                {
-                    // The previous bounded proof attempt is no longer authoritative: a completion
-                    // notification may have arrived while the retained state was idle.
-                    _familyProofTask = null;
-                }
-                _disposeTask = Task.Run(DisposeCoreAsync);
-            }
-
-            disposeTask = _disposeTask;
-        }
-
-        disposeTask.GetAwaiter().GetResult();
+        bool retry;
+        _lifecycle.GetOrStartDispose(DisposeCoreAsync, out retry).GetAwaiter().GetResult();
     }
 
-    private async Task DisposeCoreAsync()
+    private async Task DisposeCoreAsync(long disposeOperationId)
     {
-        if (!_activeProcessZeroObserved || _terminalTask is not null)
+        if (_ownershipLedger.CurrentOwned(NativeResourceKind.ProcessHandle) is null)
+        {
+            foreach (NativeResourceSnapshot resource in _ownershipLedger.ReverseOwned())
+            {
+                ReleaseOwned(resource.Kind, ResourceLabel(resource.Kind));
+            }
+            _lifecycle.CompleteDispose(HasOwnedTrackedResource(), disposeOperationId);
+            return;
+        }
+
+        if (!_activeProcessZeroObserved || _lifecycle.IsTerminalActive)
         {
             await EnsureTerminalAsync().ConfigureAwait(false);
         }
@@ -1374,14 +1214,14 @@ public sealed partial class ContainedProcess : IDisposable
         if (!drainsComplete || !monitorComplete)
         {
             bool recordLifecycleFailure;
-            lock (_lifecycleGate)
+            lock (_resourceGate)
             {
                 recordLifecycleFailure = !_managedLifecycleFailureRecorded;
                 _managedLifecycleFailureRecorded = true;
             }
             if (recordLifecycleFailure)
             {
-                _failures.Record(ProcessOwnershipFailureClass.DrainIncomplete,
+                _lifecycle.Record(ProcessOwnershipFailureClass.DrainIncomplete,
                     "Managed lifecycle work did not quiesce within the cleanup bound; owned handles were retained.");
             }
         }
@@ -1392,7 +1232,7 @@ public sealed partial class ContainedProcess : IDisposable
         // (and potentially reused) handle.  A fault is observed deliberately so its exact evidence is
         // not lost behind Task.WhenAny-style completion handling.
         Task<ProcessOwnershipWaitResult>? waitTask;
-        lock (_lifecycleGate) { waitTask = _waitTask; }
+        waitTask = _lifecycle.WaitTask;
         bool waitComplete = await AwaitTaskBounded(waitTask, _constructionCleanupBound).ConfigureAwait(false);
         if (waitTask is not null && waitComplete)
         {
@@ -1402,21 +1242,21 @@ public sealed partial class ContainedProcess : IDisposable
             }
             catch (Exception ex)
             {
-                _failures.Record(ProcessOwnershipFailureClass.ProcessFailed,
+                _lifecycle.Record(ProcessOwnershipFailureClass.ProcessFailed,
                     $"WaitAsync failed during disposal: {ex.Message}");
             }
         }
         else if (waitTask is not null)
         {
             bool recordWaitFailure;
-            lock (_lifecycleGate)
+            lock (_resourceGate)
             {
                 recordWaitFailure = !_managedLifecycleFailureRecorded;
                 _managedLifecycleFailureRecorded = true;
             }
             if (recordWaitFailure)
             {
-                _failures.Record(ProcessOwnershipFailureClass.TeardownDegraded,
+                _lifecycle.Record(ProcessOwnershipFailureClass.TeardownDegraded,
                     $"WaitAsync did not quiesce within {_constructionCleanupBound}; process and job handles were retained.");
             }
         }
@@ -1429,7 +1269,7 @@ public sealed partial class ContainedProcess : IDisposable
         if (!familyProven)
         {
             bool recordRetention;
-            lock (_lifecycleGate)
+            lock (_resourceGate)
             {
                 recordRetention = !_familyRetentionEvidenceRecorded;
                 _familyRetentionEvidenceRecorded = true;
@@ -1441,7 +1281,7 @@ public sealed partial class ContainedProcess : IDisposable
                     _teardownFailures.Add(
                         "ACTIVE_PROCESS_ZERO was not proven; retained process handle, completion port handle, and job handle.");
                 }
-                _failures.Record(ProcessOwnershipFailureClass.TeardownDegraded,
+                _lifecycle.Record(ProcessOwnershipFailureClass.TeardownDegraded,
                     "ACTIVE_PROCESS_ZERO was not proven; retained process handle, completion port handle, and job handle.");
             }
         }
@@ -1483,59 +1323,41 @@ public sealed partial class ContainedProcess : IDisposable
         if (teardownFailures.Length > 0)
         {
             bool recordSummary;
-            lock (_lifecycleGate)
+            lock (_resourceGate)
             {
                 recordSummary = !_teardownSummaryRecorded;
                 _teardownSummaryRecorded = true;
             }
             if (recordSummary)
             {
-                _failures.Record(ProcessOwnershipFailureClass.TeardownDegraded,
+                _lifecycle.Record(ProcessOwnershipFailureClass.TeardownDegraded,
                     $"{teardownFailures.Length} teardown step(s) failed: {string.Join("; ", teardownFailures)}");
             }
         }
-        lock (_lifecycleGate)
-        {
-            bool resourcesRetained = !nativeHandlesSafe || HasOwnedTrackedResource();
-            _lifecycleState = resourcesRetained
-                ? LifecycleState.FamilyResourcesRetained
-                : LifecycleState.Disposed;
-            _disposeTask = null;
-        }
+        _lifecycle.CompleteDispose(!nativeHandlesSafe || HasOwnedTrackedResource(), disposeOperationId);
     }
 
     private Task<bool> EnsureTerminalAsync()
     {
-        lock (_lifecycleGate)
-        {
-            ObjectDisposedException.ThrowIf(_lifecycleState == LifecycleState.Disposed, this);
-            if (_terminalTask is null && _lifecycleState != LifecycleState.DisposalInProgress)
-            {
-                _lifecycleState = LifecycleState.TerminalRequested;
-            }
-            if (_terminalTask is { IsCompleted: true } && _terminalSucceeded == false)
-            {
-                _terminalTask = null;
-                _terminalSucceeded = null;
-            }
-            return _terminalTask ??= RunTerminalAsync();
-        }
+        var reservation = _lifecycle.GetOrStartTerminal(RunTerminalAsync);
+        return AwaitTerminal(reservation.Task, reservation.OperationId);
     }
 
-    private async Task<bool> RunTerminalAsync()
+    private async Task<bool> AwaitTerminal(Task<TerminalAttemptResult> task, long id)
+    {
+        TerminalAttemptResult result = await task.ConfigureAwait(false);
+        _lifecycle.CompleteTerminal(id, result);
+        return result.OverallSucceeded;
+    }
+
+    private async Task<TerminalAttemptResult> RunTerminalAsync(long operationId, bool nativeAlreadySucceeded)
     {
         // Never execute an injected/native call while the lifecycle monitor is held. Apart from avoiding
         // re-entrancy deadlocks, this lets Dispose join the same idempotent terminal operation.
         await Task.Yield();
-        lock (_lifecycleGate)
-        {
-            if (_lifecycleState != LifecycleState.DisposalInProgress)
-            {
-                _lifecycleState = LifecycleState.TerminalInProgress;
-            }
-        }
+        _lifecycle.SetStateIfNot(LifecycleState.TerminalInProgress, LifecycleState.DisposalInProgress);
 
-        if (_jobHandle != nint.Zero && _completionMonitor is null)
+        if (_ownershipLedger.CurrentOwned(NativeResourceKind.JobHandle) is not null && _completionMonitor is null)
         {
             try
             {
@@ -1543,95 +1365,83 @@ public sealed partial class ContainedProcess : IDisposable
             }
             catch (Exception ex)
             {
-                _failures.Record(ProcessOwnershipFailureClass.ProcessFailed,
+                _lifecycle.Record(ProcessOwnershipFailureClass.ProcessFailed,
                     $"Completion monitor startup failed during termination: {ex.Message}");
-                lock (_lifecycleGate) { _terminalSucceeded = false; }
-                return false;
+                return new TerminalAttemptResult(false, false);
             }
         }
 
-        if (_jobHandle == nint.Zero) { return true; }
-        NativeCallResult result = _terminalOperationSucceeded
+        nint jobHandle = _ownershipLedger.CurrentOwned(NativeResourceKind.JobHandle)?.Value ?? nint.Zero;
+        if (jobHandle == nint.Zero) { return new TerminalAttemptResult(true, true); }
+        NativeCallResult result = nativeAlreadySucceeded
             ? NativeCallResult.Success()
-            : InvokeTerminateJobObject(_jobHandle, uint.MaxValue);
-        _terminateJobObjectCalled = true;
+            : InvokeTerminateJobObject(jobHandle, uint.MaxValue);
+        if (!nativeAlreadySucceeded)
+        {
+            _terminateJobObjectCalled = true;
+        }
         if (result.Succeeded)
         {
-            _terminalOperationSucceeded = true;
         }
         else
         {
-            _failures.Record(ProcessOwnershipFailureClass.ProcessFailed,
+            _lifecycle.Record(ProcessOwnershipFailureClass.ProcessFailed,
                 $"TerminateJobObject failed with Win32 error {result.Win32Error}.");
         }
 
         bool familyProven = await EnsureFamilyProofAsync(cancellationToken: CancellationToken.None).ConfigureAwait(false);
         bool succeeded = result.Succeeded && familyProven;
-        lock (_lifecycleGate) { _terminalSucceeded = succeeded; }
-        return succeeded;
+        return new TerminalAttemptResult(result.Succeeded, succeeded);
     }
 
     private Task<bool> EnsureFamilyProofAsync(TimeSpan? bound = null, CancellationToken cancellationToken = default)
     {
-        lock (_lifecycleGate)
+        var reservation = _lifecycle.GetOrStartFamilyProof(
+            id => RunFamilyProofAsync(bound ?? _activeProcessZeroBound, id, cancellationToken), allowRetry: true);
+        return AwaitFamilyProof(reservation.Task, reservation.OperationId);
+    }
+
+    private async Task<bool> AwaitFamilyProof(Task<bool> task, long id)
+    {
+        bool proven = await task.ConfigureAwait(false);
+        bool current = _lifecycle.CompleteFamilyProof(id, proven);
+        if (current && !proven)
         {
-            if (_familyProofTask is { IsCompletedSuccessfully: true } && !_familyProofTask.Result
-                && _lifecycleState != LifecycleState.Disposed)
-            {
-                _familyProofTask = null;
-            }
-            return _familyProofTask ??= RunFamilyProofAsync(bound ?? _activeProcessZeroBound, cancellationToken);
+            // Only the active proof epoch may publish classification.  A timed-out or cancelled
+            // reservation that became stale must not poison a later successful proof epoch.
+            RecordFamilyProofFailure();
         }
+        else if (current && proven)
+        {
+            _lifecycle.SetStateIfNot(LifecycleState.FamilyProofCompleted, LifecycleState.DisposalInProgress);
+        }
+        return proven;
     }
 
     private void MarkDrainCompleted(bool standardError)
     {
-        lock (_lifecycleGate)
-        {
-            _nativeCalls.LifecycleBarriers?.SignalDrainsCompleted();
-        }
+        _nativeCalls.LifecycleBarriers?.SignalDrainsCompleted();
     }
 
     private void RecordFamilyProofFailure()
     {
         bool recordFailure;
-        lock (_lifecycleGate)
-        {
-            recordFailure = !_familyProofFailureRecorded;
-            _familyProofFailureRecorded = true;
-            if (_lifecycleState != LifecycleState.DisposalInProgress)
-            {
-                _lifecycleState = LifecycleState.FamilyProofFailed;
-            }
-        }
+        recordFailure = Interlocked.Exchange(ref _familyProofFailureRecorded, true) == false;
+        _lifecycle.SetStateIfNot(LifecycleState.FamilyProofFailed, LifecycleState.DisposalInProgress);
 
         if (recordFailure)
         {
-            _failures.Record(
+            _lifecycle.Record(
                 ProcessOwnershipFailureClass.ProcessFailed,
                 "Family exit could not be proven within the requested wait bound: ACTIVE_PROCESS_ZERO was not observed.");
         }
     }
 
-    private async Task<bool> RunFamilyProofAsync(TimeSpan bound, CancellationToken cancellationToken)
+    private async Task<bool> RunFamilyProofAsync(TimeSpan bound, long operationId, CancellationToken cancellationToken)
     {
         await WaitForActiveProcessZero(bound, cancellationToken).ConfigureAwait(false);
         bool barrierProof = _nativeCalls.LifecycleBarriers is { ActiveProcessZeroReleased: true };
         bool proven = (_activeProcessZeroObserved || barrierProof) && !_completionObservationStoppedForTests;
-        if (!proven)
-        {
-            RecordFamilyProofFailure();
-        }
-        else
-        {
-            lock (_lifecycleGate)
-            {
-                if (_lifecycleState != LifecycleState.DisposalInProgress)
-                {
-                    _lifecycleState = LifecycleState.FamilyProofCompleted;
-                }
-            }
-        }
         if (proven)
         {
             // Once ACTIVE_PROCESS_ZERO is proven, no later completion notification is needed.
@@ -1647,7 +1457,7 @@ public sealed partial class ContainedProcess : IDisposable
         {
             return await task.ConfigureAwait(false);
         }
-        _failures.Record(ProcessOwnershipFailureClass.DrainIncomplete, "A stream did not reach EOF within the cleanup bound.");
+        _lifecycle.Record(ProcessOwnershipFailureClass.DrainIncomplete, "A stream did not reach EOF within the cleanup bound.");
         return (string.Empty, true);
     }
 
@@ -1661,21 +1471,7 @@ public sealed partial class ContainedProcess : IDisposable
         return winner == task;
     }
 
-    private bool HasOwnedTrackedResource() =>
-        _ownershipLedger.HasOwned
-        ||
-        _processHandle != nint.Zero
-        || _threadHandle != nint.Zero
-        || _jobHandle != nint.Zero
-        || _completionPortHandle != nint.Zero
-        || _attributeListBuffer != nint.Zero
-        || _environmentBlockBuffer != nint.Zero
-        || _commandLineBuffer != nint.Zero
-        || _handleListBuffer != nint.Zero
-        || _jobListBuffer != nint.Zero
-        || _parentStdOutRead != nint.Zero
-        || _parentStdErrRead != nint.Zero
-        || _parentStdInWrite != nint.Zero;
+    private bool HasOwnedTrackedResource() => _ownershipLedger.HasOwned;
 
     private static NativeCallResult InvokeTerminateProcess(ProcessOwnershipOptions options, nint handle)
     {
@@ -1703,120 +1499,124 @@ public sealed partial class ContainedProcess : IDisposable
         get { lock (_teardownEvidenceGate) { return _teardownFailures.ToArray(); } }
     }
 
-    internal ProcessOwnershipFailureClass RecordedFailureClassForTests => _failures.Class;
+    internal ProcessOwnershipFailureClass RecordedFailureClassForTests => _lifecycle.Class;
 
-    private void CloseTracked(ref nint handle, NativeResourceKind kind, string label)
+    private bool ReleaseOwned(
+        NativeResourceKind kind, string label, List<string>? failures = null,
+        ReleaseObservationMode observationMode = ReleaseObservationMode.Cleanup)
     {
-        if (handle == nint.Zero)
+        NativeResourceSnapshot? owned = _ownershipLedger.CurrentOwned(kind);
+        if (owned is null)
         {
-            return;
+            return true;
         }
 
-        nint toClose = handle;
-        NativeCallResult result;
+        NativeCallResult result = NativeCallResult.Success();
+        bool buffer = kind is NativeResourceKind.HandleListBuffer or NativeResourceKind.JobListBuffer
+            or NativeResourceKind.AttributeListBuffer or NativeResourceKind.CommandLineBuffer
+            or NativeResourceKind.EnvironmentBlockBuffer;
         try
         {
-            result = _nativeCalls.CloseHandle?.Invoke(toClose)
-                ?? (NativeMethods.CloseHandle(toClose)
-                    ? NativeCallResult.Success()
-                    : NativeCallResult.Failure(Marshal.GetLastWin32Error()));
+            if (buffer)
+            {
+                if (kind == NativeResourceKind.AttributeListBuffer
+                    && owned.ReleasePrerequisite == NativeReleasePrerequisiteState.Ready)
+                {
+                    DeleteAttributeList(owned.Value);
+                    _ownershipLedger.CompleteReleasePrerequisite(kind);
+                }
+                Marshal.FreeHGlobal(owned.Value);
+            }
+            else
+            {
+                result = _nativeCalls.CloseHandle?.Invoke(owned.Value)
+                    ?? (NativeMethods.CloseHandle(owned.Value)
+                        ? NativeCallResult.Success()
+                        : NativeCallResult.Failure(Marshal.GetLastWin32Error()));
+            }
         }
         catch (Exception ex)
         {
-            lock (_teardownEvidenceGate)
-            {
-                _teardownOrderForTests.Add(label);
-                _teardownFailures.Add($"CloseHandle({label}) threw: {ex.Message}");
-            }
-
-            try
-            {
-                ResourceReleaseObserverForTests?.Invoke(label);
-            }
-            catch
-            {
-                // Test-only release notifications are non-authoritative and must not affect cleanup.
-            }
-
-            return;
+            result = NativeCallResult.Failure(ex.HResult);
+            failures?.Add($"{label}: {ex.Message}");
         }
 
+        _ownershipLedger.AttemptRelease(kind, result.Succeeded, result.Win32Error,
+            result.Succeeded ? $"Released {label}" : $"Release {label} failed: {result.Win32Error}", owned.Value);
+        if (observationMode == ReleaseObservationMode.Cleanup)
+        {
+            lock (_teardownEvidenceGate) { _teardownOrderForTests.Add(label); }
+        }
         if (result.Succeeded)
         {
-            lock (_lifecycleGate)
-            {
-                if (handle == toClose)
-                {
-                    handle = nint.Zero;
-                }
-            }
+            SetRawMirror(kind, nint.Zero);
         }
-        _ownershipLedger.AttemptRelease(kind, result.Succeeded, result.Win32Error,
-            result.Succeeded ? $"Released {label}" : $"CloseHandle({label}) failed: {result.Win32Error}", toClose);
-        lock (_teardownEvidenceGate)
+        else
         {
-            _teardownOrderForTests.Add(label);
-            if (!result.Succeeded)
-            {
-                _teardownFailures.Add($"CloseHandle({label}) failed: {result.Win32Error}");
-            }
+            string evidence = $"Release {label} failed: {result.Win32Error}";
+            failures?.Add(evidence);
+            lock (_teardownEvidenceGate) { _teardownFailures.Add(evidence); }
         }
+        if (observationMode == ReleaseObservationMode.Cleanup)
+        {
+            try { UnwindStepObserverForTests?.Invoke(label); }
+            catch { /* construction trace is test-only and non-authoritative */ }
+            try { ResourceReleaseObserverForTests?.Invoke(label); }
+            catch { /* release observers are non-authoritative */ }
+        }
+        return result.Succeeded;
+    }
 
-        try
+    private void SetRawMirror(NativeResourceKind kind, nint value)
+    {
+        switch (kind)
         {
-            ResourceReleaseObserverForTests?.Invoke(label);
+            case NativeResourceKind.ProcessHandle: _processHandle = value; break;
+            case NativeResourceKind.PrimaryThreadHandle: _threadHandle = value; break;
+            case NativeResourceKind.JobHandle: _jobHandle = value; break;
+            case NativeResourceKind.CompletionPortHandle: _completionPortHandle = value; break;
+            case NativeResourceKind.AttributeListBuffer: _attributeListBuffer = value; break;
+            case NativeResourceKind.EnvironmentBlockBuffer: _environmentBlockBuffer = value; break;
+            case NativeResourceKind.CommandLineBuffer: _commandLineBuffer = value; break;
+            case NativeResourceKind.HandleListBuffer: _handleListBuffer = value; break;
+            case NativeResourceKind.JobListBuffer: _jobListBuffer = value; break;
+            case NativeResourceKind.StdoutParentRead: _parentStdOutRead = value; break;
+            case NativeResourceKind.StderrParentRead: _parentStdErrRead = value; break;
+            case NativeResourceKind.StdinParentWrite: _parentStdInWrite = value; break;
         }
-        catch
+    }
+
+    private void CloseTracked(ref nint handle, NativeResourceKind kind, string label)
+    {
+        if (ReleaseOwned(kind, label))
         {
-            // Test-only release notifications are non-authoritative and must not affect cleanup.
+            handle = nint.Zero;
         }
     }
 
     private void FreeTracked(ref nint buffer, NativeResourceKind kind, string label, bool deleteAttributeList)
     {
-        if (buffer == nint.Zero)
+        if (ReleaseOwned(kind, label))
         {
-            return;
-        }
-
-        nint toFree = buffer;
-        try
-        {
-            if (deleteAttributeList)
-            {
-                DeleteAttributeList(toFree);
-            }
-
-            Marshal.FreeHGlobal(toFree);
-            _ownershipLedger.AttemptRelease(kind, true, 0, $"Released {label}");
             buffer = nint.Zero;
-            lock (_teardownEvidenceGate) { _teardownOrderForTests.Add(label); }
-        }
-        catch (Exception ex)
-        {
-            lock (_teardownEvidenceGate)
-            {
-                _teardownOrderForTests.Add(label);
-                _teardownFailures.Add($"Free({label}) threw: {ex.Message}");
-            }
-        }
-
-        try
-        {
-            ResourceReleaseObserverForTests?.Invoke(label);
-        }
-        catch
-        {
-            // Test-only release notifications are non-authoritative and must not affect cleanup.
         }
     }
 
     private void StartDrains(TimeSpan timeout)
     {
         _drainTimeout = timeout;
-        _drainCts = new CancellationTokenSource();
-        _stdOutDrain = Task.Run(() => DrainPipe(_parentStdOutRead, timeout, false, _drainCts.Token));
-        _stdErrDrain = Task.Run(() => DrainPipe(_parentStdErrRead, timeout, true, _drainCts.Token));
+        long drainOperationId = _lifecycle.BeginDrainEpoch().OperationId;
+        _drainOperationId = drainOperationId;
+        CancellationTokenSource drainCts = new();
+        _drainCts = drainCts;
+        nint stdout = _ownershipLedger.CurrentOwned(NativeResourceKind.StdoutParentRead)?.Value ?? nint.Zero;
+        nint stderr = _ownershipLedger.CurrentOwned(NativeResourceKind.StderrParentRead)?.Value ?? nint.Zero;
+        CancellationToken token = drainCts.Token;
+        _stdOutDrain = Task.Run(() => DrainPipe(stdout, timeout, false, token));
+        _stdErrDrain = Task.Run(() => DrainPipe(stderr, timeout, true, token));
+        _ = Task.WhenAll(_stdOutDrain, _stdErrDrain).ContinueWith(
+            _ => _lifecycle.CompleteDrainEpoch(drainOperationId),
+            CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
     private (string Text, bool Truncated) DrainPipe(
@@ -1852,7 +1652,7 @@ public sealed partial class ContainedProcess : IDisposable
                 {
                     if (Interlocked.Exchange(ref _peekFailureRecorded, 1) == 0)
                     {
-                        _failures.RecordSecondary($"PeekNamedPipe failed with Win32 error {peek.Win32Error}.");
+                        _lifecycle.RecordSecondary($"PeekNamedPipe failed with Win32 error {peek.Win32Error}.");
                     }
                     peekFailed = true;
                     // A failed probe does not establish that a synchronous read is safe. Preserve the
@@ -1940,7 +1740,8 @@ public sealed partial class ContainedProcess : IDisposable
         const int PollMs = 25;
         while (!cancellationToken.IsCancellationRequested)
         {
-            NativeWaitResult call = InvokeWaitForSingleObject(_processHandle, PollMs);
+            nint processHandle = _ownershipLedger.CurrentOwned(NativeResourceKind.ProcessHandle)?.Value ?? nint.Zero;
+            NativeWaitResult call = InvokeWaitForSingleObject(processHandle, PollMs);
             uint result = call.Result;
             if (result == NativeMethods.WAIT_OBJECT_0)
             {
@@ -1988,8 +1789,9 @@ public sealed partial class ContainedProcess : IDisposable
     private NativeCallResult<uint> QueryActiveProcessCount()
     {
         var accounting = default(NativeMethods.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION);
-        if (!NativeMethods.QueryInformationJobObject(
-            _jobHandle,
+        nint jobHandle = _ownershipLedger.CurrentOwned(NativeResourceKind.JobHandle)?.Value ?? nint.Zero;
+        if (jobHandle == nint.Zero || !NativeMethods.QueryInformationJobObject(
+            jobHandle,
             NativeMethods.JobObjectBasicAccountingInformation,
             ref accounting,
             (uint)Marshal.SizeOf<NativeMethods.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>(),
@@ -2037,8 +1839,8 @@ public sealed partial class ContainedProcess : IDisposable
             {
                 attemptedCts = new CancellationTokenSource();
                 var token = attemptedCts.Token;
-                nint port = _completionPortHandle;
-                nint expectedKey = _jobHandle;
+                nint port = _ownershipLedger.CurrentOwned(NativeResourceKind.CompletionPortHandle)?.Value ?? nint.Zero;
+                nint expectedKey = _ownershipLedger.CurrentOwned(NativeResourceKind.JobHandle)?.Value ?? nint.Zero;
                 Task monitor = Task.Run(() =>
                 {
                     while (!token.IsCancellationRequested)
@@ -2058,7 +1860,7 @@ public sealed partial class ContainedProcess : IDisposable
                             }
                             _nativeCalls.LifecycleBarriers?.SignalFamilyProofPending();
                             _nativeCalls.LifecycleBarriers?.WaitForRelease();
-                            lock (_lifecycleGate) { _activeProcessZeroObserved = true; }
+                            lock (_resourceGate) { _activeProcessZeroObserved = true; }
                             return;
                         }
                     }
@@ -2112,13 +1914,13 @@ public sealed partial class ContainedProcess : IDisposable
     }
 
     private static nint BuildAttributeList(
-        nint handleListBuffer, int handleCount, nint jobListBuffer, Stack<Action> unwind,
-        ProcessOwnershipNativeCalls? nativeCalls)
+        nint handleListBuffer, int handleCount, nint jobListBuffer,
+        ProcessOwnershipNativeCalls? nativeCalls, NativeOwnershipLedger ledger)
     {
         nint listSize = nint.Zero;
         NativeMethods.InitializeProcThreadAttributeList(nint.Zero, 2, 0, ref listSize);
         nint attributeListBuffer = Marshal.AllocHGlobal(listSize);
-        bool initialized = false;
+        ledger.Acquire(NativeResourceKind.AttributeListBuffer, attributeListBuffer, "Alloc attribute list");
         try
         {
             NativeCallResult initialization = nativeCalls?.InitializeProcThreadAttributeList is { } initialize
@@ -2130,8 +1932,7 @@ public sealed partial class ContainedProcess : IDisposable
             {
                 throw Win32("InitializeProcThreadAttributeList", initialization.Win32Error);
             }
-            initialized = true;
-
+            ledger.MarkReleasePrerequisiteReady(NativeResourceKind.AttributeListBuffer);
             if (!NativeMethods.UpdateProcThreadAttribute(
                 attributeListBuffer, 0, NativeMethods.PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
                 handleListBuffer, (nint)(handleCount * nint.Size), nint.Zero, nint.Zero)
@@ -2146,11 +1947,6 @@ public sealed partial class ContainedProcess : IDisposable
         }
         catch
         {
-            if (initialized)
-            {
-                DeleteAttributeList(attributeListBuffer);
-            }
-            Marshal.FreeHGlobal(attributeListBuffer);
             throw;
         }
     }

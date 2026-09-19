@@ -2,7 +2,7 @@
 
 ## State
 
-`Blocked`
+`ReviewRequired`
 
 ## Authority and frozen state
 
@@ -697,6 +697,83 @@ predicate remain incomplete. No focused command ran after these edits. No matchi
 source-tree staging directory was present at inspection, and `git diff --check` passed. The two-repair limit returned
 I100-A to Blocked; no continuation, transfer, revert, compile, gate, Ahmad request, merge, or GH-107 work is authorized
 without a new owner decision.
+
+The owner authorized preserving the incomplete three-file diff externally, restoring only those files to committed
+head, and implementing F8, F7, and F6 as three bounded sequential stages. The preserved patch is
+`C:\Users\user\AppData\Local\Temp\opencode\I100-A-f6-f7-f8-incomplete-20260918.patch`, 51,590 bytes, SHA-256
+`210A193A515F94805A6C06697301D10B7EA96A8BB5C3F2AA81F9C5C8D900732B`; it is recovery evidence, not repository
+content. The exact restore completed with a clean worktree while retaining committed red tests. Each stage gets focused
+subset verification; the full 76-test lane and independent review run only after integration. The final gate and GH-107
+remain prohibited.
+
+#### Sequential F8/F7/F6 integration stop
+
+F8 strict slot identity, F7 sole ledger ownership, and F6 production coordinator authority were integrated in the
+preserved worktree. The isolated SDK 10.0.302 focused command compiled the candidate and reported `Failed 7, Passed 69,
+Skipped 0, Total 76`. All seven failures share one regression signature: the four construction-time parent-copy
+releases (`stdin child`, `stdout child`, `stderr child`, and `stdin parent`) are published through the disposal/unwind
+observation streams, which contaminates the frozen exact release-order assertions; the transfer-boundary test also
+rejects those observations because they are not retained-owner cleanup steps. The frozen red stop rule returned I100-A
+to Blocked with the six modified files preserved. No independent review, final gate, Ahmad request, merge, or GH-107
+work ran.
+
+The owner authorized one bounded repair of this single regression signature. Successful-construction parent-copy
+releases must remain exact ledger release events but must not enter the teardown/unwind observer streams reserved for
+construction-failure cleanup and disposal. All 76 tests are frozen; no assertion may be weakened or removed. Run the
+complete focused lane and continue to independent review only at 76/76. The final gate, Ahmad request, merge, and
+GH-107 remain withheld.
+
+The first bounded repair removed the four early parent-copy observations and improved focused verification to 74/76.
+The two remaining failures are deeper assertions from the same original seven: failed cleanup attempts are absent from
+the immutable teardown chronology, and the process/thread ledger acquisition sequence reverses their frozen release
+order during construction unwind. One final repair round may change only `ProcessOwnership.cs` and
+`ProcessOwnership.Resources.cs` to preserve attempted-release chronology and acquisition-ordered snapshots while
+restoring dependency-safe reverse release. Remaining red returns I100-A to Blocked.
+
+The final repair restored failed-attempt chronology and process-before-thread reverse release, improving the focused
+result to `Failed 1, Passed 75, Skipped 0, Total 76`. The sole remaining failure is
+`PartialConstructionUnwindClosesResourcesInExactTrueReverseAcquisitionOrder`: it expects a final `stdin pipe handle`
+unwind observation, but successful construction already released the stdin parent copy and the new boundary correctly
+withheld that early event, leaving no owned stdin slot during later fault cleanup. Resolving whether the immutable
+chronology should defer that real earlier release or revise its phase interpretation requires a new owner decision. The
+two-round stop rule returned I100-A to Blocked; no independent review or final gate ran.
+
+The owner authorized one frozen-test contract amendment for this contradiction. The partial-unwind test must remove the
+already released stdin parent handle from its cleanup-order expectation and replace that stale event with typed snapshot
+proof that `StdinParentWrite` was acquired, released exactly once during construction, and is no longer owned. Production
+implementation is frozen. The suite remains 76 tests; focused verification and independent review are required before
+any later gate or Ahmad request.
+
+The authorized amendment changed only `ProcessOwnershipTests.cs`: the stale stdin unwind entry was replaced by exact
+typed snapshot assertions for positive acquisition sequence, `Released` state, one release attempt, and zero current
+value. The isolated SDK 10.0.302 focused lane passed 76/76 with zero skipped. Implementation is complete and moves to
+independent review; the final gate remains withheld until findings are resolved.
+
+Independent complete-candidate review returned five findings. F1 High: a faulted first wait task is cached permanently.
+F2 High: production lacks the frozen wait, drain, and disposal operation epochs and stale-completion admission. F3
+Medium: several native lifecycle decisions still use raw mirrors rather than ledger-owned values. F4 Medium: production
+coverage does not prove proof-only terminal retry after an initially unproven family epoch. F5 Medium: the amended stdin
+assertion proves final release state but not that release preceded later unwind operations. The frozen rule at lines
+603-605 requires Blocked when independent review finds a new High ownership/lifecycle defect. The branch is preserved;
+no finding repair, final gate, Ahmad request, merge, or GH-107 work is authorized without a new owner decision.
+
+The owner authorized one cohesive repair epoch for I100-A-F1 through F5 on the preserved branch. Existing tests may be
+strengthened but the suite remains 76 total. The repair must add production wait, drain, and disposal epochs with stale
+completion rejection; prevent permanent caching of faulted waits; use ledger-owned native values for lifecycle calls;
+prove production proof-only terminal retry after native success; and prove stdin release chronology. Focused verification
+and a new independent complete-candidate review are required. The final gate remains withheld.
+
+The Test Writer retained 76 tests and established a 74/76 red baseline for F1/F2 while strengthened F4/F5 production
+claims passed. The implementation repair added exact per-kind production epochs and stale completion admission, made
+faulted wait and terminal reservations retryable, sourced lifecycle native values from ledger-owned snapshots, and
+preserved proof-only terminal retry plus typed stdin chronology. Orchestrator inspection corrected cross-kind completion
+coupling before review. The final focused SDK 10.0.302 run passed 76/76 with zero skipped and `git diff --check` passed.
+F1-F5 are Fixed pending independent confirmation; no final gate has run.
+
+The new independent complete-candidate review returned PASS with no findings and confirmed F1-F5 Fixed. Residual risk
+is limited to the intentionally unrun final gate and later real Windows-native verification outside the focused seams.
+I100-A remains ReviewRequired and stops for Ahmad. Do not run the final gate, merge, close GH-106, or begin GH-107
+before Ahmad approval.
 
 ### Owner platform-floor amendment
 
