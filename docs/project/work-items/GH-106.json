@@ -1,0 +1,23 @@
+{
+  "baseline": "ab6e3e1cf16213ee5346506b16949fa32c4ddfa4",
+  "branch": "integration/issue-106-process-ownership-ahmad",
+  "checkpointId": "I100-A",
+  "checkpointPath": "docs/work/quality/I100-A",
+  "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/pull/109#issuecomment-5709738022",
+  "dependencies": [],
+  "expectedGithubState": "OPEN",
+  "id": "GH-106",
+  "kind": "github-issue",
+  "lifecycle": "ReviewRequired",
+  "lifecycleLabel": "review-required",
+  "nextAction": "Independent complete-candidate review passed with F1-F5 Fixed and no findings. Stop at ReviewRequired for Ahmad; do not run the final gate, merge, or begin GH-107 before Ahmad approval.",
+  "number": 106,
+  "owner": "abood",
+  "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/109",
+  "schemaVersion": 1,
+  "selectedForExecution": true,
+  "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/106",
+  "statusReason": "Owner-authorized F1-F5 repair passed 76/76 under SDK 10.0.302 with zero skipped. New independent complete-candidate review returned PASS with no findings and confirmed F1-F5 Fixed. Final gate remains withheld pending Ahmad approval.",
+  "title": "[Testing] Prove Windows contained-process ownership primitive",
+  "track": "quality"
+}

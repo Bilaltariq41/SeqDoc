@@ -1,10 +1,10 @@
 {
-  "activeCheckpointId": null,
-  "activeCheckpointPath": null,
+  "activeCheckpointId": "I100-A",
+  "activeCheckpointPath": "docs/work/quality/I100-A",
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
-  "mode": "idle",
-  "nextAction": "No work item is selected.",
+  "mode": "active",
+  "nextAction": "Independent complete-candidate review passed with F1-F5 Fixed and no findings. Stop at ReviewRequired for Ahmad; do not run the final gate, merge, or begin GH-107 before Ahmad approval.",
   "schemaVersion": 1,
-  "sourceId": null
+  "sourceId": "GH-106"
 }

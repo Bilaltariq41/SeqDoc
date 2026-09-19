@@ -1,0 +1,2887 @@
+using System.Globalization;
+using System.Reflection;
+using System.Text;
+using RuntimeArchitecture = System.Runtime.InteropServices.Architecture;
+using Xunit;
+
+namespace SeqDoc.AcceptanceTests;
+
+/// <summary>
+/// GH-106 / I100-A acceptance for <c>ProcessOwnership.cs</c>. Every claim here targets the real Win32
+/// producer (<see cref="ContainedProcess"/>/<see cref="NativeMethods"/>) driving the deterministic
+/// <c>SeqDoc.AcceptanceTests.ProcessOwnershipStub</c> child process — the first observable consumer for
+/// this primitive, per the checkpoint's evidence-chain requirement. Grouped one-per-risk per the
+/// checkpoint's "Soft test budget" (~10-12 grouped claims); see the numbered group comment above each
+/// test for the exact budget item it proves.
+/// </summary>
+public sealed class ProcessOwnershipTests
+{
+    private static readonly string StubExecutablePath = ResolveStubExecutablePath();
+
+    // ---- Group 1: platform admission ----------------------------------------------------------------
+
+    [Fact]
+    public void PlatformAdmissionRealMachineAndSyntheticNegativesFailClosed()
+    {
+        // Real evaluation on the actual CI/dev machine — proves the positive admission path when this
+        // machine genuinely is Windows x64 (the only supported lane); this repo has no Windows-x64
+        // negative executable lane available, so a real negative machine is not exercised here.
+        bool actual = ProcessOwnershipPlatform.IsSupported();
+        Assert.Equal(
+            OperatingSystem.IsWindows()
+                && System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == RuntimeArchitecture.X64
+                && Environment.OSVersion.Version >= new Version(10, 0),
+            actual);
+
+        // Synthetic claims use the amended pure evaluator seam (unit-level fake, never skipped):
+        // Windows 10 x64 is admitted; pre-10 x64 and every non-x64 architecture fail closed.
+        Assert.True(EvaluatePlatform(true, RuntimeArchitecture.X64, new Version(10, 0)));
+        Assert.False(EvaluatePlatform(true, RuntimeArchitecture.X64, new Version(6, 3)));
+        Assert.False(EvaluatePlatform(true, RuntimeArchitecture.Arm64, new Version(10, 0)));
+        Assert.False(EvaluatePlatform(true, RuntimeArchitecture.X86, new Version(10, 0)));
+        Assert.False(EvaluatePlatform(false, RuntimeArchitecture.X64, new Version(10, 0)));
+    }
+
+    // ---- Group 2: executable/argument/environment vectors -------------------------------------------
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("has \"embedded\" quotes")]
+    [InlineData(@"trailing\backslash\")]
+    [InlineData(@"c:\path\with\backslashes\")]
+    [InlineData("plain")]
+    public async Task ArgumentQuotingRoundTripsThroughRealChildArgv(string tricky)
+    {
+        var options = NewOptions(["echo-args", tricky, "sentinel-after"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+        Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+        Assert.Equal($"0:{tricky}\r\n1:sentinel-after\r\n", wait.StdOut.Text);
+    }
+
+    [Fact]
+    public async Task EnvironmentIsDeterministicExplicitSetNotAmbientInheritance()
+    {
+        var env = DefaultEnvironment();
+        env["SEQDOC_I100A_ONLY_IN_CHILD"] = "expected-value";
+        var options = NewOptions(["print-env", "SEQDOC_I100A_ONLY_IN_CHILD"], env);
+
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+        Assert.Equal("expected-value", wait.StdOut.Text);
+
+        // An ambient variable set only in THIS test process (never added to the explicit child
+        // environment) must not silently leak through to the child.
+        System.Environment.SetEnvironmentVariable("SEQDOC_I100A_AMBIENT_ONLY", "must-not-leak");
+        try
+        {
+            var options2 = NewOptions(["print-env", "SEQDOC_I100A_AMBIENT_ONLY"]);
+            var result2 = ContainedProcess.Start(options2);
+            Assert.True(result2.Succeeded, result2.Detail);
+            using var process2 = result2.Process!;
+            var wait2 = await process2.WaitAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+            Assert.Equal("<unset>", wait2.StdOut.Text);
+        }
+        finally
+        {
+            System.Environment.SetEnvironmentVariable("SEQDOC_I100A_AMBIENT_ONLY", null);
+        }
+    }
+
+    [Theory]
+    [InlineData("relative\\path\\stub.exe")]
+    [InlineData(@"C:\this\path\does\not\exist\stub.exe")]
+    public void NonRootedOrMissingExecutablePathFailsClosedWithoutPathSearch(string badPath)
+    {
+        var options = new ProcessOwnershipOptions { ExecutablePath = badPath, Environment = DefaultEnvironment() };
+        var result = ContainedProcess.Start(options);
+        Assert.False(result.Succeeded);
+        Assert.Equal(ProcessOwnershipFailureClass.ProcessConstructionFailed, result.FailureClass);
+        Assert.Null(result.Process);
+    }
+
+    // ---- Group 3: exact 3-handle inheritance and rejection of an unrelated handle -------------------
+
+    [Fact]
+    public async Task OnlyTheThreeStdHandlesAreInheritedAndAnUnrelatedHandleIsNot()
+    {
+        // Canary: an OS-inheritable handle that exists in THIS process but is never placed in the
+        // primitive's PROC_THREAD_ATTRIBUTE_HANDLE_LIST.
+        string canaryPath = Path.Combine(Path.GetTempPath(), $"seqdoc-i100a-canary-{Guid.NewGuid():N}.tmp");
+        File.WriteAllText(canaryPath, "canary");
+        using var canary = new FileStream(canaryPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        nint canaryHandle = canary.SafeFileHandle.DangerousGetHandle();
+        Assert.True(NativeMethods.SetHandleInformation(canaryHandle, NativeMethods.HANDLE_FLAG_INHERIT, NativeMethods.HANDLE_FLAG_INHERIT));
+
+        var options = NewOptions(["sleep", "2000"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        try
+        {
+            nint currentProcess = NativeMethods.GetCurrentProcess();
+
+            // Positive control: each of the 3 std pipe child-side handles IS present in the child.
+            AssertHandleValuePresentInChild(process.ProcessHandleForTests, currentProcess, process.StdOutChildHandleValueForTests, expectedPresent: true);
+            AssertHandleValuePresentInChild(process.ProcessHandleForTests, currentProcess, process.StdErrChildHandleValueForTests, expectedPresent: true);
+            AssertHandleValuePresentInChild(process.ProcessHandleForTests, currentProcess, process.StdInChildHandleValueForTests, expectedPresent: true);
+
+            // Negative: the canary, despite being OS-inheritable, was excluded from the attribute list
+            // and must NOT be present in the child under bInheritHandles = TRUE.
+            AssertHandleValuePresentInChild(process.ProcessHandleForTests, currentProcess, canaryHandle, expectedPresent: false);
+        }
+        finally
+        {
+            process.Terminate();
+            await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            File.Delete(canaryPath);
+        }
+    }
+
+    private static void AssertHandleValuePresentInChild(nint childProcessHandle, nint currentProcess, nint handleValue, bool expectedPresent)
+    {
+        bool duplicated = NativeMethods.DuplicateHandle(
+            childProcessHandle, handleValue, currentProcess, out nint dup, 0, false, 0x00000002 /* DUPLICATE_SAME_ACCESS */);
+        if (duplicated)
+        {
+            NativeMethods.CloseHandle(dup);
+        }
+
+        Assert.Equal(expectedPresent, duplicated);
+    }
+
+    // ---- Group 4: creation-time containment and construction unwind -------------------------------
+
+    [Fact]
+    public async Task CreationTimeJobListAdmissionContainsSuspendedChild()
+    {
+        bool? observedWhileSuspended = null;
+        nint duplicatedProcess = nint.Zero;
+        var observer = FindStaticTestSeam("PostCreateProcessObserverForTests", typeof(Action<nint, nint>));
+        Assert.True(observer is not null,
+            "Expected post-CreateProcess observer seam receiving job/process handles while suspended.");
+
+        try
+        {
+            observer!.SetValue(null, (Action<nint, nint>)((job, proc) =>
+            {
+                Assert.True(NativeMethods.IsProcessInJob(proc, job, out bool result));
+                observedWhileSuspended = result;
+                Assert.True(NativeMethods.DuplicateHandle(
+                    NativeMethods.GetCurrentProcess(), proc,
+                    NativeMethods.GetCurrentProcess(), out duplicatedProcess, 0, false, 0x00000002));
+            }));
+            var options = NewOptions(["sleep", "50"]);
+            var result = ContainedProcess.Start(options);
+            Assert.True(result.Succeeded, result.Detail);
+            using var process = result.Process!;
+
+            Assert.True(
+                observedWhileSuspended == true,
+                "The job must already contain the process before ResumeThread is called.");
+
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+        }
+        finally
+        {
+            observer?.SetValue(null, null);
+            if (duplicatedProcess != nint.Zero)
+            {
+                NativeMethods.CloseHandle(duplicatedProcess);
+            }
+        }
+    }
+
+    [Fact]
+    public void CreationFaultWithFailedTerminateStillProvesJobFamilyExitAroundSuspendedChild()
+    {
+        nint duplicatedProcess = nint.Zero;
+        nint duplicatedJob = nint.Zero;
+        int terminateJobCalls = 0;
+        var observer = FindStaticTestSeam("PostCreateProcessObserverForTests", typeof(Action<nint, nint>));
+        Assert.True(observer is not null,
+            "Expected post-CreateProcess observer seam receiving job/process handles while suspended.");
+        try
+        {
+            observer!.SetValue(null, (Action<nint, nint>)((job, process) =>
+            {
+                DuplicateCurrentHandle(process, out duplicatedProcess);
+                DuplicateCurrentHandle(job, out duplicatedJob);
+            }));
+            var result = ContainedProcess.Start(
+                NewOptions(["sleep", "5000"], nativeCalls: new ProcessOwnershipNativeCalls
+                {
+                    TerminateProcess = (_, _) => NativeCallResult.Failure(8101),
+                    WaitForSingleObject = (_, _) => NativeWaitResult.Failed(8102),
+                    TerminateJobObject = (job, exitCode) =>
+                    {
+                        Interlocked.Increment(ref terminateJobCalls);
+                        return NativeMethods.TerminateJobObject(job, exitCode)
+                            ? NativeCallResult.Success()
+                            : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+                    },
+                }),
+                ConstructionFaultPoint.AfterProcessCreatedBeforeResume);
+
+            Assert.False(result.Succeeded);
+            Assert.Equal(ProcessOwnershipFailureClass.ProcessConstructionFailed, result.FailureClass);
+            Assert.Contains("8101", result.Detail, StringComparison.Ordinal);
+            Assert.Contains("8102", result.Detail, StringComparison.Ordinal);
+            Assert.Null(result.CleanupOwner);
+            Assert.True(terminateJobCalls >= 1, "Construction unwind must explicitly terminate the job family.");
+            Assert.NotEqual(nint.Zero, duplicatedProcess);
+            Assert.NotEqual(nint.Zero, duplicatedJob);
+            Assert.Equal(NativeMethods.WAIT_OBJECT_0,
+                NativeMethods.WaitForSingleObject(duplicatedProcess, 5000));
+            Assert.Equal(0u, QueryJobActiveProcesses(duplicatedJob));
+        }
+        finally
+        {
+            observer?.SetValue(null, null);
+            if (duplicatedJob != nint.Zero && QueryJobActiveProcesses(duplicatedJob) > 0)
+            {
+                NativeMethods.TerminateJobObject(duplicatedJob, uint.MaxValue);
+                uint waitResult = NativeMethods.WaitForSingleObject(duplicatedProcess, 5000);
+                if (waitResult == NativeMethods.WAIT_FAILED)
+                {
+                    _ = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                }
+            }
+            if (duplicatedProcess != nint.Zero)
+            {
+                NativeMethods.CloseHandle(duplicatedProcess);
+            }
+            if (duplicatedJob != nint.Zero)
+            {
+                NativeMethods.CloseHandle(duplicatedJob);
+            }
+        }
+    }
+
+    [Fact]
+    public void OwnershipTransferFaultUsesPreinstalledCleanupOwnerToProveFamilyExit()
+    {
+        nint duplicatedProcess = nint.Zero;
+        nint duplicatedJob = nint.Zero;
+        int terminateJobCalls = 0;
+        ContainedProcess? unexpectedProcess = null;
+        var releaseObservations = new System.Collections.Concurrent.ConcurrentQueue<(
+            string Label, uint? ActiveProcesses, string? QueryError)>();
+        var postCreate = FindStaticTestSeam("PostCreateProcessObserverForTests", typeof(Action<nint, nint>));
+        Assert.NotNull(postCreate);
+        try
+        {
+            postCreate!.SetValue(null, (Action<nint, nint>)((job, process) =>
+            {
+                // Keep both duplicates alive: the duplicate job prevents kill-on-close from making
+                // this assertion pass merely because the implementation closed its last job handle.
+                DuplicateCurrentHandle(process, out duplicatedProcess);
+                DuplicateCurrentHandle(job, out duplicatedJob);
+            }));
+            ContainedProcess.UnwindStepObserverForTests = label =>
+            {
+                try
+                {
+                    releaseObservations.Enqueue((label, QueryJobActiveProcesses(duplicatedJob), null));
+                }
+                catch (Exception ex)
+                {
+                    releaseObservations.Enqueue((label, null, ex.Message));
+                }
+            };
+
+            var result = ContainedProcess.Start(
+                NewOptions(["sleep", "5000"], nativeCalls: new ProcessOwnershipNativeCalls
+                {
+                    TerminateProcess = (_, _) => NativeCallResult.Failure(8111),
+                    WaitForSingleObject = (_, _) => NativeWaitResult.Failed(8112),
+                    TerminateJobObject = (job, exitCode) =>
+                    {
+                        Interlocked.Increment(ref terminateJobCalls);
+                        return NativeMethods.TerminateJobObject(job, exitCode)
+                            ? NativeCallResult.Success()
+                            : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+                    },
+                }),
+                ConstructionFaultPoint.AfterOwnershipTransferBeforeMonitor);
+            unexpectedProcess = result.Process;
+
+            Assert.False(result.Succeeded);
+            Assert.Equal(ProcessOwnershipFailureClass.ProcessConstructionFailed, result.FailureClass);
+            Assert.Contains("8111", result.Detail, StringComparison.Ordinal);
+            Assert.Contains("8112", result.Detail, StringComparison.Ordinal);
+            Assert.Null(result.CleanupOwner);
+            Assert.True(terminateJobCalls >= 1, "Transferred cleanup must explicitly terminate the job family.");
+            Assert.NotEqual(nint.Zero, duplicatedProcess);
+            Assert.NotEqual(nint.Zero, duplicatedJob);
+            Assert.Equal(NativeMethods.WAIT_OBJECT_0,
+                NativeMethods.WaitForSingleObject(duplicatedProcess, 5000));
+            Assert.Equal(0u, QueryJobActiveProcesses(duplicatedJob));
+
+            // Only real transferred-owner releases count. Pre-transfer no-op unwind entries must not
+            // manufacture release labels, and no transferred resource may be released before zero proof.
+            Assert.NotEmpty(releaseObservations);
+            Assert.All(releaseObservations, release =>
+            {
+                Assert.Contains(release.Label, ExpectedPartialUnwindOrder);
+                Assert.Null(release.QueryError);
+                Assert.Equal(0u, release.ActiveProcesses);
+            });
+        }
+        finally
+        {
+            ContainedProcess.UnwindStepObserverForTests = null;
+            postCreate!.SetValue(null, null);
+            if (duplicatedJob != nint.Zero && QueryJobActiveProcesses(duplicatedJob) > 0)
+            {
+                NativeMethods.TerminateJobObject(duplicatedJob, uint.MaxValue);
+                _ = NativeMethods.WaitForSingleObject(duplicatedProcess, 5000);
+            }
+            unexpectedProcess?.Dispose();
+            if (duplicatedProcess != nint.Zero)
+            {
+                NativeMethods.CloseHandle(duplicatedProcess);
+            }
+            if (duplicatedJob != nint.Zero)
+            {
+                NativeMethods.CloseHandle(duplicatedJob);
+            }
+        }
+    }
+
+    // ---- Group 5: parent-exit-survival with contained grandchild -------------------------------------
+
+    [Fact]
+    public async Task ParentExitsNormallyAndContainedGrandchildSurvivesThenIsExplicitlyTerminated()
+    {
+        // The grandchild inherits the still-open, still-OS-inheritable stdout/stderr pipe write handles
+        // from the immediate parent when the parent spawns it (the parent is an ordinary, unrestricted
+        // Process.Start call — this primitive's PROC_THREAD_ATTRIBUTE_HANDLE_LIST restriction applies
+        // only to processes THIS primitive itself creates, not to further descendants). That means the
+        // pipes will not reach EOF until the grandchild itself closes them, so this test deliberately
+        // proves "still running" via the marker file and the query phase BEFORE calling WaitAsync (which
+        // drains those pipes), then only drains/verifies output AFTER Terminate() has force-closed every
+        // process (and therefore every inherited handle) in the job.
+        string markerPath = Path.Combine(Path.GetTempPath(), $"seqdoc-i100a-grandchild-{Guid.NewGuid():N}.marker");
+        var options = NewOptions(["spawn-grandchild", markerPath, "8000"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        try
+        {
+            await WaitForFileToExistAsync(markerPath, TimeSpan.FromSeconds(5));
+            Assert.False(File.Exists(markerPath + ".completed"));
+            Assert.False(process.HasObservedActiveProcessZero());
+
+            // Explicitly terminate the whole family; the grandchild must never reach natural completion.
+            Assert.True(process.Terminate());
+
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+            Assert.Equal(0, wait.ExitCode); // the immediate parent's own, already-recorded natural exit code
+            Assert.Contains("parent-exited", wait.StdOut.Text, StringComparison.Ordinal);
+            Assert.True(wait.ActiveProcessZeroObserved);
+            Assert.False(File.Exists(markerPath + ".completed"));
+        }
+        finally
+        {
+            File.Delete(markerPath);
+            File.Delete(markerPath + ".completed");
+        }
+    }
+
+    [Fact]
+    public async Task WaitAsyncDirectlyAgainstLiveGrandchildDrainsWithinBoundInsteadOfHanging()
+    {
+        // GH106-F1 repair proof: unlike the sibling test above (which deliberately routes around the
+        // hang by calling Terminate() before WaitAsync), this test calls WaitAsync directly against a
+        // still-alive, pipe-write-handle-holding grandchild — exactly the condition that hung
+        // indefinitely before the repair, because DrainPipe's synchronous Read() blocks inside the
+        // kernel and its own deadline check only runs between completed reads. The grandchild sleeps far
+        // longer (8s) than the WaitAsync timeout given here (3s), so if the fix did not force-unblock the
+        // blocked read, this test would hang until xunit's own default test-collection timeout rather
+        // than returning within the asserted bound.
+        string markerPath = Path.Combine(Path.GetTempPath(), $"seqdoc-i100a-livewait-{Guid.NewGuid():N}.marker");
+        var options = NewOptions(["spawn-grandchild", markerPath, "8000"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        try
+        {
+            await WaitForFileToExistAsync(markerPath, TimeSpan.FromSeconds(5));
+            Assert.False(File.Exists(markerPath + ".completed"));
+            Assert.False(process.HasObservedActiveProcessZero());
+
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(3), CancellationToken.None);
+            stopwatch.Stop();
+
+            // Bounded well short of the grandchild's own 8s sleep and far short of a real hang: proves
+            // the drain race actually forced TerminateJobObject to unblock the stuck read rather than
+            // waiting for the grandchild's natural exit or timing out only at the harness level.
+            Assert.True(
+                stopwatch.Elapsed < TimeSpan.FromSeconds(6),
+                $"WaitAsync took {stopwatch.Elapsed}, which is not bounded by the 3s drain deadline.");
+
+            Assert.Equal(0, wait.ExitCode); // the immediate parent's own, already-recorded natural exit code
+
+            // GH106-R2-F2 repair consequence: the live grandchild also prevents ACTIVE_PROCESS_ZERO from
+            // ever being observed within WaitAsync's own 3s bound, so the exited==true branch now records
+            // ProcessFailed ("family exit could not be proven") before the drain race below even runs.
+            // Per the frozen failure-class precedence table, ProcessFailed (3) legitimately outranks
+            // DrainIncomplete (4) — both describe the same root cause (the live descendant), and
+            // ProcessFailed is the more fundamental of the two facts, so first-write-wins correctly
+            // surfaces it instead of the drain's own truncation.
+            Assert.Equal(ProcessOwnershipFailureClass.ProcessFailed, wait.FailureClass);
+            Assert.Contains("parent-exited", wait.StdOut.Text, StringComparison.Ordinal);
+            Assert.False(File.Exists(markerPath + ".completed"));
+        }
+        finally
+        {
+            File.Delete(markerPath);
+            File.Delete(markerPath + ".completed");
+        }
+    }
+
+    [Fact]
+    public async Task ParentExitWithDescendantPipeClosureStillTerminatesFamilyAndProvesActiveZero()
+    {
+        string markerPath = Path.Combine(Path.GetTempPath(), $"seqdoc-i100a-closepipes-{Guid.NewGuid():N}.marker");
+        var result = ContainedProcess.Start(NewOptions(["spawn-grandchild-closes-pipes", markerPath, "8000"]));
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        try
+        {
+            await WaitForFileToExistAsync(markerPath, TimeSpan.FromSeconds(5));
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+
+            Assert.True(process.TerminateJobObjectWasCalled,
+                "EOF from the descendant must not be mistaken for family exit.");
+            Assert.True(wait.ActiveProcessZeroObserved);
+            Assert.False(File.Exists(markerPath + ".completed"));
+        }
+        finally
+        {
+            File.Delete(markerPath);
+            File.Delete(markerPath + ".completed");
+        }
+    }
+
+    [Fact]
+    public async Task FailedTerminationWithOpenPipeIsBoundedAndRetainsOrderedSecondaryEvidence()
+    {
+        var options = NewOptions(
+            ["sleep", "8000"],
+            nativeCalls: new ProcessOwnershipNativeCalls
+            {
+                TerminateJobObject = (_, _) => NativeCallResult.Failure(5),
+            });
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        process.ActiveProcessZeroBoundForTests = TimeSpan.FromMilliseconds(100);
+
+        Task<ProcessOwnershipWaitResult> waitTask = process.WaitAsync(TimeSpan.FromMilliseconds(300), CancellationToken.None);
+        try
+        {
+            Task completed = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(6)));
+            Assert.Same(waitTask, completed);
+            var wait = await waitTask;
+            Assert.Equal(ProcessOwnershipFailureClass.TimedOut, wait.FailureClass);
+            Assert.True(wait.StdOut.Truncated || wait.StdErr.Truncated);
+            int terminateEvidence = IndexOfEvidence(wait.SecondaryFailures, "TerminateJobObject", "5");
+            int familyEvidence = IndexOfEvidence(wait.SecondaryFailures, "ACTIVE_PROCESS_ZERO");
+            Assert.True(terminateEvidence >= 0);
+            Assert.True(familyEvidence > terminateEvidence);
+        }
+        finally { process.Terminate(); }
+    }
+
+    [Fact]
+    public async Task DisposeCoordinatesWithConcurrentWaitAndIsIdempotent()
+    {
+        var result = ContainedProcess.Start(NewOptions(["sleep", "5000"]));
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        // F1: a faulted first reservation must not poison a later valid wait on this live process.
+        Task<ProcessOwnershipWaitResult> invalidWait = process.WaitAsync(TimeSpan.FromMilliseconds(-2), CancellationToken.None);
+        await Assert.ThrowsAnyAsync<ArgumentOutOfRangeException>(async () => await invalidWait);
+        Task<ProcessOwnershipWaitResult> waitTask = process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        process.Dispose();
+        process.Dispose();
+
+        Task completed = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(10)));
+        Assert.Same(waitTask, completed);
+        var wait = await waitTask;
+        Assert.True(wait.ActiveProcessZeroObserved);
+        Assert.All(new[] { process.StdOutDrainTaskForTests, process.StdErrDrainTaskForTests, process.CompletionMonitorTaskForTests },
+            task => Assert.True(task is null || task.IsCompleted));
+        process.Dispose();
+    }
+
+    [Fact]
+    public async Task DisposeDoesNotReleaseHandlesWhileWaitUsesNativeProcessHandle()
+    {
+        var entered = new TaskCompletionSource<nint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releases = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        int terminalCalls = 0;
+        var nativeCalls = new ProcessOwnershipNativeCalls
+        {
+            TerminateJobObject = (handle, exitCode) =>
+            {
+                Interlocked.Increment(ref terminalCalls);
+                return NativeMethods.TerminateJobObject(handle, exitCode)
+                    ? NativeCallResult.Success()
+                    : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+            },
+            WaitForSingleObject = (handle, timeout) =>
+            {
+                entered.TrySetResult(handle);
+                release.Task.GetAwaiter().GetResult();
+                uint waitResult = NativeMethods.WaitForSingleObject(handle, timeout);
+                int error = waitResult == NativeMethods.WAIT_FAILED
+                    ? System.Runtime.InteropServices.Marshal.GetLastWin32Error()
+                    : 0;
+                return new NativeWaitResult(waitResult, error);
+            },
+        };
+        var result = ContainedProcess.Start(NewOptions(["sleep", "5000"], nativeCalls: nativeCalls));
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        System.Reflection.PropertyInfo? releaseObserver = null;
+        Task<ProcessOwnershipWaitResult>? waitTask = null;
+        Task? disposeTask = null;
+        try
+        {
+            releaseObserver = FindInstanceTestSeam("ResourceReleaseObserverForTests", typeof(Action<string>));
+            Assert.True(releaseObserver is not null, "Expected per-process resource-release observer seam is not implemented yet.");
+            releaseObserver!.SetValue(process, (Action<string>)releases.Enqueue);
+
+            waitTask = process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            Assert.Equal(process.ProcessHandleForTests, await entered.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+            disposeTask = Task.Run(process.Dispose);
+
+            Task negativeWinner = await Task.WhenAny(disposeTask, Task.Delay(TimeSpan.FromMilliseconds(250)));
+            Assert.NotSame(disposeTask, negativeWinner);
+            Assert.DoesNotContain("process handle", releases);
+            Assert.DoesNotContain("job handle", releases);
+
+            release.TrySetResult();
+            await Task.WhenAll(waitTask, disposeTask).WaitAsync(TimeSpan.FromSeconds(10));
+
+            var wait = await waitTask;
+            Assert.Equal(ProcessOwnershipFailureClass.ProcessFailed, wait.FailureClass);
+            Assert.False(wait.TimedOut);
+            Assert.False(wait.Cancelled);
+            Assert.True(wait.ActiveProcessZeroObserved);
+            Assert.Equal(1, terminalCalls);
+            Assert.True(process.TerminateJobObjectWasCalled);
+            Assert.Empty(process.TeardownFailuresForTests);
+            Assert.Equal(1, releases.Count(label => label == "process handle"));
+            Assert.Equal(1, releases.Count(label => label == "job handle"));
+        }
+        finally
+        {
+            release.TrySetResult();
+            if (waitTask is not null && disposeTask is not null)
+            {
+                try
+                {
+                    await Task.WhenAll(waitTask, disposeTask).WaitAsync(TimeSpan.FromSeconds(10));
+                }
+                catch
+                {
+                    try { process.Terminate(); } catch { }
+                }
+            }
+            else
+            {
+                process.Dispose();
+            }
+
+            if (releaseObserver is not null)
+            {
+                releaseObserver.SetValue(process, null);
+            }
+        }
+    }
+
+    // ---- Group 6: complete concurrent stdout/stderr drain under load ---------------------------------
+
+    [Fact]
+    public async Task ConcurrentStdOutAndStdErrDrainToEofUnderLoadWithoutDeadlock()
+    {
+        const int Lines = 25_000;
+        string lineCount = Lines.ToString(CultureInfo.InvariantCulture);
+        var options = NewOptions(["bulk", lineCount, lineCount], drainTimeout: TimeSpan.FromSeconds(60));
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(60), CancellationToken.None);
+
+        Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+        Assert.False(wait.StdOut.Truncated);
+        Assert.False(wait.StdErr.Truncated);
+        Assert.Contains($"OUT{Lines - 1:D6}", wait.StdOut.Text, StringComparison.Ordinal);
+        Assert.Contains($"ERR{Lines - 1:D6}", wait.StdErr.Text, StringComparison.Ordinal);
+        Assert.Equal(Lines, CountOccurrences(wait.StdOut.Text, "OUT"));
+        Assert.Equal(Lines, CountOccurrences(wait.StdErr.Text, "ERR"));
+    }
+
+    // ---- Group 7: bounded forced termination with explicit truncation marking ------------------------
+
+    [Fact]
+    public async Task DrainBoundExceededRecordsDrainIncompleteWithTruncatedPrefixNeverClaimedLossless()
+    {
+        var options = NewOptions(["slow-bulk", "50", "500"], drainTimeout: TimeSpan.FromMilliseconds(300));
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+
+        Assert.Equal(ProcessOwnershipFailureClass.DrainIncomplete, wait.FailureClass);
+        Assert.True(wait.StdOut.Truncated);
+        Assert.DoesNotContain("SLOW-COMPLETE", wait.StdOut.Text, StringComparison.Ordinal);
+    }
+
+    // ---- Group 8: timeout vs. cancellation vs. body-failure precedence -------------------------------
+
+    [Fact]
+    public async Task WaitTimeoutTerminatesAndRecordsTimedOut()
+    {
+        var options = NewOptions(["sleep", "10000"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+
+        var wait = await process.WaitAsync(TimeSpan.FromMilliseconds(300), CancellationToken.None);
+
+        Assert.Equal(ProcessOwnershipFailureClass.TimedOut, wait.FailureClass);
+        Assert.True(wait.TimedOut);
+        Assert.False(wait.Cancelled);
+        Assert.True(process.TerminateJobObjectWasCalled);
+    }
+
+    [Fact]
+    public async Task CallerCancellationTerminatesAndRecordsTimedOutClassWithCancelledFlag()
+    {
+        var options = NewOptions(["sleep", "10000"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(30), cts.Token);
+
+        Assert.Equal(ProcessOwnershipFailureClass.TimedOut, wait.FailureClass);
+        Assert.False(wait.TimedOut);
+        Assert.True(wait.Cancelled);
+    }
+
+    [Fact]
+    public async Task NonZeroExitRecordsProcessFailed()
+    {
+        var options = NewOptions(["exitcode", "7"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        Assert.Equal(ProcessOwnershipFailureClass.ProcessFailed, wait.FailureClass);
+        Assert.Equal(7, wait.ExitCode);
+    }
+
+    [Theory]
+    [InlineData(ProcessOwnershipFailureClass.ProcessConstructionFailed, ProcessOwnershipFailureClass.TimedOut)]
+    [InlineData(ProcessOwnershipFailureClass.TimedOut, ProcessOwnershipFailureClass.ProcessFailed)]
+    [InlineData(ProcessOwnershipFailureClass.ProcessFailed, ProcessOwnershipFailureClass.DrainIncomplete)]
+    [InlineData(ProcessOwnershipFailureClass.DrainIncomplete, ProcessOwnershipFailureClass.TeardownDegraded)]
+    public void FailureClassTrackerFirstRecordedFailureIsNeverOverwritten(
+        ProcessOwnershipFailureClass first, ProcessOwnershipFailureClass second)
+    {
+        var tracker = new FailureClassTracker();
+        tracker.Record(first, "first");
+        tracker.Record(second, "second");
+
+        Assert.Equal(first, tracker.Class);
+        Assert.Equal("first", tracker.Detail);
+    }
+
+    // ---- Group 9: S0-S3 partial-construction unwind ---------------------------------------------------
+
+    // xunit test methods must be public, but ConstructionFaultPoint is deliberately internal (a
+    // test-only seam, never production surface) — InlineData carries the enum's underlying int instead
+    // and the method casts it back, so no internal type ever appears in a public member signature.
+    [Theory]
+    [InlineData((int)ConstructionFaultPoint.AfterPipesCreated)]
+    [InlineData((int)ConstructionFaultPoint.AfterAttributeListBuilt)]
+    [InlineData((int)ConstructionFaultPoint.AfterJobCreated)]
+    [InlineData((int)ConstructionFaultPoint.AfterProcessCreatedBeforeResume)]
+    [InlineData((int)ConstructionFaultPoint.AfterDrainsStartedBeforeResume)]
+    public void EachConstructionFaultPointUnwindsOnlyWhatWasAcquired(int faultPointValue)
+    {
+        var faultPoint = (ConstructionFaultPoint)faultPointValue;
+        using var baselineProcess = System.Diagnostics.Process.GetCurrentProcess();
+        baselineProcess.Refresh();
+        long before = baselineProcess.HandleCount;
+
+        var options = NewOptions(["sleep", "1000"]);
+        var result = ContainedProcess.Start(options, faultPoint);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ProcessOwnershipFailureClass.ProcessConstructionFailed, result.FailureClass);
+        Assert.Null(result.Process);
+
+        baselineProcess.Refresh();
+        long after = baselineProcess.HandleCount;
+
+        // A generous bound (not an exact equality) — the CLR/xunit host itself opens and closes
+        // incidental handles concurrently; the point is proving no large, monotonically growing leak per
+        // fault point, not chasing an exact process-wide handle count.
+        Assert.True(after - before < 25, $"Handle count grew by {after - before} after a fault at {faultPoint}.");
+    }
+
+    // ---- GH106-R2 repair round: PR #108 human peer review findings F1-F12 (F13 folded into F8/F9) -----
+
+    [Fact]
+    public void PostDrainsUnwindFaultCancelsAndAwaitsBackgroundDrainsAndCompletionMonitor()
+    {
+        // GH106-R2-F1: a failure after StartDrains/StartCompletionMonitor and before ResumeThread must
+        // not leak the background drain/completion-monitor tasks. The construction-
+        // fault hook captures the internal ContainedProcess reference (never returned to a caller on a
+        // failed Start) so this test can prove those tasks are genuinely completed, not merely abandoned.
+        ContainedProcess? captured = null;
+        ContainedProcess.PostDrainsStartHookForTests = p => captured = p;
+        try
+        {
+            var options = NewOptions(["sleep", "1000"]);
+            var result = ContainedProcess.Start(options, ConstructionFaultPoint.AfterDrainsStartedBeforeResume);
+
+            Assert.False(result.Succeeded);
+            Assert.NotNull(captured);
+            Assert.NotNull(captured!.StdOutDrainTaskForTests);
+            Assert.NotNull(captured.StdErrDrainTaskForTests);
+            Assert.True(captured.StdOutDrainTaskForTests!.IsCompleted, "stdout drain task was left running after unwind.");
+            Assert.True(captured.StdErrDrainTaskForTests!.IsCompleted, "stderr drain task was left running after unwind.");
+            Assert.True(
+                captured.CompletionMonitorTaskForTests is null || captured.CompletionMonitorTaskForTests.IsCompleted,
+                "completion monitor task was left running after unwind.");
+        }
+        finally
+        {
+            ContainedProcess.PostDrainsStartHookForTests = null;
+        }
+    }
+
+    [Fact]
+    public async Task UnprovenActiveProcessZeroOnNormalExitRecordsProcessFailed()
+    {
+        // GH106-R2-F2: the frozen failure table requires ProcessFailed when family exit cannot be proven.
+        // Stopping the completion monitor for real (a genuine code path, not a mock) means
+        // ACTIVE_PROCESS_ZERO can truly never be observed; a short test-only bound keeps this fast rather
+        // than waiting out the real 10s production bound.
+        var options = NewOptions(["echo", "out", "err"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        process.ActiveProcessZeroBoundForTests = TimeSpan.FromMilliseconds(150);
+        process.StopCompletionMonitorForTests();
+
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        Assert.Equal(ProcessOwnershipFailureClass.ProcessFailed, wait.FailureClass);
+        Assert.False(wait.ActiveProcessZeroObserved);
+    }
+
+    [Fact]
+    public async Task TimeoutBranchAwaitsFamilyExitAfterForcedTermination()
+    {
+        // GH106-R2-F3: the timeout/cancellation branch must terminate AND await family exit, not just
+        // fire TerminateJobObject and return. The immediate child itself (not a descendant) is still
+        // running well past WaitAsync's own short timeout, so this exercises the `!exited` branch
+        // directly.
+        string markerPath = Path.Combine(Path.GetTempPath(), $"seqdoc-i100a-timeoutawait-{Guid.NewGuid():N}.marker");
+        var options = NewOptions(["sleep-with-marker", markerPath, "8000"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        try
+        {
+            var wait = await process.WaitAsync(TimeSpan.FromMilliseconds(300), CancellationToken.None);
+
+            Assert.Equal(ProcessOwnershipFailureClass.TimedOut, wait.FailureClass);
+            Assert.True(process.TerminateJobObjectWasCalled);
+            Assert.True(
+                wait.ActiveProcessZeroObserved,
+                "TerminateJobObject was called but the timeout branch must await ACTIVE_PROCESS_ZERO before returning.");
+            Assert.False(File.Exists(markerPath + ".completed"));
+        }
+        finally
+        {
+            File.Delete(markerPath);
+            File.Delete(markerPath + ".completed");
+        }
+    }
+
+    [Fact]
+    public async Task TerminateJobObjectFailureRecordsProcessFailedWithoutOverwritingEarlierTimedOut()
+    {
+        // GH106-R2-F4: a discarded TerminateJobObject failure is a real gap. Force it to fail via the
+        // same injectable-seam pattern as the WaitForSingleObject seam below, and prove the earlier,
+        // higher-precedence TimedOut class still wins (tracker first-write-wins), while the failure is
+        // still recorded rather than silently dropped. The override intercepts every in-band
+        // TerminateJobObject call, so the sleeping child is never actually terminated during WaitAsync
+        // itself — WaitAsync's own drain-await only unblocks once the child exits naturally, so a
+        // deliberately short sleep (well past the 300ms timeout, but not 10s) keeps this test fast.
+        var options = NewOptions(["sleep", "2000"], nativeCalls: new ProcessOwnershipNativeCalls
+        {
+            TerminateJobObject = (_, _) => NativeCallResult.Failure(5),
+        });
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+
+        try
+        {
+            var wait = await process.WaitAsync(TimeSpan.FromMilliseconds(300), CancellationToken.None);
+
+            Assert.Equal(ProcessOwnershipFailureClass.TimedOut, wait.FailureClass);
+            Assert.True(process.TerminateJobObjectWasCalled);
+        }
+        finally
+        {
+            // The override made every in-band TerminateJobObject call a no-op, so the sleeping child is
+            // still alive; clean it up for real now that the override is cleared.
+            process.Terminate();
+        }
+    }
+
+    [Fact]
+    public async Task WaitForSingleObjectFailureRecordsProcessFailedDistinctFromGenuineTimeout()
+    {
+        // GH106-R2-F5: WAIT_FAILED/WAIT_ABANDONED must not be misreported as TimedOut.
+        var options = NewOptions(["sleep", "5000"], nativeCalls: new ProcessOwnershipNativeCalls
+        {
+            WaitForSingleObject = (_, _) => NativeWaitResult.Failed(1234),
+        });
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+
+        try
+        {
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+
+            Assert.Equal(ProcessOwnershipFailureClass.ProcessFailed, wait.FailureClass);
+            Assert.False(wait.TimedOut);
+            Assert.False(wait.Cancelled);
+            Assert.Contains("1234", wait.Detail, StringComparison.Ordinal);
+        }
+        finally { }
+    }
+
+    [Fact]
+    public void ConstructionPhaseFailuresLeaveObservableEvidenceWithoutAbandonedTasks()
+    {
+        // JOB_LIST admits the child during CreateProcess; retain the resume/unwind failure, which still
+        // proves cleanup evidence after creation-time JOB_LIST admission.
+        var options = NewOptions(["sleep", "1000"], nativeCalls: new ProcessOwnershipNativeCalls
+        {
+            ResumeThread = _ => NativeCallResult<uint>.Failure(995),
+            TerminateJobObject = (_, _) => NativeCallResult.Failure(5),
+            WaitForSingleObject = (_, _) => NativeWaitResult.Failed(6),
+        });
+        var result = ContainedProcess.Start(options);
+        Assert.False(result.Succeeded);
+        Assert.Equal(ProcessOwnershipFailureClass.ProcessConstructionFailed, result.FailureClass);
+        Assert.NotNull(result.Detail);
+    }
+
+    [Fact]
+    public async Task LaterCleanupFailureDoesNotReplacePrimaryFailureAndIsOrdered()
+    {
+        var options = NewOptions(["sleep", "5000"], nativeCalls: new ProcessOwnershipNativeCalls
+        {
+            TerminateJobObject = (_, _) => NativeCallResult.Failure(4321),
+        });
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        try
+        {
+            var wait = await process.WaitAsync(TimeSpan.FromMilliseconds(100), CancellationToken.None);
+            Assert.Equal(ProcessOwnershipFailureClass.TimedOut, wait.FailureClass);
+            Assert.True(IndexOfEvidence(wait.SecondaryFailures, "4321") >= 0);
+        }
+        finally { }
+    }
+
+    [Fact]
+    public async Task ExplicitRuntimeDiscoveryVariablesArePassedWithoutAmbientLeakage()
+    {
+        var environment = DefaultEnvironment();
+        string? rootX64 = Environment.GetEnvironmentVariable("DOTNET_ROOT_X64");
+        string? root = Environment.GetEnvironmentVariable("DOTNET_ROOT");
+        Assert.True(!string.IsNullOrWhiteSpace(rootX64) || !string.IsNullOrWhiteSpace(root),
+            "The official isolated SDK 10.0.302 lane must provide DOTNET_ROOT_X64 and/or DOTNET_ROOT.");
+        if (rootX64 is not null)
+        {
+            environment["DOTNET_ROOT_X64"] = rootX64;
+        }
+
+        if (root is not null)
+        {
+            environment["DOTNET_ROOT"] = root;
+        }
+        string variable = rootX64 is not null ? "DOTNET_ROOT_X64" : "DOTNET_ROOT";
+        string expected = environment[variable];
+        var result = ContainedProcess.Start(NewOptions(["print-env", variable], environment));
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+        Assert.Equal(expected, wait.StdOut.Text);
+        Assert.DoesNotContain("PATH", environment.Keys, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Utf8DecoderReassemblesACharacterAcrossControlledChunks()
+    {
+        Assert.Equal("prefix€suffix", ProcessOwnershipEncoding.DecodeUtf8Chunks(
+            [Encoding.UTF8.GetBytes("prefix"), [0xE2], [0x82, 0xAC, .. Encoding.UTF8.GetBytes("suffix")]]));
+    }
+
+    [Fact]
+    public async Task StdinIsClosedImmediatelySoChildReadingToEofCompletesWithoutHanging()
+    {
+        // GH106-R2-F6: the parent's stdin write handle must be closed immediately (not retained but
+        // unusable), giving a stdin-reading child immediate EOF instead of hanging forever.
+        var options = NewOptions(["read-stdin-to-eof"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+        Assert.Equal("READ-COMPLETE:0", wait.StdOut.Text);
+    }
+
+    [Fact]
+    public async Task TeardownDegradedIsObservableThroughPublicSurfaceAfterDispose()
+    {
+        // GH106-R2-F7: inject one deterministic owned-handle close failure without pre-closing a numeric
+        // handle that could be reused by the process. All other closes use the real native operation.
+        bool armed = false;
+        nint failedHandle = nint.Zero;
+        var nativeCalls = new ProcessOwnershipNativeCalls();
+        var closeSeam = FindInstanceTestSeam("CloseHandle", typeof(Func<nint, NativeCallResult>));
+        Assert.True(closeSeam is not null, "Expected per-instance CloseHandle seam.");
+        closeSeam!.SetValue(nativeCalls, (Func<nint, NativeCallResult>)(handle =>
+        {
+            if (armed && failedHandle == nint.Zero)
+            {
+                failedHandle = handle;
+                return NativeCallResult.Failure(8301);
+            }
+
+            if (NativeMethods.CloseHandle(handle))
+            {
+                return NativeCallResult.Success();
+            }
+
+            return NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+        }));
+
+        var options = NewOptions(["echo", "out", "err"], nativeCalls: nativeCalls);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        try
+        {
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+
+            armed = true;
+            process.Dispose();
+
+            Assert.Equal(ProcessOwnershipFailureClass.TeardownDegraded, process.FailureClass);
+            Assert.Contains(process.TeardownFailures,
+                evidence => evidence.Contains("8301", StringComparison.Ordinal));
+            Assert.NotEqual(nint.Zero, failedHandle);
+        }
+        finally
+        {
+            armed = false;
+            closeSeam.SetValue(nativeCalls, null);
+            if (failedHandle != nint.Zero)
+            {
+                NativeMethods.CloseHandle(failedHandle);
+            }
+
+            process.Dispose();
+        }
+    }
+
+    [Theory]
+    [InlineData("exec-nul")]
+    [InlineData("arg-nul")]
+    [InlineData("env-name-nul")]
+    [InlineData("env-value-nul")]
+    [InlineData("env-name-equals")]
+    public void MalformedVectorsFailClosedBeforeReachingNativeConstruction(string vector)
+    {
+        // GH106-R2-F8/F13: embedded-NUL and malformed environment-name vectors must fail closed before
+        // any native call (StartCore is never reached: Start() returns synchronously from validation).
+        ProcessOwnershipOptions options = vector switch
+        {
+            "exec-nul" => new ProcessOwnershipOptions
+            {
+                ExecutablePath = StubExecutablePath + "\0evil",
+                Environment = DefaultEnvironment(),
+            },
+            "arg-nul" => NewOptions(["echo", "a\0b", "c"]),
+            "env-name-nul" => NewOptionsWithEnv(new Dictionary<string, string>(DefaultEnvironment()) { ["BAD\0NAME"] = "v" }),
+            "env-value-nul" => NewOptionsWithEnv(new Dictionary<string, string>(DefaultEnvironment()) { ["BADVALUE"] = "v\0v" }),
+            "env-name-equals" => NewOptionsWithEnv(new Dictionary<string, string>(DefaultEnvironment()) { ["BAD=NAME"] = "v" }),
+            _ => throw new InvalidOperationException($"unknown vector {vector}"),
+        };
+
+        var result = ContainedProcess.Start(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ProcessOwnershipFailureClass.ProcessConstructionFailed, result.FailureClass);
+        Assert.Null(result.Process);
+    }
+
+    [Fact]
+    public void EnvironmentBlockDedupIsCaseInsensitiveLastWriteWinsAndWellFormed()
+    {
+        // GH106-R2-F9/F13: Windows environment-variable names are case-insensitive; BuildEnvironmentBlock
+        // must collapse case-variant duplicate keys (last-write-wins) rather than treating them as
+        // distinct entries. Exercised directly at the encoding layer — the least expensive reliable
+        // layer for a pure string-transform claim.
+        var env = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["Path"] = "first-value",
+            ["PATH"] = "second-value",
+            ["AAA"] = "a",
+        };
+
+        string block = ProcessOwnershipEncoding.BuildEnvironmentBlock(env);
+
+        Assert.Contains("second-value", block, StringComparison.Ordinal);
+        Assert.DoesNotContain("first-value", block, StringComparison.Ordinal);
+        Assert.Equal(1, CountOccurrences(block, "-value"));
+
+        // BuildEnvironmentBlock's own .NET string ends with exactly one explicit NUL per entry;
+        // Marshal.StringToHGlobalUni (used at the real construction call site) appends its own implicit
+        // terminator on top of that, producing the double-null-terminated native block CREATE_UNICODE_ENVIRONMENT
+        // requires — asserting on the raw pre-marshaling string here, not the native buffer.
+        Assert.EndsWith("\0", block, StringComparison.Ordinal);
+        Assert.False(block.EndsWith("\0\0", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task DisposeClosesResourcesInExactTrueReverseAcquisitionOrder()
+    {
+        // GH106-R2-F11: proves dependency-safe reverse release. In particular, the job-list payload is
+        // released only after DeleteProcThreadAttributeList has released the two-entry attribute list.
+        var options = NewOptions(["echo", "out", "err"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+        Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+
+        process.Dispose();
+
+        Assert.Equal(ExpectedFullDisposeOrder, process.TeardownOrderForTests);
+    }
+
+    private static readonly string[] ExpectedFullDisposeOrder =
+    {
+        "process handle",
+        "thread handle",
+        "environment block buffer",
+        "command line buffer",
+        "attribute list buffer",
+        "job list buffer",
+        "completion port handle",
+        "job handle",
+        "handle list buffer",
+        "stderr pipe handle",
+        "stdout pipe handle",
+    };
+
+    [Fact]
+    public void PartialConstructionUnwindClosesResourcesInExactTrueReverseAcquisitionOrder()
+    {
+        // GH106-R2-F11: the same dependency-safe reverse-order proof for partial construction. Attribute
+        // list deletion precedes release of its job-list payload; only then are the pipe handles unwound.
+        var trace = new List<string>();
+        ContainedProcess.UnwindStepObserverForTests = trace.Add;
+        try
+        {
+            var options = NewOptions(["sleep", "1000"]);
+            var result = ContainedProcess.Start(options, ConstructionFaultPoint.AfterProcessCreatedBeforeResume);
+
+            Assert.False(result.Succeeded);
+            object snapshot = GetTypedOwnershipSnapshot(result);
+            object stdinParentWrite = ((System.Collections.IEnumerable)GetRequiredProperty(snapshot, "NativeResources"))
+                .Cast<object>()
+                .Single(entry => GetRequiredProperty(entry, "Kind").ToString() == "StdinParentWrite");
+            Assert.True(ToInt64(GetRequiredProperty(stdinParentWrite, "AcquisitionSequence")) > 0);
+            Assert.Equal("Released", GetRequiredProperty(stdinParentWrite, "State").ToString());
+            Assert.Equal(1, Convert.ToInt32(GetRequiredProperty(stdinParentWrite, "Attempts"), CultureInfo.InvariantCulture));
+            Assert.Equal(nint.Zero, ConvertToNativeInt(GetRequiredProperty(stdinParentWrite, "Value")));
+            int stdinReleaseOrder = Convert.ToInt32(GetRequiredProperty(stdinParentWrite, "ReleaseOrder"), CultureInfo.InvariantCulture);
+            Assert.True(stdinReleaseOrder > 0);
+            string[] laterCleanupKinds =
+            [
+                "ProcessHandle", "PrimaryThreadHandle", "EnvironmentBlockBuffer", "CommandLineBuffer",
+                "AttributeListBuffer", "JobListBuffer", "CompletionPortHandle", "JobHandle", "HandleListBuffer",
+                "StderrParentRead", "StdoutParentRead",
+            ];
+            object[] laterCleanup = ((System.Collections.IEnumerable)GetRequiredProperty(snapshot, "NativeResources"))
+                .Cast<object>()
+                .Where(entry => laterCleanupKinds.Contains(GetRequiredProperty(entry, "Kind").ToString(), StringComparer.Ordinal))
+                .ToArray();
+            Assert.Equal(laterCleanupKinds.Length, laterCleanup.Length);
+            Assert.All(laterCleanup, entry =>
+            {
+                int releaseOrder = Convert.ToInt32(GetRequiredProperty(entry, "ReleaseOrder"), CultureInfo.InvariantCulture);
+                Assert.True(stdinReleaseOrder < releaseOrder,
+                    $"StdinParentWrite release order {stdinReleaseOrder} must precede cleanup release {releaseOrder}.");
+            });
+            Assert.Equal(ExpectedPartialUnwindOrder, trace);
+        }
+        finally
+        {
+            ContainedProcess.UnwindStepObserverForTests = null;
+        }
+    }
+
+    private static readonly string[] ExpectedPartialUnwindOrder =
+    {
+        "process handle",
+        "thread handle",
+        "environment block buffer",
+        "command line buffer",
+        "attribute list buffer",
+        "job list buffer",
+        "completion port handle",
+        "job handle",
+        "handle list buffer",
+        "stderr pipe handle",
+        "stdout pipe handle",
+    };
+
+    [Fact]
+    public async Task ChildReceiptProvesCreationTimeJobAdmissionBeforeItsOwnFirstInstruction()
+    {
+        // GH106-R2-F12: replaces the internal test-hook-only proof above with a genuine, external,
+        // production-code-path receipt — the child itself queries its own job membership (via a plain
+        // P/Invoke in the stub, no unsafe blocks) as the very first thing it does and prints the result,
+        // proving creation-time job admission from the child's own perspective rather than the test
+        // process's; the receipt must be true before the first child instruction runs.
+        var options = NewOptions(["report-job-membership"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+        Assert.Equal("IN-JOB:True\r\n", wait.StdOut.Text);
+    }
+
+    // ---- Group 10: active-zero-gated normal disposal --------------------------------------------------
+
+    [Fact]
+    public async Task CleanExitObservesActiveProcessZeroAndDisposesWithoutExplicitTerminate()
+    {
+        var options = NewOptions(["echo", "out", "err"]);
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+        Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+        Assert.True(wait.ActiveProcessZeroObserved);
+        Assert.False(process.TerminateJobObjectWasCalled);
+
+        process.Dispose();
+        Assert.False(process.TerminateJobObjectWasCalled);
+        Assert.Empty(process.TeardownFailuresForTests);
+    }
+
+    [Fact]
+    public async Task DisposeDoesNotReleaseFamilyResourcesWhenActiveProcessZeroCannotBeProven()
+    {
+        var result = ContainedProcess.Start(NewOptions(["echo", "out", "err"]));
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        var releases = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var releaseObserver = FindInstanceTestSeam("ResourceReleaseObserverForTests", typeof(Action<string>));
+        Assert.True(releaseObserver is not null, "Expected resource-release observer seam.");
+        releaseObserver!.SetValue(process, (Action<string>)releases.Enqueue);
+        try
+        {
+            process.ActiveProcessZeroBoundForTests = TimeSpan.FromMilliseconds(100);
+            process.StopCompletionMonitorForTests();
+
+            Task dispose = Task.Run(process.Dispose);
+            await dispose.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.NotEqual(ProcessOwnershipFailureClass.None, process.FailureClass);
+            var firstFailures = process.TeardownFailures.ToArray();
+            var firstOrder = process.TeardownOrderForTests.ToArray();
+            Assert.Contains(firstFailures,
+                evidence => evidence.Contains("ACTIVE_PROCESS_ZERO", StringComparison.Ordinal));
+            Assert.True(process.HasRetainedFamilyResourcesForTests,
+                "Failed family proof must retain ownership of the process, job, and completion handles.");
+            Assert.DoesNotContain(releases, label => label is "process handle" or "completion port handle"
+                or "job handle");
+
+            int releaseCount = releases.Count;
+            await Task.Run(process.Dispose).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(process.HasRetainedFamilyResourcesForTests,
+                "A retry under the same unavailable-proof condition must remain retained.");
+            Assert.Equal(releaseCount, releases.Count);
+            Assert.Equal(firstFailures, process.TeardownFailures);
+            Assert.Equal(firstOrder, process.TeardownOrderForTests);
+            Assert.Equal(1, process.TeardownFailures.Count(
+                evidence => evidence.Contains("ACTIVE_PROCESS_ZERO", StringComparison.Ordinal)));
+
+            var terminateException = Record.Exception(() => _ = process.Terminate());
+            Assert.False(terminateException is ObjectDisposedException,
+                "Retained ownership must remain usable by Terminate after a failed disposal proof.");
+        }
+        finally
+        {
+            releaseObserver.SetValue(process, null);
+            process.Dispose();
+        }
+    }
+
+    [Fact]
+    public void FailedSecondAttributeInitializationDoesNotDeleteUninitializedBuffer()
+    {
+        var initialize = FindInstanceTestSeam("InitializeProcThreadAttributeList", typeof(Func<nint, NativeCallResult>));
+        Assert.True(initialize is not null,
+            "Expected per-instance InitializeProcThreadAttributeList fault seam.");
+        var deleteObserver = FindStaticTestSeam("AttributeListDeleteObserverForTests", typeof(Action<nint>));
+        Assert.True(deleteObserver is not null,
+            "Expected static attribute-list deletion observer seam.");
+
+        int deleteCount = 0;
+        var nativeCalls = new ProcessOwnershipNativeCalls();
+        try
+        {
+            initialize!.SetValue(nativeCalls, (Func<nint, NativeCallResult>)(buffer =>
+                buffer == nint.Zero ? NativeCallResult.Success() : NativeCallResult.Failure(8301)));
+            deleteObserver!.SetValue(null, (Action<nint>)(_ => Interlocked.Increment(ref deleteCount)));
+
+            var result = ContainedProcess.Start(NewOptions(["echo", "out", "err"], nativeCalls: nativeCalls));
+
+            Assert.False(result.Succeeded);
+            Assert.Equal(ProcessOwnershipFailureClass.ProcessConstructionFailed, result.FailureClass);
+            Assert.Contains("8301", result.Detail, StringComparison.Ordinal);
+            Assert.Equal(0, deleteCount);
+        }
+        finally
+        {
+            initialize.SetValue(nativeCalls, null);
+            deleteObserver.SetValue(null, null);
+        }
+    }
+
+    [Fact]
+    public async Task ThrowingAttributeDeleteObserverDoesNotInterruptDisposalCleanup()
+    {
+        var deleteObserver = FindStaticTestSeam("AttributeListDeleteObserverForTests", typeof(Action<nint>));
+        Assert.True(deleteObserver is not null, "Expected static attribute-list deletion observer seam.");
+        int deleteCount = 0;
+        const string sentinel = "attribute-delete-observer-sentinel";
+        var result = ContainedProcess.Start(NewOptions(["echo", "out", "err"]));
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+
+        try
+        {
+            deleteObserver!.SetValue(null, (Action<nint>)(_ =>
+            {
+                Interlocked.Increment(ref deleteCount);
+                throw new InvalidOperationException(sentinel);
+            }));
+
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+            var exception = Record.Exception(() =>
+            {
+                process.Dispose();
+            });
+
+            Assert.Null(exception);
+            Assert.Equal(1, deleteCount);
+            Assert.Equal(ExpectedFullDisposeOrder, process.TeardownOrderForTests);
+            Assert.Equal(ProcessOwnershipFailureClass.None, process.FailureClass);
+            Assert.DoesNotContain(process.TeardownFailures,
+                evidence => evidence.Contains(sentinel, StringComparison.Ordinal));
+        }
+        finally
+        {
+            deleteObserver.SetValue(null, null);
+            process.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task ThrowingResourceReleaseObserverDoesNotInterruptBufferCleanup()
+    {
+        var releaseObserver = FindInstanceTestSeam("ResourceReleaseObserverForTests", typeof(Action<string>));
+        Assert.True(releaseObserver is not null, "Expected per-instance resource-release observer seam.");
+        var receipts = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        const string sentinel = "attribute-list-buffer-observer-sentinel";
+        var result = ContainedProcess.Start(NewOptions(["echo", "out", "err"]));
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+
+        try
+        {
+            releaseObserver!.SetValue(process, (Action<string>)(label =>
+            {
+                receipts.Enqueue(label);
+                if (label == "attribute list buffer")
+                {
+                    throw new InvalidOperationException(sentinel);
+                }
+            }));
+
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+
+            Task dispose = Task.Run(process.Dispose);
+            await dispose.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(ExpectedFullDisposeOrder, process.TeardownOrderForTests);
+            Assert.Equal(ExpectedFullDisposeOrder, receipts);
+            Assert.Equal(ProcessOwnershipFailureClass.None, process.FailureClass);
+            Assert.DoesNotContain(process.TeardownFailures,
+                evidence => evidence.Contains(sentinel, StringComparison.Ordinal));
+            Assert.False(process.HasRetainedFamilyResourcesForTests);
+        }
+        finally
+        {
+            releaseObserver!.SetValue(process, null);
+            process.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task ThrowingResourceReleaseObserverDoesNotInterruptNativeHandleCleanup()
+    {
+        var releaseObserver = FindInstanceTestSeam("ResourceReleaseObserverForTests", typeof(Action<string>));
+        Assert.True(releaseObserver is not null, "Expected per-instance resource-release observer seam.");
+        var receipts = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var closedHandles = new System.Collections.Concurrent.ConcurrentQueue<nint>();
+        const string sentinel = "process-handle-observer-sentinel";
+        var nativeCalls = new ProcessOwnershipNativeCalls
+        {
+            CloseHandle = handle =>
+            {
+                closedHandles.Enqueue(handle);
+                return NativeMethods.CloseHandle(handle)
+                    ? NativeCallResult.Success()
+                    : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+            },
+        };
+        var result = ContainedProcess.Start(NewOptions(["echo", "out", "err"], nativeCalls: nativeCalls));
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        nint processHandle = process.ProcessHandleForTests;
+
+        try
+        {
+            releaseObserver!.SetValue(process, (Action<string>)(label =>
+            {
+                receipts.Enqueue(label);
+                if (label == "process handle")
+                {
+                    throw new InvalidOperationException(sentinel);
+                }
+            }));
+
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+
+            Task dispose = Task.Run(process.Dispose);
+            await dispose.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Contains(processHandle, closedHandles);
+            Assert.Equal(ExpectedFullDisposeOrder, process.TeardownOrderForTests);
+            Assert.Equal(ExpectedFullDisposeOrder, receipts);
+            Assert.Equal(ProcessOwnershipFailureClass.None, process.FailureClass);
+            Assert.Empty(process.TeardownFailures);
+            Assert.DoesNotContain(process.TeardownFailures,
+                evidence => evidence.Contains(sentinel, StringComparison.Ordinal));
+            Assert.False(process.HasRetainedFamilyResourcesForTests);
+        }
+        finally
+        {
+            releaseObserver!.SetValue(process, null);
+            process.Dispose();
+        }
+    }
+
+    // ---- Group 11: unrelated-process isolation, deterministic receipts, repeated-run cleanup ---------
+
+    [Fact]
+    public async Task UnrelatedProcessIsolationWithDeterministicReceiptsAndRepeatedRunsCleanUpIdempotently()
+    {
+        using var unrelated = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = StubExecutablePath,
+            ArgumentList = { "sleep", "5000" },
+            UseShellExecute = false,
+        }) ?? throw new InvalidOperationException("Could not start the unrelated control process.");
+
+        try
+        {
+            for (int iteration = 0; iteration < 3; iteration++)
+            {
+                var options = NewOptions(["echo", $"run-{iteration}-out", $"run-{iteration}-err"]);
+                var result = ContainedProcess.Start(options);
+                Assert.True(result.Succeeded, result.Detail);
+                using var process = result.Process!;
+
+                var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+                Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+                Assert.Equal($"run-{iteration}-out", wait.StdOut.Text);
+                Assert.Equal($"run-{iteration}-err", wait.StdErr.Text);
+
+                process.Dispose();
+                Assert.Empty(process.TeardownFailuresForTests);
+            }
+
+            // The unrelated control process, never touched by any ContainedProcess/Job in this test,
+            // must still be alive — containment/termination never reaches outside the owned job.
+            Assert.False(unrelated.HasExited);
+        }
+        finally
+        {
+            if (!unrelated.HasExited)
+            {
+                unrelated.Kill(entireProcessTree: true);
+            }
+        }
+    }
+
+    // ---- Owner recovery R3: serialized lifecycle, drain, family proof, unwind, evidence, and SDK ----
+
+    [Fact]
+    public async Task TerminateAndDisposeRaceHasOneSerializedTerminalSequenceAndNoPostReleaseNativeCall()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int terminationCalls = 0;
+        bool nativeAfterRelease = false;
+        nint handleSeen = nint.Zero;
+        ContainedProcess? process = null;
+        var options = NewOptions(["sleep", "5000"], nativeCalls: new ProcessOwnershipNativeCalls
+        {
+            TerminateJobObject = (handle, _) =>
+            {
+                Interlocked.Increment(ref terminationCalls);
+                handleSeen = handle;
+                nativeAfterRelease |= process?.TeardownOrderForTests.Contains("job handle") == true;
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+                return NativeCallResult.Success();
+            },
+        });
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        process = result.Process!;
+
+        Task terminate = Task.Run(() => process.Terminate());
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Task dispose = Task.Run(process.Dispose);
+        await Task.WhenAny(dispose, Task.Delay(TimeSpan.FromMilliseconds(250)));
+        release.SetResult();
+
+        await Task.WhenAll(terminate, dispose).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, terminationCalls);
+        Assert.NotEqual(nint.Zero, handleSeen);
+        Assert.False(nativeAfterRelease);
+        process.Dispose();
+    }
+
+    [Fact]
+    public async Task FailedTerminationWaitsForBothDrainsBeforeClosingPipeHandlesAndMarksIncompleteOutput()
+    {
+        var releases = new List<(string Label, bool StdOutComplete, bool StdErrComplete, bool MonitorComplete)>();
+        ContainedProcess? observedProcess = null;
+        var options = NewOptions(["sleep", "5000"], nativeCalls: new ProcessOwnershipNativeCalls
+        {
+            TerminateJobObject = (_, _) => NativeCallResult.Failure(7001),
+        });
+        var result = ContainedProcess.Start(options);
+        Assert.True(result.Succeeded, result.Detail);
+        observedProcess = result.Process!;
+        var releaseObserver = FindInstanceTestSeam("ResourceReleaseObserverForTests", typeof(Action<string>));
+        Assert.True(releaseObserver is not null,
+            "Expected per-process resource-release observer seam is not implemented yet.");
+        releaseObserver!.SetValue(observedProcess, (Action<string>)(label => releases.Add((
+            label,
+            observedProcess.StdOutDrainTaskForTests?.IsCompleted ?? true,
+            observedProcess.StdErrDrainTaskForTests?.IsCompleted ?? true,
+            observedProcess.CompletionMonitorTaskForTests?.IsCompleted ?? true))));
+        try
+        {
+            observedProcess.ActiveProcessZeroBoundForTests = TimeSpan.FromMilliseconds(100);
+            var wait = await observedProcess.WaitAsync(TimeSpan.FromMilliseconds(250), CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Contains(wait.SecondaryFailures, evidence => evidence.Contains("7001", StringComparison.Ordinal));
+            Assert.True(wait.StdOut.Truncated || wait.StdErr.Truncated ||
+                wait.SecondaryFailures.Any(evidence => evidence.Contains("Drain", StringComparison.OrdinalIgnoreCase)));
+
+            observedProcess.Dispose();
+            var stdoutReleases = releases.Where(release => release.Label == "stdout pipe handle").ToArray();
+            var stderrReleases = releases.Where(release => release.Label == "stderr pipe handle").ToArray();
+            Assert.NotEmpty(stdoutReleases);
+            Assert.NotEmpty(stderrReleases);
+            Assert.All(stdoutReleases.Concat(stderrReleases),
+                release => Assert.True(release.StdOutComplete && release.StdErrComplete,
+                    $"{release.Label} was released while a drain was live."));
+        }
+        finally
+        {
+            observedProcess.Dispose();
+            releaseObserver.SetValue(observedProcess, null);
+        }
+    }
+
+    [Theory]
+    [InlineData("terminate")]
+    [InlineData("dispose")]
+    public async Task ExplicitTerminationAndDisposalWithoutWaitProveFamilyExitForLiveDescendant(string operation)
+    {
+        string markerPath = Path.Combine(Path.GetTempPath(), $"seqdoc-i100a-r3-family-{Guid.NewGuid():N}.marker");
+        var result = ContainedProcess.Start(NewOptions(["spawn-grandchild", markerPath, "8000"]));
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        try
+        {
+            await WaitForFileToExistAsync(markerPath, TimeSpan.FromSeconds(5));
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            if (operation == "terminate")
+            {
+                Assert.True(process.Terminate());
+            }
+            else
+            {
+                process.Dispose();
+            }
+
+            stopwatch.Stop();
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(6), $"{operation} took {stopwatch.Elapsed}.");
+            Assert.True(process.HasObservedActiveProcessZero(), "Family release was not proven before the terminal operation returned.");
+        }
+        finally
+        {
+            process.Dispose();
+            File.Delete(markerPath);
+            File.Delete(markerPath + ".completed");
+        }
+    }
+
+    [Fact]
+    public void ConstructionUnwindProvesFamilyExitBeforeReleasingDrainResources()
+    {
+        var cleanupBound = FindInstanceTestSeam("ConstructionCleanupBoundForTests", typeof(TimeSpan));
+        Assert.True(cleanupBound is not null,
+            "Expected per-instance construction cleanup-bound seam is not implemented yet.");
+        ContainedProcess? captured = null;
+        nint duplicatedProcess = nint.Zero;
+        nint duplicatedJob = nint.Zero;
+        int terminateJobCalls = 0;
+        var releases = new System.Collections.Concurrent.ConcurrentQueue<(
+            string Label, uint? ActiveProcesses, string? QueryError, bool StdOutComplete, bool StdErrComplete, bool MonitorComplete)>();
+        var releaseObserver = FindInstanceTestSeam("ResourceReleaseObserverForTests", typeof(Action<string>));
+        Assert.True(releaseObserver is not null, "Expected per-instance resource-release observer seam.");
+        var postCreate = FindStaticTestSeam("PostCreateProcessObserverForTests", typeof(Action<nint, nint>));
+        Assert.True(postCreate is not null, "Expected post-CreateProcess observer seam.");
+        postCreate!.SetValue(null, (Action<nint, nint>)((job, process) =>
+        {
+            DuplicateCurrentHandle(process, out duplicatedProcess);
+            DuplicateCurrentHandle(job, out duplicatedJob);
+        }));
+        ContainedProcess.PostDrainsStartHookForTests = process =>
+        {
+            captured = process;
+            cleanupBound!.SetValue(process, TimeSpan.FromMilliseconds(100));
+            releaseObserver!.SetValue(process, (Action<string>)(label =>
+            {
+                try
+                {
+                    releases.Enqueue((label, QueryJobActiveProcesses(duplicatedJob), null,
+                        process.StdOutDrainTaskForTests?.IsCompleted ?? true,
+                        process.StdErrDrainTaskForTests?.IsCompleted ?? true,
+                        process.CompletionMonitorTaskForTests?.IsCompleted ?? true));
+                }
+                catch (Exception ex)
+                {
+                    releases.Enqueue((label, null, ex.Message,
+                        process.StdOutDrainTaskForTests?.IsCompleted ?? true,
+                        process.StdErrDrainTaskForTests?.IsCompleted ?? true,
+                        process.CompletionMonitorTaskForTests?.IsCompleted ?? true));
+                }
+            }));
+        };
+        try
+        {
+            var result = ContainedProcess.Start(
+                NewOptions(["sleep", "5000"], nativeCalls: new ProcessOwnershipNativeCalls
+                {
+                    TerminateProcess = (_, _) => NativeCallResult.Failure(7101),
+                    WaitForSingleObject = (_, _) => NativeWaitResult.Failed(7102),
+                    TerminateJobObject = (job, exitCode) =>
+                    {
+                        Interlocked.Increment(ref terminateJobCalls);
+                        return NativeMethods.TerminateJobObject(job, exitCode)
+                            ? NativeCallResult.Success()
+                            : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+                    },
+                }),
+                ConstructionFaultPoint.AfterDrainsStartedBeforeResume);
+
+            Assert.False(result.Succeeded);
+            Assert.NotNull(captured);
+            Assert.Contains("7101", result.Detail, StringComparison.Ordinal);
+            Assert.Contains("7102", result.Detail, StringComparison.Ordinal);
+            Assert.Null(result.CleanupOwner);
+            Assert.True(terminateJobCalls >= 1);
+            Assert.Equal(NativeMethods.WAIT_OBJECT_0,
+                NativeMethods.WaitForSingleObject(duplicatedProcess, 5000));
+            Assert.Equal(0u, QueryJobActiveProcesses(duplicatedJob));
+            Assert.NotEmpty(releases);
+            Assert.All(releases, release =>
+            {
+                Assert.Null(release.QueryError);
+                Assert.Equal(0u, release.ActiveProcesses);
+                Assert.True(
+                release.StdOutComplete && release.StdErrComplete && release.MonitorComplete,
+                $"{release.Label} released resources while owned work was live.");
+            });
+        }
+        finally
+        {
+            ContainedProcess.PostDrainsStartHookForTests = null;
+            postCreate.SetValue(null, null);
+            if (captured is not null)
+            {
+                releaseObserver!.SetValue(captured, null);
+            }
+            if (duplicatedJob != nint.Zero && QueryJobActiveProcesses(duplicatedJob) > 0)
+            {
+                NativeMethods.TerminateJobObject(duplicatedJob, uint.MaxValue);
+                uint waitResult = NativeMethods.WaitForSingleObject(duplicatedProcess, 5000);
+                if (waitResult == NativeMethods.WAIT_FAILED)
+                {
+                    _ = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                }
+            }
+            if (duplicatedProcess != nint.Zero)
+            {
+                NativeMethods.CloseHandle(duplicatedProcess);
+            }
+            if (duplicatedJob != nint.Zero)
+            {
+                NativeMethods.CloseHandle(duplicatedJob);
+            }
+        }
+    }
+
+    [Fact]
+    public void ConstructionUnwindRetainsCleanupOwnerUntilRetryCanProveFamilyExit()
+    {
+        var cleanupBound = FindInstanceTestSeam("ConstructionCleanupBoundForTests", typeof(TimeSpan));
+        Assert.NotNull(cleanupBound);
+        var releaseObserver = FindInstanceTestSeam("ResourceReleaseObserverForTests", typeof(Action<string>));
+        Assert.NotNull(releaseObserver);
+        nint duplicatedProcess = nint.Zero;
+        nint duplicatedJob = nint.Zero;
+        ContainedProcess? captured = null;
+        int terminateJobCalls = 0;
+        var releases = new System.Collections.Concurrent.ConcurrentQueue<(
+            string Label, uint? ActiveProcesses, string? QueryError)>();
+        var postCreate = FindStaticTestSeam("PostCreateProcessObserverForTests", typeof(Action<nint, nint>));
+        Assert.NotNull(postCreate);
+        postCreate!.SetValue(null, (Action<nint, nint>)((job, process) =>
+        {
+            DuplicateCurrentHandle(process, out duplicatedProcess);
+            DuplicateCurrentHandle(job, out duplicatedJob);
+        }));
+        ContainedProcess.PostDrainsStartHookForTests = process =>
+        {
+            captured = process;
+            cleanupBound!.SetValue(process, TimeSpan.FromMilliseconds(100));
+            releaseObserver!.SetValue(process, (Action<string>)(label =>
+            {
+                try { releases.Enqueue((label, QueryJobActiveProcesses(duplicatedJob), null)); }
+                catch (Exception ex) { releases.Enqueue((label, null, ex.Message)); }
+            }));
+        };
+        try
+        {
+            var result = ContainedProcess.Start(
+                NewOptions(["sleep", "5000"], nativeCalls: new ProcessOwnershipNativeCalls
+                {
+                    TerminateProcess = (_, _) => NativeCallResult.Failure(8101),
+                    WaitForSingleObject = (_, _) => NativeWaitResult.Failed(8102),
+                    TerminateJobObject = (job, exitCode) =>
+                    {
+                        int call = Interlocked.Increment(ref terminateJobCalls);
+                        if (call == 1)
+                        {
+                            return NativeCallResult.Failure(8103);
+                        }
+                        return NativeMethods.TerminateJobObject(job, exitCode)
+                            ? NativeCallResult.Success()
+                            : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+                    },
+                }),
+                ConstructionFaultPoint.AfterDrainsStartedBeforeResume);
+
+            Assert.False(result.Succeeded);
+            Assert.Contains("8101", result.Detail, StringComparison.Ordinal);
+            Assert.Contains("8102", result.Detail, StringComparison.Ordinal);
+            Assert.Contains("8103", result.Detail, StringComparison.Ordinal);
+            ContainedProcess cleanupOwner = result.CleanupOwner!;
+            Assert.IsType<ContainedProcess>(cleanupOwner);
+            Assert.True(QueryJobActiveProcesses(duplicatedJob) > 0);
+            Assert.Equal(NativeMethods.WAIT_TIMEOUT,
+                NativeMethods.WaitForSingleObject(duplicatedProcess, 0));
+            Assert.True(captured is not null);
+            Assert.True(captured!.HasRetainedFamilyResourcesForTests);
+            Assert.DoesNotContain(releases, release => release.Label is "process handle" or "job handle"
+                or "completion port handle");
+
+            Assert.True(cleanupOwner.Terminate());
+            cleanupOwner.Dispose();
+
+            Assert.True(terminateJobCalls >= 2);
+            Assert.Equal(NativeMethods.WAIT_OBJECT_0,
+                NativeMethods.WaitForSingleObject(duplicatedProcess, 5000));
+            Assert.Equal(0u, QueryJobActiveProcesses(duplicatedJob));
+            Assert.False(cleanupOwner.HasRetainedFamilyResourcesForTests);
+            Assert.NotEmpty(releases);
+            Assert.All(releases, release =>
+            {
+                Assert.Null(release.QueryError);
+                Assert.Equal(0u, release.ActiveProcesses);
+            });
+        }
+        finally
+        {
+            ContainedProcess.PostDrainsStartHookForTests = null;
+            postCreate.SetValue(null, null);
+            if (captured is not null)
+            {
+                releaseObserver!.SetValue(captured, null);
+            }
+            if (duplicatedJob != nint.Zero && QueryJobActiveProcesses(duplicatedJob) > 0)
+            {
+                NativeMethods.TerminateJobObject(duplicatedJob, uint.MaxValue);
+                uint waitResult = NativeMethods.WaitForSingleObject(duplicatedProcess, 5000);
+                if (waitResult == NativeMethods.WAIT_FAILED)
+                {
+                    _ = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                }
+            }
+            if (duplicatedProcess != nint.Zero)
+            {
+                NativeMethods.CloseHandle(duplicatedProcess);
+            }
+            if (duplicatedJob != nint.Zero)
+            {
+                NativeMethods.CloseHandle(duplicatedJob);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PeekNamedPipeFailurePreservesPrefixAndIncompleteEvidenceWithoutChangingPrimaryClass()
+    {
+        var seam = FindInstanceTestSeam("PeekNamedPipe", typeof(Func<nint, NativeCallResult<uint>>));
+        Assert.True(seam is not null, "Expected per-instance PeekNamedPipe native seam is not implemented yet.");
+        var nativeCalls = new ProcessOwnershipNativeCalls();
+        seam!.SetValue(nativeCalls, (Func<nint, NativeCallResult<uint>>)(_ => NativeCallResult<uint>.Failure(7301)));
+        var result = ContainedProcess.Start(NewOptions(["slow-bulk", "50", "100"],
+            drainTimeout: TimeSpan.FromMilliseconds(150), nativeCalls: nativeCalls));
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        var wait = await process.WaitAsync(TimeSpan.FromMilliseconds(250), CancellationToken.None);
+
+        Assert.Equal(ProcessOwnershipFailureClass.TimedOut, wait.FailureClass);
+        Assert.StartsWith("SLOW", wait.StdOut.Text, StringComparison.Ordinal);
+        Assert.True(wait.StdOut.Truncated || wait.StdErr.Truncated);
+        Assert.Equal(1, wait.SecondaryFailures.Count(evidence => evidence.Contains("PeekNamedPipe", StringComparison.Ordinal)
+            && evidence.Contains("7301", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task SecondaryEvidenceIsOrderedAndPreviouslyReturnedSnapshotsRemainImmutable()
+    {
+        var result = ContainedProcess.Start(NewOptions(["exitcode", "7"], nativeCalls: new ProcessOwnershipNativeCalls
+        {
+            TerminateJobObject = (_, _) => NativeCallResult.Failure(7202),
+        }));
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(ProcessOwnershipFailureClass.ProcessFailed, wait.FailureClass);
+        var snapshot = wait.SecondaryFailures.ToArray();
+        Assert.Empty(snapshot);
+        Assert.Equal(snapshot, wait.SecondaryFailures);
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task terminal = Task.Run(() =>
+        {
+            start.Task.GetAwaiter().GetResult();
+            process.Terminate();
+        });
+        Task enumerate = Task.Run(() =>
+        {
+            start.Task.GetAwaiter().GetResult();
+            _ = process.SecondaryFailures.ToArray();
+            _ = wait.SecondaryFailures.ToArray();
+        });
+        start.SetResult();
+        await Task.WhenAll(terminal, enumerate).WaitAsync(TimeSpan.FromSeconds(5));
+        var currentSnapshot = process.SecondaryFailures;
+        Assert.Contains(currentSnapshot, evidence => evidence.Contains("7202", StringComparison.Ordinal));
+        Assert.Equal(snapshot, wait.SecondaryFailures);
+        process.Dispose();
+    }
+
+    [Fact]
+    public async Task TeardownEvidenceIsSynchronizedImmutableAndRetainsEachInjectedCloseFailureOnce()
+    {
+        var nativeCalls = new ProcessOwnershipNativeCalls();
+        var closeSeam = FindInstanceTestSeam("CloseHandle", typeof(Func<nint, NativeCallResult>));
+        Assert.True(closeSeam is not null,
+            "Expected per-instance CloseHandle seam for deterministic teardown-failure injection.");
+        int closeCalls = 0;
+        bool injectTeardownFailures = false;
+        var failedHandles = new nint[2];
+        var attemptedHandles = new List<nint>();
+        closeSeam!.SetValue(nativeCalls, (Func<nint, NativeCallResult>)(handle =>
+        {
+            if (!Volatile.Read(ref injectTeardownFailures))
+            {
+                return NativeMethods.CloseHandle(handle)
+                    ? NativeCallResult.Success()
+                    : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+            }
+            int call = Interlocked.Increment(ref closeCalls);
+            lock (attemptedHandles) { attemptedHandles.Add(handle); }
+            if (call <= failedHandles.Length)
+            {
+                failedHandles[call - 1] = handle;
+                return NativeCallResult.Failure(call == 1 ? 8201 : 8202);
+            }
+
+            if (NativeMethods.CloseHandle(handle))
+            {
+                return NativeCallResult.Success();
+            }
+
+            return NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+        }));
+
+        var result = ContainedProcess.Start(NewOptions(["echo", "out", "err"], nativeCalls: nativeCalls));
+        Assert.True(result.Succeeded, result.Detail);
+        var process = result.Process!;
+        try
+        {
+            Volatile.Write(ref injectTeardownFailures, true);
+            var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+            var failuresBeforeDispose = process.TeardownFailures.ToArray();
+            var orderBeforeDispose = process.TeardownOrderForTests.ToArray();
+            var failuresBeforeCopy = failuresBeforeDispose.ToArray();
+            var orderBeforeCopy = orderBeforeDispose.ToArray();
+            var errors = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
+            Task enumerate = Task.Run(() =>
+            {
+                try
+                {
+                    _ = process.TeardownFailures.ToArray();
+                    _ = process.TeardownOrderForTests.ToArray();
+                    _ = process.TeardownFailures.ToArray();
+                }
+                catch (Exception ex) { errors.Enqueue(ex); }
+            });
+            Task firstDispose = Task.Run(process.Dispose);
+            await Task.WhenAll(enumerate, firstDispose).WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Empty(errors);
+            Assert.Equal(failuresBeforeCopy, failuresBeforeDispose);
+            Assert.Equal(orderBeforeCopy, orderBeforeDispose);
+
+            Assert.True(process.HasRetainedFamilyResourcesForTests,
+                "A failed close must retain typed resource ownership for retry.");
+            int firstDisposeAttemptCount;
+            nint[] firstDisposeAttempts;
+            lock (attemptedHandles)
+            {
+                firstDisposeAttemptCount = attemptedHandles.Count;
+                firstDisposeAttempts = attemptedHandles.ToArray();
+            }
+            Assert.True(firstDisposeAttemptCount >= 2);
+            Assert.Equal(failedHandles, firstDisposeAttempts.Take(2).ToArray());
+
+            var failuresAfterFirstDispose = process.TeardownFailures.ToArray();
+            var orderAfterFirstDispose = process.TeardownOrderForTests.ToArray();
+            Assert.Equal(1, failuresAfterFirstDispose.Count(e => e.Contains("8201", StringComparison.Ordinal)));
+            Assert.Equal(1, failuresAfterFirstDispose.Count(e => e.Contains("8202", StringComparison.Ordinal)));
+            Assert.Equal(ExpectedFullDisposeOrder, orderAfterFirstDispose);
+
+            process.Dispose();
+
+            var finalFailures = process.TeardownFailures;
+            var finalFailuresAgain = process.TeardownFailures;
+            var finalOrder = process.TeardownOrderForTests;
+            var finalOrderAgain = process.TeardownOrderForTests;
+            Assert.NotSame(finalFailures, finalFailuresAgain);
+            Assert.NotSame(finalOrder, finalOrderAgain);
+            Assert.Equal(failuresAfterFirstDispose, finalFailures.Take(failuresAfterFirstDispose.Length));
+            Assert.Equal(orderAfterFirstDispose, finalOrder.Take(orderAfterFirstDispose.Length));
+            Assert.Equal(ExpectedFullDisposeOrder.Concat(["process handle", "thread handle"]), finalOrder);
+            Assert.Equal(1, finalFailures.Count(e => e.Contains("8201", StringComparison.Ordinal)));
+            Assert.Equal(1, finalFailures.Count(e => e.Contains("8202", StringComparison.Ordinal)));
+            Assert.Equal(finalFailures.Count, finalFailures.Distinct(StringComparer.Ordinal).Count());
+            nint[] allAttempts;
+            lock (attemptedHandles) { allAttempts = attemptedHandles.ToArray(); }
+            Assert.Equal(firstDisposeAttemptCount + 2, allAttempts.Length);
+            Assert.Equal(failedHandles, allAttempts[^2..]);
+            Assert.Equal(2, allAttempts.Count(handle => handle == failedHandles[0]));
+            Assert.Equal(2, allAttempts.Count(handle => handle == failedHandles[1]));
+            Assert.Equal(ProcessOwnershipFailureClass.TeardownDegraded, process.FailureClass);
+            Assert.False(process.HasRetainedFamilyResourcesForTests);
+        }
+        finally
+        {
+            closeSeam.SetValue(nativeCalls, null);
+            process.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task ExplicitRuntimeRootLaunchProvesPinnedSdkWithoutPathOrAmbientInheritance()
+    {
+        string runtimeDirectory = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
+        DirectoryInfo? root = new DirectoryInfo(runtimeDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "dotnet.exe")))
+        {
+            root = root.Parent;
+        }
+
+        string? sdkRoot = root?.FullName;
+        Assert.False(string.IsNullOrWhiteSpace(sdkRoot),
+            $"Official SDK 10.0.302 runtime root was unavailable; runtime directory was '{runtimeDirectory}'.");
+        string dotnet = Path.Combine(sdkRoot!, OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet");
+        Assert.True(File.Exists(dotnet), $"Official SDK 10.0.302 executable was unavailable at '{dotnet}'.");
+
+        var environment = DefaultEnvironment();
+        environment["DOTNET_ROOT"] = sdkRoot!;
+        environment["DOTNET_ROOT_X64"] = sdkRoot!;
+        var result = ContainedProcess.Start(new ProcessOwnershipOptions
+        {
+            ExecutablePath = dotnet,
+            Arguments = ["--version"],
+            Environment = environment,
+            DrainTimeout = TimeSpan.FromSeconds(10),
+        });
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        var wait = await process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+        Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+        Assert.Equal("10.0.302\r\n", wait.StdOut.Text);
+        Assert.DoesNotContain("PATH", environment.Keys, StringComparer.OrdinalIgnoreCase);
+    }
+
+    // ---- I100-A frozen ledger/coordinator RED package (six grouped claims) -----------------------------
+
+    [Fact]
+    public void PreResumeParentCopyCloseFailuresAreCheckedOwnedAndRetryable()
+    {
+        // The four parent-side copies are closed before ResumeThread.  Fail one deterministic close per
+        // run; a failed close must not be forgotten or treated as EOF/success.
+        var failures = new List<string>();
+        for (int ordinal = 1; ordinal <= 4; ordinal++)
+        {
+            int closeCalls = 0;
+            string marker = Path.Combine(Path.GetTempPath(), $"seqdoc-i100a-pre-resume-{Guid.NewGuid():N}.marker");
+            nint duplicateProcess = nint.Zero;
+            nint duplicateJob = nint.Zero;
+            var postCreate = FindStaticTestSeam("PostCreateProcessObserverForTests", typeof(Action<nint, nint>));
+            Assert.NotNull(postCreate);
+            postCreate!.SetValue(null, (Action<nint, nint>)((job, process) =>
+            {
+                DuplicateCurrentHandle(process, out duplicateProcess);
+                DuplicateCurrentHandle(job, out duplicateJob);
+            }));
+            var calls = new ProcessOwnershipNativeCalls
+            {
+                CloseHandle = handle =>
+                {
+                    int call = Interlocked.Increment(ref closeCalls);
+                    if (call == ordinal)
+                    {
+                        return NativeCallResult.Failure(8300 + ordinal);
+                    }
+
+                    return NativeMethods.CloseHandle(handle)
+                        ? NativeCallResult.Success()
+                        : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+                },
+            };
+
+            var result = ContainedProcess.Start(
+                NewOptions(["sleep-with-marker", marker, "5000"], nativeCalls: calls));
+
+            try
+            {
+                if (result.Succeeded || result.FailureClass != ProcessOwnershipFailureClass.ProcessConstructionFailed
+                    || !(result.Detail ?? string.Empty).Contains((8300 + ordinal).ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)
+                    || (result.Detail ?? string.Empty).Contains("EOF", StringComparison.OrdinalIgnoreCase))
+                {
+                    failures.Add($"ordinal {ordinal}: {result.FailureClass}, '{result.Detail}'");
+                }
+                if (File.Exists(marker))
+                {
+                    failures.Add($"ordinal {ordinal}: child resumed and created marker");
+                }
+
+                // A bounded unwind may finish with no owner; if it cannot, the returned owner must remain
+                // reachable and retryable rather than silently losing the failed native value.
+                if (result.CleanupOwner is not null)
+                {
+                    Assert.True(result.CleanupOwner.Terminate() || result.CleanupOwner.FailureClass != ProcessOwnershipFailureClass.None);
+                    result.CleanupOwner.Dispose();
+                }
+            }
+            finally
+            {
+                postCreate.SetValue(null, null);
+                result.Process?.Terminate();
+                result.Process?.Dispose();
+                result.CleanupOwner?.Dispose();
+                if (duplicateJob != nint.Zero && QueryJobActiveProcesses(duplicateJob) > 0)
+                {
+                    NativeMethods.TerminateJobObject(duplicateJob, uint.MaxValue);
+                    _ = NativeMethods.WaitForSingleObject(duplicateProcess, 5000);
+                }
+                if (duplicateProcess != nint.Zero)
+                {
+                    NativeMethods.CloseHandle(duplicateProcess);
+                }
+                if (duplicateJob != nint.Zero)
+                {
+                    NativeMethods.CloseHandle(duplicateJob);
+                }
+                File.Delete(marker);
+            }
+        }
+
+        Assert.Empty(failures);
+    }
+
+    [Fact]
+    public void ConstructionFaultsExposeOneTypedReachableLedgerForEveryAcquiredNativeSlot()
+    {
+        var assembly = typeof(ContainedProcess).Assembly;
+        Type resourceKind = assembly.GetType("SeqDoc.AcceptanceTests.NativeResourceKind")
+            ?? throw new Xunit.Sdk.XunitException("Frozen ledger contract is missing NativeResourceKind.");
+        Assert.True(resourceKind.IsEnum);
+        string[] inventory = Enum.GetNames(resourceKind);
+        Assert.Equal(15, inventory.Length);
+        foreach (string expected in new[]
+        {
+            "StdinChildRead", "StdinParentWrite", "StdoutParentRead", "StdoutChildWrite",
+            "StderrParentRead", "StderrChildWrite", "HandleListBuffer", "JobHandle",
+            "CompletionPortHandle", "JobListBuffer", "AttributeListBuffer", "CommandLineBuffer",
+            "EnvironmentBlockBuffer", "ProcessHandle", "PrimaryThreadHandle",
+        })
+        {
+            Assert.Contains(expected, inventory);
+        }
+
+        Type snapshot = assembly.GetType("SeqDoc.AcceptanceTests.NativeResourceSnapshot")
+            ?? throw new Xunit.Sdk.XunitException("Frozen ledger contract is missing NativeResourceSnapshot.");
+        Assert.NotNull(snapshot.GetProperty("Kind"));
+        Assert.NotNull(snapshot.GetProperty("AcquisitionSequence"));
+        Assert.NotNull(snapshot.GetProperty("Value"));
+        Assert.NotNull(snapshot.GetProperty("State"));
+        Assert.NotNull(snapshot.GetProperty("Attempts"));
+        Assert.NotNull(snapshot.GetProperty("Evidence"));
+
+        Type ownership = assembly.GetType("SeqDoc.AcceptanceTests.ProcessOwnershipSnapshot")
+            ?? throw new Xunit.Sdk.XunitException("Construction faults have no typed ownership snapshot.");
+        Assert.NotNull(ownership.GetProperty("NativeResources"));
+        Assert.NotNull(ownership.GetProperty("Immutable"));
+
+        // Shape is only the admission check.  Every frozen construction point must publish the actual
+        // result ledger, including the post-transfer/pre-monitor point; an empty or synthetic ledger is
+        // not evidence of ownership.
+        foreach (ConstructionFaultPoint fault in Enum.GetValues<ConstructionFaultPoint>()
+            .Where(fault => fault != ConstructionFaultPoint.None))
+        {
+            int terminalAttempts = 0;
+            var result = ContainedProcess.Start(
+                NewOptions(["sleep", "1000"], nativeCalls: new ProcessOwnershipNativeCalls
+                {
+                    TerminateJobObject = (job, exitCode) =>
+                    {
+                        if (Interlocked.Increment(ref terminalAttempts) == 1)
+                        {
+                            return NativeCallResult.Failure(8510);
+                        }
+
+                        return NativeMethods.TerminateJobObject(job, exitCode)
+                            ? NativeCallResult.Success()
+                            : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+                    },
+                    WaitForSingleObject = (_, _) => NativeWaitResult.Failed(8511),
+                }), fault);
+            try
+            {
+                Assert.False(result.Succeeded);
+                object ledger = GetTypedOwnershipSnapshot(result);
+                var resources = GetRequiredProperty(ledger, "NativeResources") as System.Collections.IEnumerable;
+                Assert.NotNull(resources);
+                var entries = resources!.Cast<object>().ToArray();
+                Assert.NotEmpty(entries);
+                var kinds = entries.Select(entry => GetRequiredProperty(entry, "Kind")).ToArray();
+                Assert.Equal(kinds.Length, kinds.Distinct().Count());
+                var sequences = entries.Select(entry => Convert.ToInt64(GetRequiredProperty(entry, "AcquisitionSequence"), CultureInfo.InvariantCulture)).ToArray();
+                Assert.All(sequences, sequence => Assert.True(sequence > 0));
+                Assert.Equal(sequences.Length, sequences.Distinct().Count());
+                Assert.Equal(sequences.OrderBy(sequence => sequence), sequences);
+                foreach (object entry in entries)
+                {
+                    string state = GetRequiredProperty(entry, "State").ToString()!;
+                    Assert.True(state is "Owned" or "Released");
+                    nint value = ConvertToNativeInt(GetRequiredProperty(entry, "Value"));
+                    if (state == "Owned")
+                    {
+                        Assert.NotEqual(nint.Zero, value);
+                    }
+                }
+
+                if (result.CleanupOwner is null)
+                {
+                    Assert.All(entries, entry => Assert.Equal("Released", GetRequiredProperty(entry, "State").ToString()));
+                }
+                var immutable = entries.Select(entry =>
+                    (GetRequiredProperty(entry, "Kind").ToString(),
+                        GetRequiredProperty(entry, "State").ToString(),
+                        ConvertToNativeInt(GetRequiredProperty(entry, "Value")))).ToArray();
+                result.CleanupOwner?.Dispose();
+                Assert.Equal(immutable,
+                    entries.Select(entry =>
+                        (GetRequiredProperty(entry, "Kind").ToString(),
+                            GetRequiredProperty(entry, "State").ToString(),
+                            ConvertToNativeInt(GetRequiredProperty(entry, "Value")))));
+            }
+            finally
+            {
+                result.CleanupOwner?.Dispose();
+                result.Process?.Terminate();
+                result.Process?.Dispose();
+            }
+        }
+
+        // F7: a close failure before ownership transfer must leave the raw native owner reachable.
+        // AfterJobCreated has acquired a job but has not created a child, so this is deterministic and
+        // cannot accidentally depend on process-family timing.
+        var nativeCalls = new ProcessOwnershipNativeCalls();
+        var close = FindInstanceTestSeam("CloseHandle", typeof(Func<nint, NativeCallResult>));
+        Assert.NotNull(close);
+        int closeAttempts = 0;
+        nint failedJob = nint.Zero;
+        close!.SetValue(nativeCalls, (Func<nint, NativeCallResult>)(handle =>
+        {
+            if (Interlocked.Increment(ref closeAttempts) == 1)
+            {
+                failedJob = handle;
+                return NativeCallResult.Failure(8601);
+            }
+
+            return NativeMethods.CloseHandle(handle)
+                ? NativeCallResult.Success()
+                : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+        }));
+        ProcessOwnershipConstructionResult failedConstruction = ContainedProcess.Start(
+            NewOptions(["sleep", "1000"], nativeCalls: nativeCalls), ConstructionFaultPoint.AfterJobCreated);
+        try
+        {
+            Assert.False(failedConstruction.Succeeded);
+            Assert.Contains("8601", failedConstruction.Detail, StringComparison.Ordinal);
+            Assert.NotNull(failedConstruction.CleanupOwner);
+            Assert.NotEqual(nint.Zero, failedJob);
+            object firstSnapshot = GetTypedOwnershipSnapshot(failedConstruction);
+            object firstJob = ((System.Collections.IEnumerable)GetRequiredProperty(firstSnapshot, "NativeResources"))
+                .Cast<object>().Single(entry => GetRequiredProperty(entry, "Kind").ToString() == "JobHandle");
+            Assert.Equal("Owned", GetRequiredProperty(firstJob, "State").ToString());
+            Assert.Equal(failedJob, ConvertToNativeInt(GetRequiredProperty(firstJob, "Value")));
+            Assert.Equal(1, Convert.ToInt32(GetRequiredProperty(firstJob, "Attempts"), CultureInfo.InvariantCulture));
+            Assert.Contains("8601", GetRequiredProperty(firstJob, "Evidence").ToString(), StringComparison.Ordinal);
+
+            failedConstruction.CleanupOwner!.Dispose();
+            object secondSnapshot = GetTypedOwnershipSnapshot(failedConstruction.CleanupOwner);
+            object secondJob = ((System.Collections.IEnumerable)GetRequiredProperty(secondSnapshot, "NativeResources"))
+                .Cast<object>().Single(entry => GetRequiredProperty(entry, "Kind").ToString() == "JobHandle");
+            Assert.Equal("Released", GetRequiredProperty(secondJob, "State").ToString());
+            Assert.Equal(nint.Zero, ConvertToNativeInt(GetRequiredProperty(secondJob, "Value")));
+            Assert.True(Convert.ToInt32(GetRequiredProperty(secondJob, "Attempts"), CultureInfo.InvariantCulture) >= 2);
+            Assert.Equal("Owned", GetRequiredProperty(firstJob, "State").ToString());
+            Assert.Equal(failedJob, ConvertToNativeInt(GetRequiredProperty(firstJob, "Value")));
+        }
+        finally
+        {
+            close.SetValue(nativeCalls, null);
+            failedConstruction.CleanupOwner?.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task DrainCompletionWaitsForTheActiveFamilyProofEpochBeforeClassification()
+    {
+        var assembly = typeof(ContainedProcess).Assembly;
+        Type barrier = assembly.GetType("SeqDoc.AcceptanceTests.ProcessOwnershipLifecycleBarriers")
+            ?? throw new Xunit.Sdk.XunitException("Missing deterministic lifecycle barrier adapter.");
+        Assert.NotNull(barrier.GetMethod("WaitForDrainsCompleted"));
+        Assert.NotNull(barrier.GetMethod("WaitForFamilyProofPending"));
+        Assert.NotNull(barrier.GetMethod("ReleaseActiveProcessZero"));
+
+        var nativeCalls = new ProcessOwnershipNativeCalls();
+        var lifecycle = typeof(ProcessOwnershipNativeCalls).GetProperty("LifecycleBarriers",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(lifecycle);
+        object barriers = Activator.CreateInstance(barrier)!;
+        lifecycle!.SetValue(nativeCalls, barriers);
+        var result = ContainedProcess.Start(NewOptions(["echo", "barrier-out", "barrier-err"], nativeCalls: nativeCalls));
+        Assert.True(result.Succeeded, result.Detail);
+        using var process = result.Process!;
+        Task<ProcessOwnershipWaitResult> waitTask = process.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+        Assert.True((bool)barrier.GetMethod("WaitForDrainsCompleted")!.Invoke(
+            barriers, [TimeSpan.FromSeconds(5)])!);
+        Assert.True((bool)barrier.GetMethod("WaitForFamilyProofPending")!.Invoke(
+            barriers, [TimeSpan.FromSeconds(5)])!);
+        Assert.False(waitTask.IsCompleted);
+        Assert.Equal(ProcessOwnershipFailureClass.None, process.FailureClass);
+        Assert.False(process.TerminateJobObjectWasCalled);
+        barrier.GetMethod("ReleaseActiveProcessZero")!.Invoke(barriers, null);
+        var wait = await waitTask;
+        Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
+        Assert.False(process.TerminateJobObjectWasCalled);
+
+        Type receipt = assembly.GetType("SeqDoc.AcceptanceTests.LifecycleOperationReceipt")
+            ?? throw new Xunit.Sdk.XunitException("Missing typed lifecycle operation receipt.");
+        Assert.NotNull(receipt.GetProperty("Kind"));
+        Assert.NotNull(receipt.GetProperty("OperationId"));
+        Assert.NotNull(receipt.GetProperty("Epoch"));
+        Assert.NotNull(receipt.GetProperty("Accepted"));
+        Assert.NotNull(receipt.GetProperty("Stale"));
+    }
+
+    [Fact]
+    public async Task LifecycleEpochsRejectStaleCompletionsAndJoinOneRetryableTerminalOperation()
+    {
+        var assembly = typeof(ContainedProcess).Assembly;
+        Type coordinator = assembly.GetType("SeqDoc.AcceptanceTests.ProcessOwnershipLifecycleCoordinator")
+            ?? throw new Xunit.Sdk.XunitException("Missing single lifecycle coordinator.");
+        Assert.NotNull(coordinator.GetMethod("BeginEpoch"));
+        Assert.NotNull(coordinator.GetMethod("AcceptCompletion"));
+        Assert.NotNull(coordinator.GetMethod("JoinTerminalOperation"));
+        Assert.NotNull(coordinator.GetMethod("RetryTerminalOperation"));
+        Assert.NotNull(coordinator.GetProperty("OperationReceipts"));
+        Assert.NotNull(coordinator.GetProperty("ImmutableEvidence"));
+
+        // Exact internal protocol exercised below: BeginFamilyProofEpoch() and
+        // JoinTerminalOperation() return immutable receipts; completion consumes (operationId,
+        // nativeSuccess, familyProven); RetryTerminalOperation() starts no second native attempt
+        // after success and instead returns/joins a newer family-proof receipt.
+        object instance = Activator.CreateInstance(coordinator)!;
+        var begin = coordinator.GetMethod("BeginFamilyProofEpoch")!;
+        var completeFamily = coordinator.GetMethod("CompleteFamilyProofEpoch")!;
+        var join = coordinator.GetMethod("JoinTerminalOperation")!;
+        var retry = coordinator.GetMethod("RetryTerminalOperation")!;
+        object familyN = begin.Invoke(instance, null)!;
+        object familyN1 = begin.Invoke(instance, null)!;
+        object stale = completeFamily.Invoke(instance,
+            [ToInt64(GetRequiredProperty(familyN, "OperationId")), false, true])!;
+        Assert.False((bool)GetRequiredProperty(stale, "Accepted"));
+        Assert.True((bool)GetRequiredProperty(stale, "Stale"));
+        object accepted = completeFamily.Invoke(instance,
+            [ToInt64(GetRequiredProperty(familyN1, "OperationId")), true, true])!;
+        Assert.True((bool)GetRequiredProperty(accepted, "Accepted"));
+
+        object waitEpoch = coordinator.GetMethod("BeginEpoch")!.Invoke(instance, ["Wait"])!;
+        object drainEpoch = coordinator.GetMethod("BeginEpoch")!.Invoke(instance, ["Drain"])!;
+        object disposeEpoch = coordinator.GetMethod("BeginEpoch")!.Invoke(instance, ["Dispose"])!;
+        object staleWait = coordinator.GetMethod("AcceptCompletion")!.Invoke(instance,
+            [ToInt64(GetRequiredProperty(waitEpoch, "OperationId")), true])!;
+        Assert.True((bool)GetRequiredProperty(staleWait, "Stale"));
+        Assert.False((bool)GetRequiredProperty(staleWait, "Accepted"));
+        object currentDispose = coordinator.GetMethod("AcceptCompletion")!.Invoke(instance,
+            [ToInt64(GetRequiredProperty(disposeEpoch, "OperationId")), true])!;
+        Assert.True((bool)GetRequiredProperty(currentDispose, "Accepted"));
+        Assert.True(ToInt64(GetRequiredProperty(drainEpoch, "OperationId"))
+            < ToInt64(GetRequiredProperty(disposeEpoch, "OperationId")));
+
+        object terminalA = join.Invoke(instance, null)!;
+        object terminalB = join.Invoke(instance, null)!;
+        Assert.Equal(GetRequiredProperty(terminalA, "OperationId"), GetRequiredProperty(terminalB, "OperationId"));
+        object failed = coordinator.GetMethod("CompleteTerminalOperation")!.Invoke(instance,
+            [ToInt64(GetRequiredProperty(terminalA, "OperationId")), false])!;
+        Assert.True((bool)GetRequiredProperty(failed, "Accepted"));
+        object retryReceipt = retry.Invoke(instance, null)!;
+        Assert.True(ToInt64(GetRequiredProperty(retryReceipt, "OperationId"))
+            > ToInt64(GetRequiredProperty(terminalA, "OperationId")));
+        object success = coordinator.GetMethod("CompleteTerminalOperation")!.Invoke(instance,
+            [ToInt64(GetRequiredProperty(retryReceipt, "OperationId")), true])!;
+        Assert.True((bool)GetRequiredProperty(success, "Accepted"));
+        object proofRetry = retry.Invoke(instance, null)!;
+        Assert.NotEqual(GetRequiredProperty(retryReceipt, "OperationId"), GetRequiredProperty(proofRetry, "OperationId"));
+        var receipts = ((System.Collections.IEnumerable)GetRequiredProperty(instance, "OperationReceipts"))
+            .Cast<object>().ToArray();
+        Assert.Equal(receipts.Select(receipt => ToInt64(GetRequiredProperty(receipt, "OperationId"))),
+            receipts.Select(receipt => ToInt64(GetRequiredProperty(receipt, "OperationId"))).OrderBy(id => id));
+        Assert.NotSame(GetRequiredProperty(instance, "ImmutableEvidence"), GetRequiredProperty(instance, "ImmutableEvidence"));
+
+        // F6: the coordinator must be the production ContainedProcess authority, not merely a directly
+        // instantiated protocol fixture.  A clean child must publish an accepted family-proof receipt.
+        var clean = ContainedProcess.Start(NewOptions(["echo", "lifecycle", "proof"]));
+        Assert.True(clean.Succeeded, clean.Detail);
+        using (ContainedProcess cleanProcess = clean.Process!)
+        {
+            ProcessOwnershipWaitResult cleanWait = await cleanProcess.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            Assert.Equal(ProcessOwnershipFailureClass.None, cleanWait.FailureClass);
+            cleanProcess.Dispose();
+            object cleanReceipts = GetRequiredLifecycleReceipts(cleanProcess);
+            object[] productionReceipts = ((System.Collections.IEnumerable)cleanReceipts).Cast<object>().ToArray();
+            string[] requiredKinds = ["Wait", "Drain", "Dispose", "FamilyProof"];
+            foreach (string kind in requiredKinds)
+            {
+                object receipt = Assert.Single(productionReceipts, item =>
+                    GetRequiredProperty(item, "Kind").ToString() == kind);
+                Assert.True((bool)GetRequiredProperty(receipt, "Accepted"));
+                Assert.True(ToInt64(GetRequiredProperty(receipt, "OperationId")) > 0);
+            }
+            long[] productionIds = productionReceipts
+                .Select(item => ToInt64(GetRequiredProperty(item, "OperationId")))
+                .ToArray();
+            Assert.Equal(productionIds.Distinct().OrderBy(id => id), productionIds);
+        }
+
+        // The real terminal path must serialize concurrent callers, permit a retry after a failed native
+        // attempt, and use a later family-proof epoch after a successful native termination.
+        var firstTerminalEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstTerminal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int nativeTerminalCalls = 0;
+        var retryCalls = new ProcessOwnershipNativeCalls
+        {
+            TerminateJobObject = (job, exitCode) =>
+            {
+                if (Interlocked.Increment(ref nativeTerminalCalls) == 1)
+                {
+                    firstTerminalEntered.SetResult();
+                    releaseFirstTerminal.Task.GetAwaiter().GetResult();
+                    return NativeCallResult.Failure(8602);
+                }
+
+                return NativeMethods.TerminateJobObject(job, exitCode)
+                    ? NativeCallResult.Success()
+                    : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+            },
+        };
+        var retryResult = ContainedProcess.Start(NewOptions(["sleep", "5000"], nativeCalls: retryCalls));
+        Assert.True(retryResult.Succeeded, retryResult.Detail);
+        using (ContainedProcess retryProcess = retryResult.Process!)
+        {
+            Task<bool> first = Task.Run(retryProcess.Terminate);
+            await firstTerminalEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Task<bool> joined = Task.Run(retryProcess.Terminate);
+            Assert.True(SpinWait.SpinUntil(
+                () => LifecycleIds(GetRequiredLifecycleReceipts(retryProcess), "Terminal").Length >= 2,
+                TimeSpan.FromSeconds(5)), "The second caller did not join the in-flight terminal operation.");
+            releaseFirstTerminal.SetResult();
+            await Task.WhenAll(first, joined);
+            object afterFailedTerminal = GetRequiredLifecycleReceipts(retryProcess);
+            long[] firstIds = LifecycleIds(afterFailedTerminal, "Terminal");
+            Assert.True(firstIds.Length >= 2);
+            Assert.Equal(firstIds[0], firstIds[1]);
+
+            Assert.True(retryProcess.Terminate());
+            long[] afterRetryIds = LifecycleIds(GetRequiredLifecycleReceipts(retryProcess), "Terminal");
+            Assert.Contains(afterRetryIds, id => id > firstIds[0]);
+        }
+
+        var proofBarriers = new ProcessOwnershipLifecycleBarriers();
+        int proofTerminalCalls = 0;
+        var proofCalls = new ProcessOwnershipNativeCalls
+        {
+            LifecycleBarriers = proofBarriers,
+            TerminateJobObject = (job, exitCode) =>
+            {
+                Interlocked.Increment(ref proofTerminalCalls);
+                return NativeMethods.TerminateJobObject(job, exitCode)
+                    ? NativeCallResult.Success()
+                    : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+            },
+        };
+        var proofResult = ContainedProcess.Start(NewOptions(["sleep", "5000"], nativeCalls: proofCalls));
+        Assert.True(proofResult.Succeeded, proofResult.Detail);
+        using (ContainedProcess proofProcess = proofResult.Process!)
+        {
+            proofProcess.ActiveProcessZeroBoundForTests = TimeSpan.FromMilliseconds(150);
+            Task<bool> terminal = Task.Run(proofProcess.Terminate);
+            Assert.True(proofBarriers.WaitForFamilyProofPending(TimeSpan.FromSeconds(5)));
+            long terminalId = LifecycleIds(GetRequiredLifecycleReceipts(proofProcess), "Terminal").Single();
+            Assert.False(await terminal);
+            long firstProofId = LifecycleIds(GetRequiredLifecycleReceipts(proofProcess), "FamilyProof").Single();
+            Task<bool> retryTerminal = Task.Run(proofProcess.Terminate);
+            Assert.True(proofBarriers.WaitForFamilyProofPending(TimeSpan.FromSeconds(5)));
+            proofBarriers.ReleaseActiveProcessZero();
+            Assert.True(await retryTerminal);
+            long[] allIds = LifecycleIds(GetRequiredLifecycleReceipts(proofProcess), "FamilyProof");
+            Assert.Contains(allIds, id => id > firstProofId);
+            Assert.Contains(LifecycleIds(GetRequiredLifecycleReceipts(proofProcess), "Terminal"), id => id > terminalId);
+            Assert.Equal(1, proofTerminalCalls);
+        }
+    }
+
+    [Fact]
+    public async Task FailedReleaseRetainsNativeValueAndImmutableOrderedRetryEvidence()
+    {
+        var assembly = typeof(ContainedProcess).Assembly;
+        Type snapshot = assembly.GetType("SeqDoc.AcceptanceTests.NativeResourceSnapshot")
+            ?? throw new Xunit.Sdk.XunitException("Failed release has no typed resource snapshot.");
+        Assert.NotNull(snapshot.GetProperty("Value"));
+        Assert.NotNull(snapshot.GetProperty("State"));
+        Assert.NotNull(snapshot.GetProperty("Attempt"));
+        Assert.NotNull(snapshot.GetProperty("Error"));
+        Assert.NotNull(snapshot.GetProperty("ReleaseOrder"));
+        Assert.NotNull(snapshot.GetProperty("IsImmutable"));
+
+        var nativeCalls = new ProcessOwnershipNativeCalls();
+        var close = FindInstanceTestSeam("CloseHandle", typeof(Func<nint, NativeCallResult>));
+        Assert.NotNull(close);
+        int failures = 0;
+        nint failedHandle = nint.Zero;
+        bool injectDisposalFailure = false;
+        close!.SetValue(nativeCalls, (Func<nint, NativeCallResult>)(handle =>
+            !Volatile.Read(ref injectDisposalFailure)
+                ? NativeMethods.CloseHandle(handle)
+                    ? NativeCallResult.Success()
+                    : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error())
+                : Interlocked.Increment(ref failures) == 1
+                ? (failedHandle = handle, NativeCallResult.Failure(8401)).Item2
+                : NativeMethods.CloseHandle(handle)
+                    ? NativeCallResult.Success()
+                    : NativeCallResult.Failure(System.Runtime.InteropServices.Marshal.GetLastWin32Error())));
+        var result = ContainedProcess.Start(NewOptions(["echo", "out", "err"], nativeCalls: nativeCalls));
+        Assert.True(result.Succeeded, result.Detail);
+        try
+        {
+            Volatile.Write(ref injectDisposalFailure, true);
+            await result.Process!.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            result.Process.Dispose();
+            Assert.Contains(result.Process.TeardownFailures,
+                evidence => evidence.Contains("8401", StringComparison.Ordinal));
+            Assert.True(result.Process.HasRetainedFamilyResourcesForTests || result.Process.FailureClass == ProcessOwnershipFailureClass.TeardownDegraded);
+            object firstSnapshot = GetTypedOwnershipSnapshot(result.Process);
+            var firstEntries = ((System.Collections.IEnumerable)GetRequiredProperty(firstSnapshot, "NativeResources"))
+                .Cast<object>().ToArray();
+            Assert.Contains(firstEntries, entry => GetRequiredProperty(entry, "State").ToString() == "Owned"
+                && ConvertToNativeInt(GetRequiredProperty(entry, "Value")) == failedHandle
+                && Convert.ToInt32(GetRequiredProperty(entry, "Attempts"), CultureInfo.InvariantCulture) == 1
+                && GetRequiredProperty(entry, "Evidence").ToString()!.Contains("8401", StringComparison.Ordinal));
+            var immutableFirst = firstEntries.Select(entry =>
+                (GetRequiredProperty(entry, "Kind").ToString(), GetRequiredProperty(entry, "State").ToString(),
+                    ConvertToNativeInt(GetRequiredProperty(entry, "Value")))).ToArray();
+            result.Process.Dispose();
+            object secondSnapshot = GetTypedOwnershipSnapshot(result.Process);
+            var secondEntries = ((System.Collections.IEnumerable)GetRequiredProperty(secondSnapshot, "NativeResources"))
+                .Cast<object>().ToArray();
+            Assert.DoesNotContain(secondEntries, entry => GetRequiredProperty(entry, "State").ToString() == "Owned");
+            Assert.Equal(immutableFirst, firstEntries.Select(entry =>
+                (GetRequiredProperty(entry, "Kind").ToString(), GetRequiredProperty(entry, "State").ToString(),
+                    ConvertToNativeInt(GetRequiredProperty(entry, "Value")))));
+            Assert.Equal(firstEntries.Length, secondEntries.Length);
+            Assert.True(result.Process.TeardownOrderForTests.Count > 0);
+        }
+        finally
+        {
+            close.SetValue(nativeCalls, null);
+            result.Process?.Dispose();
+        }
+
+        // F8: the internal ledger is strict about identity.  Duplicate acquisition and a failed release
+        // against an already released slot must not synthesize or mutate ownership.
+        Type ledgerType = assembly.GetType("SeqDoc.AcceptanceTests.NativeOwnershipLedger")
+            ?? throw new Xunit.Sdk.XunitException("Missing typed native ownership ledger.");
+        object ledger = Activator.CreateInstance(ledgerType)!;
+        Type resourceKind = assembly.GetType("SeqDoc.AcceptanceTests.NativeResourceKind")!;
+        object kind = Enum.Parse(resourceKind, "JobHandle");
+        MethodInfo acquire = ledgerType.GetMethod("Acquire", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        MethodInfo release = ledgerType.GetMethod("AttemptRelease", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        MethodInfo snapshotMethod = ledgerType.GetMethod("Snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        nint value = (nint)0x1234;
+        acquire.Invoke(ledger, [kind, value, "test acquire"]);
+        object beforeDuplicate = snapshotMethod.Invoke(ledger, null)!;
+        TargetInvocationException duplicate = Assert.Throws<TargetInvocationException>(() =>
+            acquire.Invoke(ledger, [kind, value, "duplicate acquire"]));
+        Assert.IsType<InvalidOperationException>(duplicate.InnerException);
+        object afterDuplicate = snapshotMethod.Invoke(ledger, null)!;
+        Assert.Equal(SnapshotProjection(beforeDuplicate), SnapshotProjection(afterDuplicate));
+
+        release.Invoke(ledger, [kind, true, 0, "test release", value]);
+        object released = snapshotMethod.Invoke(ledger, null)!;
+        TargetInvocationException stale = Assert.Throws<TargetInvocationException>(() =>
+            release.Invoke(ledger, [kind, false, 8603, "stale failed release", value]));
+        Assert.IsType<InvalidOperationException>(stale.InnerException);
+        object afterStale = snapshotMethod.Invoke(ledger, null)!;
+        Assert.Equal(SnapshotProjection(released), SnapshotProjection(afterStale));
+    }
+
+    [Fact]
+    public void StagedStubUsesRelocatableBaseDirectoryAndContainsCompleteRuntimePayload()
+    {
+        string stage = Path.Combine(AppContext.BaseDirectory, "process-ownership-stub");
+        Assert.True(Directory.Exists(stage), $"Expected staged stub directory '{stage}'.");
+        Assert.True(File.Exists(Path.Combine(stage, "SeqDoc.AcceptanceTests.ProcessOwnershipStub.exe")));
+        Assert.NotEmpty(Directory.EnumerateFiles(stage, "*.dll", SearchOption.TopDirectoryOnly));
+        Assert.NotEmpty(Directory.EnumerateFiles(stage, "*.deps.json", SearchOption.TopDirectoryOnly));
+        Assert.NotEmpty(Directory.EnumerateFiles(stage, "*.runtimeconfig.json", SearchOption.TopDirectoryOnly));
+
+        var resolver = typeof(ProcessOwnershipTests).GetMethod(
+            "ResolveStubExecutablePath",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic,
+            binder: null,
+            types: [typeof(string)],
+            modifiers: null);
+        Assert.NotNull(resolver);
+        string relocated = Path.Combine(Path.GetTempPath(), "seqdoc-i100a-relocated-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(relocated);
+        try
+        {
+            string relocatedStage = Path.Combine(relocated, "process-ownership-stub");
+            CopyDirectory(stage, relocatedStage);
+            string path = (string)resolver!.Invoke(null, [relocated])!;
+            Assert.Equal(Path.Combine(relocatedStage, "SeqDoc.AcceptanceTests.ProcessOwnershipStub.exe"), path);
+            Assert.True(File.Exists(path));
+            using var child = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = path,
+                    Arguments = "echo relocated-out relocated-err",
+                    WorkingDirectory = relocated,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                },
+            };
+            Assert.True(child.Start());
+            string stdout = child.StandardOutput.ReadToEnd();
+            string stderr = child.StandardError.ReadToEnd();
+            child.WaitForExit(5000);
+            Assert.Equal(0, child.ExitCode);
+            Assert.Equal("relocated-out", stdout);
+            Assert.Equal("relocated-err", stderr);
+        }
+        finally
+        {
+            if (Directory.Exists(relocated))
+            {
+                Directory.Delete(relocated, recursive: true);
+            }
+        }
+    }
+
+    // ---- shared helpers --------------------------------------------------------------------------------
+
+    private static ProcessOwnershipOptions NewOptions(
+        IReadOnlyList<string> arguments,
+        Dictionary<string, string>? environment = null,
+        TimeSpan? drainTimeout = null,
+        ProcessOwnershipNativeCalls? nativeCalls = null) =>
+        new()
+        {
+            ExecutablePath = StubExecutablePath,
+            Arguments = arguments,
+            Environment = environment ?? DefaultEnvironment(),
+            DrainTimeout = drainTimeout ?? TimeSpan.FromSeconds(30),
+            NativeCalls = nativeCalls,
+        };
+
+    /// <summary>GH106-R2-F8 helper: an "echo" child whose only purpose is exercising a rejected environment vector.</summary>
+    private static ProcessOwnershipOptions NewOptionsWithEnv(Dictionary<string, string> environment) =>
+        NewOptions(["echo", "out", "err"], environment);
+
+    /// <summary>
+    /// The explicit deterministic child environment includes <c>SystemRoot</c> (required for the .NET
+    /// apphost/CLR), plus runtime-discovery roots derived from the executing runtime. PATH and all other
+    /// ambient variables remain deliberately excluded.
+    /// </summary>
+    private static Dictionary<string, string> DefaultEnvironment()
+    {
+        var env = new Dictionary<string, string>(StringComparer.Ordinal);
+        string? systemRoot = System.Environment.GetEnvironmentVariable("SystemRoot");
+        if (!string.IsNullOrEmpty(systemRoot))
+        {
+            env["SystemRoot"] = systemRoot;
+        }
+
+        DirectoryInfo? dotnetRoot = new DirectoryInfo(
+            System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory());
+        while (dotnetRoot is not null && !File.Exists(Path.Combine(dotnetRoot.FullName, "dotnet.exe")))
+        {
+            dotnetRoot = dotnetRoot.Parent;
+        }
+
+        if (dotnetRoot is not null)
+        {
+            env["DOTNET_ROOT"] = dotnetRoot.FullName;
+            env["DOTNET_ROOT_X64"] = dotnetRoot.FullName;
+        }
+
+        return env;
+    }
+
+    private static System.Reflection.PropertyInfo? FindInstanceTestSeam(string name, Type type)
+    {
+        var property = typeof(ContainedProcess).GetProperty(
+            name,
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic);
+        if (property is not null && property.PropertyType == type && property.CanWrite)
+        {
+            return property;
+        }
+
+        property = typeof(ProcessOwnershipNativeCalls).GetProperty(
+            name,
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic);
+        return property is not null && property.PropertyType == type && property.CanWrite ? property : null;
+    }
+
+    private static void DuplicateCurrentHandle(nint source, out nint duplicate)
+    {
+        Assert.NotEqual(nint.Zero, source);
+        Assert.True(
+            NativeMethods.DuplicateHandle(
+                NativeMethods.GetCurrentProcess(), source,
+                NativeMethods.GetCurrentProcess(), out duplicate, 0, false, 0x00000002),
+            $"DuplicateHandle failed with Win32 error {System.Runtime.InteropServices.Marshal.GetLastWin32Error()}.");
+    }
+
+    private static uint QueryJobActiveProcesses(nint jobHandle)
+    {
+        var accounting = default(NativeMethods.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION);
+        bool queried = NativeMethods.QueryInformationJobObject(
+            jobHandle,
+            NativeMethods.JobObjectBasicAccountingInformation,
+            ref accounting,
+            (uint)System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>(),
+            out _);
+        Assert.True(
+            queried,
+            $"QueryInformationJobObject(JobObjectBasicAccountingInformation) failed with Win32 error "
+            + $"{System.Runtime.InteropServices.Marshal.GetLastWin32Error()}.");
+        return accounting.ActiveProcesses;
+    }
+
+    private static System.Reflection.PropertyInfo? FindStaticTestSeam(string name, Type type)
+    {
+        var property = typeof(ContainedProcess).GetProperty(
+            name,
+            System.Reflection.BindingFlags.Static |
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic);
+        return property is not null && property.PropertyType == type && property.CanWrite ? property : null;
+    }
+
+    private static bool EvaluatePlatform(bool isWindows, RuntimeArchitecture architecture, Version version)
+    {
+        var evaluator = typeof(ProcessOwnershipPlatform).GetMethod(
+            "Evaluate",
+            System.Reflection.BindingFlags.Static |
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic,
+            binder: null,
+            types: [typeof(bool), typeof(RuntimeArchitecture), typeof(Version)],
+            modifiers: null);
+        Assert.NotNull(evaluator);
+        return (bool)evaluator!.Invoke(null, [isWindows, architecture, version])!;
+    }
+
+    private static string ResolveStubExecutablePath(string? baseDirectory = null)
+    {
+        string root = baseDirectory ?? AppContext.BaseDirectory;
+        string stubPath = Path.Combine(root, "process-ownership-stub", "SeqDoc.AcceptanceTests.ProcessOwnershipStub.exe");
+
+        if (!File.Exists(stubPath))
+        {
+            throw new InvalidOperationException(
+                $"Staged stub executable not found at '{stubPath}'.");
+        }
+
+        return stubPath;
+    }
+
+
+    private static Task WaitForFileToExistAsync(string path, TimeSpan timeout) =>
+        WaitForConditionOrThrowAsync(() => File.Exists(path), timeout);
+
+    private static async Task WaitForConditionOrThrowAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = System.Diagnostics.Stopwatch.StartNew();
+        while (!condition())
+        {
+            if (deadline.Elapsed > timeout)
+            {
+                throw new TimeoutException($"Condition was not met within {timeout}.");
+            }
+
+            await Task.Delay(25);
+        }
+    }
+
+    private static int CountOccurrences(string text, string marker)
+    {
+        int count = 0;
+        int index = 0;
+        while ((index = text.IndexOf(marker, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += marker.Length;
+        }
+
+        return count;
+    }
+
+    private static int IndexOfEvidence(IReadOnlyList<string> evidence, params string[] fragments)
+    {
+        for (int i = 0; i < evidence.Count; i++)
+        {
+            if (fragments.All(fragment => evidence[i].Contains(fragment, StringComparison.Ordinal)))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static void CopyDirectory(string source, string destination)
+    {
+        Directory.CreateDirectory(destination);
+        foreach (string file in Directory.EnumerateFiles(source))
+        {
+            File.Copy(file, Path.Combine(destination, Path.GetFileName(file)));
+        }
+
+        foreach (string directory in Directory.EnumerateDirectories(source))
+        {
+            CopyDirectory(directory, Path.Combine(destination, Path.GetFileName(directory)));
+        }
+    }
+
+    private static object GetTypedOwnershipSnapshot(object owner)
+    {
+        foreach (string name in new[] { "OwnershipSnapshot", "ResourceSnapshot", "ConstructionSnapshot" })
+        {
+            PropertyInfo? property = owner.GetType().GetProperty(name,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (property?.GetValue(owner) is object snapshot)
+            {
+                return snapshot;
+            }
+        }
+
+        throw new Xunit.Sdk.XunitException("No typed ownership snapshot is observable.");
+    }
+
+    private static object GetRequiredLifecycleReceipts(object process)
+    {
+        foreach (string name in new[] { "LifecycleOperationReceiptsForTests", "LifecycleSnapshotForTests" })
+        {
+            PropertyInfo? property = process.GetType().GetProperty(name,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (property?.GetValue(process) is object snapshot)
+            {
+                if (name == "LifecycleSnapshotForTests")
+                {
+                    PropertyInfo? receipts = snapshot.GetType().GetProperty("OperationReceipts",
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (receipts?.GetValue(snapshot) is object nested)
+                    {
+                        return nested;
+                    }
+                }
+
+                return snapshot;
+            }
+        }
+
+        throw new Xunit.Sdk.XunitException("Production ContainedProcess does not expose typed lifecycle receipts.");
+    }
+
+    private static long[] LifecycleIds(object receipts, string kind) =>
+        ((System.Collections.IEnumerable)receipts).Cast<object>()
+            .Where(receipt => GetRequiredProperty(receipt, "Kind").ToString() == kind)
+            .Select(receipt => ToInt64(GetRequiredProperty(receipt, "OperationId")))
+            .ToArray();
+
+    private static string[] SnapshotProjection(object snapshot) =>
+        ((System.Collections.IEnumerable)GetRequiredProperty(snapshot, "NativeResources")).Cast<object>()
+            .Select(entry => string.Join("|",
+                GetRequiredProperty(entry, "Kind"), GetRequiredProperty(entry, "State"),
+                GetRequiredProperty(entry, "Value"), GetRequiredProperty(entry, "Attempts"),
+                GetRequiredProperty(entry, "Evidence"), GetRequiredProperty(entry, "Error") ?? ""))
+            .ToArray();
+
+    private static object GetRequiredProperty(object owner, string name) =>
+        owner.GetType().GetProperty(name,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(owner)
+        ?? throw new Xunit.Sdk.XunitException($"Missing required typed property {name} on {owner.GetType().Name}.");
+
+    private static nint ConvertToNativeInt(object value) => value switch
+    {
+        nint native => native,
+        _ => (nint)Convert.ToInt64(value, CultureInfo.InvariantCulture),
+    };
+
+    private static long ToInt64(object value) => Convert.ToInt64(value, CultureInfo.InvariantCulture);
+}
