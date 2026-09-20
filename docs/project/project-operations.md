@@ -48,8 +48,8 @@ branch, and clean status from the checkout. Explicit `current_head`, `start_head
 `next_action` values are required; both heads must be lowercase 40-character SHAs equal to the observed HEAD. The
 branch must match the preserved item branch. Dependencies must be closed, no execution may be selected, and claims
 must be normalized, unique, and non-overlapping. The operation preserves the item's baseline, owner, branch,
-checkpoint, contract, and PR, records deterministic `resume:{reason,startHead}` evidence, removes legacy takeover
-metadata, and atomically writes the registry, capsule, and execution projection. It performs no GitHub observation.
+checkpoint, contract, and PR, records deterministic `resume:{reason,startHead}` evidence, and atomically writes the
+registry, capsule, and execution projection. It performs no GitHub observation.
 
 Each operation validates the complete candidate before writing. Payloads are sorted and journaled with a deterministic
 generation identity. In-process failures restore every replaced file. `recover` never overwrites a newer generation;
@@ -63,13 +63,11 @@ for compatibility. Disjoint claims may run concurrently; closeout releases only 
 authenticated current PR author, current head, non-author peer, and a review epoch; stale SHA and author-as-peer are
 rejected. Findings are sorted and must receive deterministic dispositions before closure.
 
-`handoff` invokes authenticated `gh pr view` internally and requires an open, non-draft PR, current head, observed author, and a non-author peer. The first handoff from `Active` uses epoch 1; a repair handoff from `ResolvingFindings` requires a larger integer epoch, an advanced PR head, the same peer (or explicit `--allow-peer-change`), and complete dispositions stored in sorted order. It replaces the authenticated `requestHead` boundary and returns the capsule to `ReviewRequired`. Observed caller fields are test seams only; handoff requests review and does not claim approval.
+`handoff` invokes authenticated `gh pr view` internally and requires an open, non-draft PR, current head, observed author, and a non-author peer. The first handoff from `Active` uses epoch 1; a repair handoff from `ResolvingFindings` requires a larger integer epoch, an advanced PR head, the same peer (or explicit `--allow-peer-change`), and complete dispositions stored in sorted order. A supplied nonempty `next_action` is persisted verbatim; when omitted, the deterministic default is `Obtain one latest-head non-author peer review.` Empty values are rejected. It replaces the authenticated `requestHead` boundary and returns the capsule to `ReviewRequired`. Observed caller fields are test seams only; handoff requests review and does not claim approval.
 
 `closeout` invokes authenticated PR and paginated review observations, requiring a merged PR, its actual final head and merge SHA, and an exact-final-head `APPROVED` review by the stored peer. The handoff request head is retained only as a historical boundary; the caller's closeout head must match the authenticated final head. It requires matching execution/PR identity, focused and final receipts, attribution, resolved findings,
 and review evidence. It closes atomically and either leaves the root idle or selects an already-complete recipient.
-Phase A schema validation accepts the existing legacy `takeover` object only when it is on the current `Blocked` record.
-It is migration input only: resume never creates, uses, or preserves it, and closeout never revalidates it.
-Phase B deletes this legacy schema allowance after live migration.
+The live migration completed at `f8919e2`; worker-owned resume is now the final policy.
 
 `promote` changes only a blocked or draft dependent to `Ready` after every dependency is `Closed` and its capsule is
 complete; it never activates or selects the dependent.
@@ -81,7 +79,7 @@ complete; it never activates or selects the dependent.
 Paginated reviews use `gh api --paginate --slurp`, require page arrays, flatten them, and accept only a matching human
 `User` reviewer. GitHub logins are compared case-insensitively for handoff self-review rejection, review matching, and
 attribution; exact authenticated spellings are persisted. Closeout authenticates the merged PR and its final head,
-merge SHA, receipts, attribution, and resolved findings. Legacy takeover metadata is not closeout-authorizable.
+merge SHA, receipts, attribution, and resolved findings.
 
 Cancellation uses the legal `transition` operation and follows the same journaled transaction. An interrupted process
 leaves its untracked worktree-local journal for `recover`; a successfully rolled-back operation removes it. Run

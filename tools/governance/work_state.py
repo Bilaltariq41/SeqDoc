@@ -31,11 +31,11 @@ SHA = re.compile(r"^[0-9a-f]{40}$")
 NODE_ID = re.compile(r"^[A-Za-z0-9_]{1,100}$")
 URL = re.compile(r"^https://github\.com/[^/]+/[^/]+/(?:issues|pull)/[0-9]+(?:#.*)?$")
 PR_URL = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)(?:#.*)?$")
-ISSUE_COMMENT_URL = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/issues/([0-9]+)#issuecomment-([0-9]+)$")
 BRANCH = re.compile(r"^[A-Za-z0-9._/-]+$")
 ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 EPOCH = re.compile(r"^[0-9]+$")
 CLAIM_KINDS = {"path", "fixture", "governance-tool", "exclusive"}
+DEFAULT_HANDOFF_NEXT_ACTION = "Obtain one latest-head non-author peer review."
 
 
 def schema(root):
@@ -158,38 +158,6 @@ def metadata_errors(item):
                 errors.append("review epoch metadata mismatch")
             if not isinstance(review.get("findings"), list) or findings != review.get("findings"):
                 errors.append("review findings metadata mismatch")
-    takeover = item.get("takeover")
-    # Phase A accepts only the existing three-field record on a Blocked item.
-    # Resume consumes it; no current operation creates or authorizes it.
-    legacy_takeover = {"authorizationReceipt", "reason", "startHead"}
-    owner_takeover = {"mode", "authorizationReceipt", "authorizationDigest", "authorizedBy", "reason", "startHead"}
-    peer_takeover = {"mode", "authorizationHead", "authorizationReceipts", "reason", "startHead"}
-    if takeover is not None:
-        shape = set(takeover) if isinstance(takeover, dict) else set()
-        legacy_allowed = shape == legacy_takeover and lifecycle == "Blocked" and not item.get("executionId")
-        owner_allowed = shape == owner_takeover and lifecycle == "Blocked" and not item.get("executionId") and takeover.get("mode") == "owner"
-        peer_allowed = shape == peer_takeover and lifecycle == "Blocked" and not item.get("executionId") and takeover.get("mode") == "two-peer"
-        valid_shape = legacy_allowed or owner_allowed or peer_allowed
-        valid_values = (valid_shape and isinstance(takeover, dict) and
-                        isinstance(takeover.get("authorizationReceipt"), str) and takeover["authorizationReceipt"].strip() and
-                        isinstance(takeover.get("reason"), str) and takeover["reason"].strip() and
-                        SHA.fullmatch(takeover.get("startHead", "")))
-        if owner_allowed:
-            valid_values = (isinstance(takeover.get("authorizationReceipt"), str) and takeover["authorizationReceipt"].strip() and
-                            isinstance(takeover.get("authorizedBy"), str) and takeover["authorizedBy"].strip() and
-                            re.fullmatch(r"[0-9a-f]{64}", takeover.get("authorizationDigest", "")) and
-                            isinstance(takeover.get("reason"), str) and takeover["reason"].strip() and SHA.fullmatch(takeover.get("startHead", "")))
-        if peer_allowed:
-            receipts = takeover.get("authorizationReceipts")
-            valid_values = (SHA.fullmatch(takeover.get("authorizationHead", "")) and isinstance(receipts, list) and len(receipts) == 2 and
-                            all(isinstance(r, dict) and set(r) == {"url", "authorizationDigest", "authorizedBy"} and
-                                ISSUE_COMMENT_URL.fullmatch(r.get("url", "")) and re.fullmatch(r"[0-9a-f]{64}", r.get("authorizationDigest", "")) and
-                                isinstance(r.get("authorizedBy"), str) and r["authorizedBy"].strip() for r in receipts) and
-                            receipts[0]["url"] != receipts[1]["url"] and
-                            receipts[0]["authorizedBy"].casefold() != receipts[1]["authorizedBy"].casefold() and
-                            isinstance(takeover.get("reason"), str) and takeover["reason"].strip() and SHA.fullmatch(takeover.get("startHead", "")))
-        if not valid_values:
-            errors.append("invalid takeover record")
     resume_record = item.get("resume")
     if resume_record is not None and (not isinstance(resume_record, dict) or set(resume_record) != {"reason", "startHead"} or
                                       not isinstance(resume_record.get("reason"), str) or not resume_record["reason"].strip() or
@@ -842,7 +810,6 @@ def resume(root, args):
                 worktreeId=args.worktree_id, selectedForExecution=True, claims=claims,
                 nextAction=args.next_action, statusReason=args.reason,
                 resume={"reason": args.reason, "startHead": actual_head})
-    item.pop("takeover", None)
     capsule_path = root / item["checkpointPath"] / "checkpoint.md"
     lines = capsule_path.read_text(encoding="utf-8").splitlines()
     state_index = next((i for i, line in enumerate(lines) if line.strip() == "## State"), None)
@@ -890,6 +857,9 @@ def handoff(root, args):
         errors.append("review identity missing")
     if not args.finding or any(not valid_finding(value) for value in args.finding) or len(args.finding) != len(set(args.finding)):
         errors.append("invalid finding")
+    next_action = DEFAULT_HANDOFF_NEXT_ACTION if args.next_action is None else args.next_action
+    if not isinstance(next_action, str) or not next_action.strip():
+        errors.append("next action is required")
     if prior_review:
         if not isinstance(prior_review, dict) or not EPOCH.fullmatch(str(prior_review.get("epoch", ""))) or int(args.epoch) <= int(prior_review["epoch"]):
             errors.append("review epoch is not increasing")
@@ -904,7 +874,7 @@ def handoff(root, args):
     candidate = copy.deepcopy(items)
     item = next(value for value in candidate if value["id"] == current["id"])
     findings = sorted(set(args.finding or []))
-    item.update(lifecycle="ReviewRequired", lifecycleLabel="review-required", pr=args.pr, reviewEpoch=args.epoch, reviewPeer=args.peer, reviewFindings=findings, review={"executionId": args.execution_id, "pr": args.pr, "requestHead": args.head, "author": author, "peer": args.peer, "epoch": args.epoch, "findings": findings})
+    item.update(lifecycle="ReviewRequired", lifecycleLabel="review-required", pr=args.pr, reviewEpoch=args.epoch, reviewPeer=args.peer, reviewFindings=findings, nextAction=next_action, review={"executionId": args.execution_id, "pr": args.pr, "requestHead": args.head, "author": author, "peer": args.peer, "epoch": args.epoch, "findings": findings})
     capsule_path = root / item["checkpointPath"] / "checkpoint.md"
     lines = capsule_path.read_text(encoding="utf-8").splitlines()
     state_index = next((index for index, line in enumerate(lines) if line.strip() == "## State"), None)

@@ -170,7 +170,7 @@ class WorkStateTests(unittest.TestCase):
                 after["lifecycle"], after["lifecycleLabel"] = "Blocked", "blocked"; b.write_text(ws.dump(after))
         root = self.synthetic(second=True, dependency=True)
         dependency_path = root / "docs/project/work-items/B.json"; dependency_item = json.loads(dependency_path.read_text()); dependency_item["lifecycle"], dependency_item["lifecycleLabel"] = "Closed", None; dependency_path.write_text(ws.dump(dependency_item)); dependency_capsule = root / "docs/work/checkpoints/B/checkpoint.md"; dependency_capsule.write_text(dependency_capsule.read_text().replace("`Blocked`", "`Closed`").replace("`NotStarted`", "`Closed`"))
-        path = root / "docs/project/work-items/A.json"; item = json.loads(path.read_text()); item["lifecycle"], item["lifecycleLabel"] = "Blocked", "blocked"; item["statusReason"] = "blocked"; item["takeover"] = {"mode":"two-peer", "authorizationHead":"1"*40, "authorizationReceipts":[{"url":"https://github.com/o/r/issues/57#issuecomment-1", "authorizationDigest":"a"*64, "authorizedBy":"worker-one"}, {"url":"https://github.com/o/r/issues/57#issuecomment-2", "authorizationDigest":"b"*64, "authorizedBy":"worker-two"}], "reason":"resume later", "startHead":"1"*40}; path.write_text(ws.dump(item))
+        path = root / "docs/project/work-items/A.json"; item = json.loads(path.read_text()); item["lifecycle"], item["lifecycleLabel"] = "Blocked", "blocked"; item["statusReason"] = "blocked"; path.write_text(ws.dump(item))
         capsule = root / "docs/work/checkpoints/A/checkpoint.md"; capsule.write_text(capsule.read_text().replace("`NotStarted`", "`Blocked`")); self.assertEqual(ws.validate(root), 0)
         head = "1" * 40
         values = dict(id="A", execution_id="resume-a", worktree_id="resume-worktree", expected_baseline=item["baseline"], current_head=head, start_head=head, current_branch="feature/a", clean=True, claim=["src\\repair/../repair.py"], reason="resume worker", next_action="verify worker")
@@ -662,6 +662,11 @@ class WorkStateTests(unittest.TestCase):
                 errors = ws.validate_items([candidate], root, {candidate["checkpointPath"]: capsule})
                 self.assertTrue(errors, (field, value))
                 self.assertTrue(any(diagnostic in error.lower() or field.lower() in error.lower() for error in errors), errors)
+        former = __import__("copy").deepcopy(baseline)
+        former["lifecycle"], former["lifecycleLabel"], former["selectedForExecution"] = "Blocked", "blocked", False
+        former["takeover"] = {"mode":"two-peer", "authorizationHead":"1"*40, "authorizationReceipts":[{"url":"https://github.com/o/r/issues/57#issuecomment-1", "authorizationDigest":"a"*64, "authorizedBy":"worker-one"}, {"url":"https://github.com/o/r/issues/57#issuecomment-2", "authorizationDigest":"b"*64, "authorizedBy":"worker-two"}], "reason":"recorded state", "startHead":"1"*40}
+        former_capsule = (root / former["checkpointPath"] / "checkpoint.md").read_text(encoding="utf-8").replace("`NotStarted`", "`Blocked`")
+        self.assertTrue(ws.validate_items([former], root, {former["checkpointPath"]: former_capsule}))
         root = self.synthetic()
         required = {"expected_baseline": "a" * 40, "current_head": "a" * 40,
                     "current_branch": "feature/a", "clean": True, "worktree_id": "worktree-a",
@@ -753,8 +758,9 @@ class WorkStateTests(unittest.TestCase):
             self_review_before = {q.relative_to(root).as_posix(): q.read_bytes() for q in root.rglob("*") if q.is_file()}
             self.assertNotEqual(self.operation(root, "handoff", id="GH-57", execution_id=execution, pr=pr["url"], head=h1, observed_head="x", observed_author="x", peer="actual-author", epoch="1", finding=["Fixed: check"])[0], 0)
             self.assertEqual(self_review_before, {q.relative_to(root).as_posix(): q.read_bytes() for q in root.rglob("*") if q.is_file()})
-            self.assertEqual(self.operation(root, "handoff", id="GH-57", execution_id=execution, pr=pr["url"], head=h1, observed_head="x", observed_author="x", peer="pEeR", epoch="1", finding=["Fixed: check"])[0], 0)
+            self.assertEqual(self.operation(root, "handoff", id="GH-57", execution_id=execution, pr=pr["url"], head=h1, observed_head="x", observed_author="x", peer="pEeR", epoch="1", finding=["Fixed: check"], next_action="Obtain one latest-head non-author peer review.")[0], 0)
         reviewed = json.loads(path.read_text()); self.assertEqual(reviewed["review"]["author"], "Actual-Author"); self.assertEqual(reviewed["review"]["peer"], "pEeR"); reviewed["resume"]={"reason":"worker resume","startHead":h1}; path.write_text(ws.dump(reviewed))
+        self.assertEqual(reviewed["nextAction"], "Obtain one latest-head non-author peer review.")
         casing_item = __import__("copy").deepcopy(reviewed); casing_item["reviewPeer"] = "PEER"; casing_item["review"]["peer"] = "pEeR"; self.assertEqual(ws.validate_items([casing_item], root), [])
         different_item = __import__("copy").deepcopy(reviewed); different_item["reviewPeer"] = "different"; different_item["review"]["peer"] = "pEeR"; self.assertTrue(ws.validate_items([different_item], root))
         self_review_item = __import__("copy").deepcopy(reviewed); self_review_item["review"]["author"] = "Peer"; self_review_item["review"]["peer"] = "pEeR"; self.assertTrue(ws.validate_items([self_review_item], root))

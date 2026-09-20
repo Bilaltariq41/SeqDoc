@@ -164,6 +164,14 @@ gate is claimed.
   is claimed by this repair.
 - This is a repair disposition only; no independent rereview or final gate is claimed.
 
+## Phase-B migration completion
+
+- The historical owner/two-peer authorization and takeover entries above are retained as evidence only and are
+  explicitly **superseded** by current collaboration policy.
+- Live GH-57 migration completed at `f8919e2`: the current record contains `resume` and no `takeover`. The obsolete
+  schema allowance and runtime validation machinery are now deleted; worker-owned resume is final.
+- F13 identity repair remains **Fixed**. No lifecycle invocation, handoff, commit, push, or final gate is claimed.
+
 ## F13 identity repair disposition
 
 - F13: **Fixed** — review metadata now binds `reviewPeer` to `review.peer` case-insensitively, while `reviewEpoch` and
@@ -171,3 +179,10 @@ gate is claimed.
   login casefolding without broadening non-login IDs. Authenticated attribution continues to persist the exact observed
   spelling.
 - This is a repair disposition only; no rereview, lifecycle invocation, resume, or final gate is claimed.
+
+## Final Phase-B corrections
+
+- Handoff now persists a supplied nonempty `next_action` verbatim and uses the deterministic default
+  `Obtain one latest-head non-author peer review.` when omitted; empty values are rejected.
+- Resume documentation no longer claims legacy metadata removal. The live-migrated checkpoint is `ResolvingFindings`
+  pending verification and handoff; no work-item or execution-state edit is claimed here.

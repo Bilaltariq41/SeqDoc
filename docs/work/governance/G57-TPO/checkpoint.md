@@ -113,14 +113,12 @@ operation. Do not weaken transaction, recovery, deterministic-output, or review-
 
 Current-policy repair boundary: `resume` is an ordinary worker operation. It accepts only a clean, current `Blocked`
 record with closed dependencies, a present capsule, no selected execution, and normalized non-overlapping claims. It
-observes no GitHub data, moves directly to `ResolvingFindings`, records `resume:{reason,startHead}`, and removes any
-legacy `takeover` object. Authentication receipts, peer ancestry, fixed repair limits, and maintainer takeover are not
-requirements. This is the worker-owned T2/T3 continuation; the checkpoint remains `Blocked` until the Orchestrator
-invokes the repaired resume after a clean commit.
+observes no GitHub data, moves directly to `ResolvingFindings`, and records `resume:{reason,startHead}`. Live
+migration completed at `f8919e2`; this checkpoint is now `ResolvingFindings` pending verification and handoff. This
+worker-owned T2/T3 behavior is final.
 
 ## Review finding repair boundary
 
 The current policy uses case-insensitive GitHub login identity for handoff, review matching, self-review rejection,
-and attribution while persisting exact authenticated spellings. The phase-A schema accepts the existing legacy
-`takeover` object only on this `Blocked` record for migration; resume and closeout never create, use, revalidate, or
-preserve it. Phase B deletes that schema allowance after live migration.
+and attribution while persisting exact authenticated spellings. Live migration completed at `f8919e2`; no legacy
+authorization metadata remains in the current state model.
