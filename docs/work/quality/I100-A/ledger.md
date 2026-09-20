@@ -729,3 +729,16 @@ merge commit `580353d` without conflicts. Post-integration focused verification 
 76/76 with zero skipped in 1 minute 16 seconds. Governance validation passed for 51 work items, `git diff --check`
 passed, and ancestry verification confirmed `b66b0db` in the candidate. Bilal's reserved latest-head non-author human
 review is now the next gate; the final gate remains intentionally unrun.
+
+Latest-main integration receipt: `26ee63e` merged `fa20535` after regenerating the sole conflicted derived projection
+from canonical GH-106 state. Focused SDK 10.0.302 verification passed 76/76 with zero skipped in 1 minute 16 seconds;
+51-item validation, projection check, `git diff --check`, and ancestry check passed. Independent post-integration review
+returned PASS with no findings and accepted the optional Python governance-suite `MemoryError` as unrelated,
+non-blocking resource exhaustion in its whole-repository snapshot test.
+
+PR-specific owner-bypass receipt:
+https://github.com/Bilaltariq41/SeqDoc/pull/109#issuecomment-5752397694. Bilal authorizes Ahmad or Qais to conduct the
+final technical review despite non-independence, forbids the final pusher from approving that push, and withdraws his
+earlier reservation. Abood is the final pusher; Ahmad is the non-independent final technical reviewer and must return
+exact-head `PASS` or `BLOCK`. The transactional handoff's non-author invariant cannot encode this explicit exception, so
+the bypass is recorded verbatim rather than misidentifying an independent peer. The final gate remains unrun.

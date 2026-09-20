@@ -921,6 +921,25 @@ The reviewed repair was preserved in `13c20c3`, then current `main` at `b66b0db`
 of the latest candidate. Return the candidate to `ReviewRequired` for Bilal's reserved latest-head non-author human
 review. The final gate remains prohibited until that review is resolved.
 
+Current `main` advanced again through PR #110. Merge commit `26ee63e` integrates `fa20535`; its only conflict was the
+generated `docs/project/execution.json`, which was regenerated from authoritative GH-106 state under schema v2.
+Post-integration verification passed the focused ProcessOwnership lane 76/76 with zero skipped in 1 minute 16 seconds,
+validated all 51 work items, confirmed the execution projection current, passed `git diff --check`, and proved current
+`origin/main` is an ancestor. Independent post-integration review returned PASS with no findings and preserved all 76
+claims. An optional governance-suite run reached its repository snapshot test but raised `MemoryError` while retaining
+every non-`.git` file in memory; it reproduced after `dotnet clean`, is outside I100-A, and is non-blocking current-main
+governance resource-exhaustion evidence.
+
+Bilal's authenticated `OWNER-BYPASS v1` equivalent for PR #109 is
+https://github.com/Bilaltariq41/SeqDoc/pull/109#issuecomment-5752397694. It acknowledges reviewer exhaustion, authorizes
+Qais or Ahmad to perform the final latest-head technical review despite prior candidate contribution, requires that the
+final pusher not approve that push, prohibits describing the review as independent, and supersedes Bilal's reservation.
+Abood will push the final candidate; Ahmad did not push it and is the requested final technical reviewer. The
+transactional `handoff` command cannot represent this PR-specific exception because it mechanically rejects the PR author
+as peer, so the authenticated bypass and exact role separation are recorded here and in the ledger without inventing an
+independent reviewer. Ahmad must post exact-head `PASS` or `BLOCK`; only PASS permits transition to `Verifying` and the
+single final gate.
+
 ### Owner platform-floor amendment
 
 Abood selected the evidence-backed repair: require Windows 10 / Windows Server 2016 x64 or newer and use
