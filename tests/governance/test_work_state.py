@@ -546,6 +546,23 @@ class WorkStateTests(unittest.TestCase):
     def test_failed_transaction_rolls_back_and_recovery_does_not_replace_newer_state(self):
         root = self.synthetic()
         self.assertEqual(ws.validate(root), 0)
+        short_root = self.synthetic(second=True); short_before = {p.relative_to(short_root).as_posix(): p.read_bytes() for p in short_root.rglob("*") if p.is_file()}; real_write = __import__("os").write
+        def short_write(fd, data):
+            prefix = data[:max(1, len(data) // 2)]
+            real_write(fd, prefix)
+            return len(prefix)
+        with patch("os.write", side_effect=short_write):
+            short_code, short_output = self.activate(short_root, execution_id="short", claim="src/short", fixture="fixture-short")
+        self.assertEqual(short_code, 0, short_output); self.assertEqual(ws.validate(short_root), 0); self.assertEqual(ws.execution(short_root, True), 0); self.assertFalse(list(short_root.rglob(".work-state-*")))
+        zero_root = self.synthetic(second=True); zero_before = {p.relative_to(zero_root).as_posix(): p.read_bytes() for p in zero_root.rglob("*") if p.is_file()}; writes = [0]
+        def partial_then_zero(fd, data):
+            writes[0] += 1
+            if writes[0] == 1:
+                prefix = data[:max(1, len(data) // 2)]; real_write(fd, prefix); return len(prefix)
+            return 0
+        with patch("os.write", side_effect=partial_then_zero):
+            zero_code, zero_output = self.activate(zero_root, execution_id="zero", claim="src/zero")
+        self.assertNotEqual(zero_code, 0, zero_output); self.assertEqual(zero_before, {p.relative_to(zero_root).as_posix(): p.read_bytes() for p in zero_root.rglob("*") if p.is_file()}); self.assertFalse(list(zero_root.rglob(".work-state-*"))); self.assertTrue(not ws.runtime_journal(zero_root).exists() or ws.runtime_journal(zero_root).stat().st_size > 0)
         before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
         with patch("os.replace", side_effect=OSError("disk full")):
             code, _ = self.activate(root, execution_id="a", claim="src/a")

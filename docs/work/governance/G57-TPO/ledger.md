@@ -241,6 +241,14 @@ gate is claimed.
 - Focused verification after these repairs: **28 passed, 1 actual symlink-capability skip**. No lifecycle invocation,
   commit, push, GitHub operation, or final gate is claimed.
 
+## Reviewer F27
+
+- F27: **Fixed** — one checked write-all helper now handles every binary descriptor write, and centralized stage creation
+  closes descriptors, fsyncs complete contents, and unlinks failed temporary stages. Short/zero progress cannot expose
+  an incomplete replaceable stage; journal failure leaves no false success or canonical mutation.
+- Focused verification: **28 passed, 1 actual symlink-capability skip**. No lifecycle invocation, commit, push, GitHub
+  operation, or final gate is claimed.
+
 ## Reviewer F16
 
 - F16: **Fixed** — handoff now has direct cross-repository, malformed or missing source URL, and mismatched

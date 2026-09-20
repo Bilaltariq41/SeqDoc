@@ -154,3 +154,6 @@ F25: **Fixed** — `project-execution` now holds the repository lock across load
 check and write modes, while `execution_payload` remains pure. F26: **Fixed** — recovery validates existing staged
 regular-file bytes and hashes against their target/original journal roles before any restoration or cleanup, rejects
 stage metadata in legacy hashless entries, and permits only missing stages consumed by rename.
+F27: **Fixed** — all descriptor writes use checked write-all progress and centralized fsynced stage creation with
+descriptor/temp cleanup. Short writes cannot make a stage replaceable; zero journal writes fail without canonical
+mutation, while nonempty partial journals remain fail-closed evidence.

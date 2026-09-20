@@ -85,6 +85,12 @@ journal/staging evidence only after all restores succeed; interrupted rollback p
 originally absent target, the recovery boundary remains a validated direct unlink after the current-hash check because
 there is no original byte stream to rename; failure leaves the journal actionable.
 
+All binary descriptor writes use one checked write-all loop over a memory view. Short writes continue; zero, negative,
+non-integer, or over-progress writes fail. Centralized stage creation closes descriptors in every path, fsyncs complete
+bytes before returning, and removes incomplete temporary stages. Journal write failure never reports a successful
+transaction; a zero-byte journal is removed while a nonempty partial journal remains available for fail-closed
+inspection.
+
 `prepare --scaffold` derives target mutations, validation, and execution output from one deep-copied candidate. Path,
 fixture, and governance-tool claims reject existing symlink, junction, or reparse components under the repository;
 nonexistent ordinary components remain admissible, and abstract exclusive resources are not filesystem paths.

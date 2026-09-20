@@ -440,6 +440,42 @@ def runtime_journal(root):
     return directory / "journal.json"
 
 
+def write_all(fd, data):
+    view = memoryview(data)
+    written = 0
+    while written < len(view):
+        progress = os.write(fd, view[written:])
+        remaining = len(view) - written
+        if isinstance(progress, bool) or not isinstance(progress, int) or progress <= 0 or progress > remaining:
+            raise OSError("invalid file-descriptor write progress")
+        written += progress
+
+
+def create_stage(directory, prefix, data):
+    fd, temporary = tempfile.mkstemp(dir=directory, prefix=prefix)
+    path = Path(temporary)
+    try:
+        try:
+            write_all(fd, data)
+            os.fsync(fd)
+        except BaseException:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            path.unlink(missing_ok=True)
+            raise
+        try:
+            os.close(fd)
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+        return path
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+
+
 @contextmanager
 def repository_lock(root):
     lock_path = runtime_journal(root).with_name("lock")
@@ -451,7 +487,7 @@ def repository_lock(root):
             os.ftruncate(fd, 1)
             if size == 0:
                 os.lseek(fd, 0, os.SEEK_SET)
-                os.write(fd, b"0")
+                write_all(fd, b"0")
             os.fsync(fd)
         if os.name == "nt":
             import msvcrt
@@ -498,11 +534,22 @@ def file_hash(value):
 def write_journal(path, value):
     encoded = dump(value).encode("utf-8")
     fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC)
+    failure = None
     try:
-        os.write(fd, encoded)
-        os.fsync(fd)
+        try:
+            write_all(fd, encoded)
+            os.fsync(fd)
+        except BaseException as error:
+            failure = error
     finally:
         os.close(fd)
+    if failure is not None:
+        try:
+            if path.stat().st_size == 0:
+                path.unlink()
+        except OSError:
+            pass
+        raise failure
 
 
 def atomic_write(root, payloads):
@@ -524,16 +571,13 @@ def atomic_write(root, payloads):
         entry_by_path = {entry["path"]: entry for entry in entries}
         for path in paths:
             path.parent.mkdir(parents=True, exist_ok=True)
-            fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=".work-state-")
-            os.write(fd, payloads[path].encode("utf-8")); os.fsync(fd); os.close(fd)
-            temporary = Path(temporary)
-            staged.append((path, Path(temporary)))
+            temporary = create_stage(path.parent, ".work-state-", payloads[path].encode("utf-8"))
+            staged.append((path, temporary))
             entry_by_path[str(path.relative_to(root)).replace("\\", "/")]["targetStage"] = temporary.resolve().relative_to(root.resolve()).as_posix()
             if originals[path] is not None:
-                fd, original_temporary = tempfile.mkstemp(dir=path.parent, prefix=".work-state-original-")
-                os.write(fd, originals[path]); os.fsync(fd); os.close(fd)
-                originals_staged[path] = Path(original_temporary)
-                entry_by_path[str(path.relative_to(root)).replace("\\", "/")]["originalStage"] = Path(original_temporary).resolve().relative_to(root.resolve()).as_posix()
+                original_temporary = create_stage(path.parent, ".work-state-original-", originals[path])
+                originals_staged[path] = original_temporary
+                entry_by_path[str(path.relative_to(root)).replace("\\", "/")]["originalStage"] = original_temporary.resolve().relative_to(root.resolve()).as_posix()
         journal_value["entries"] = entries
         write_journal(journal_path, journal_value)
         for path, temporary in staged:
@@ -1289,9 +1333,8 @@ def recover(root, args):
             target, original, current, original_exists, *target_hash = plan
             if target_hash and file_hash(current) == target_hash[0]:
                 if original_exists:
-                    fd, temporary = tempfile.mkstemp(dir=target.parent, prefix=".work-state-recover-")
-                    os.write(fd, original); os.fsync(fd); os.close(fd)
-                    temporary = Path(temporary); restore_stages.append(temporary)
+                    temporary = create_stage(target.parent, ".work-state-recover-", original)
+                    restore_stages.append(temporary)
                     os.replace(temporary, target)
                 else:
                     target.unlink(missing_ok=True)
