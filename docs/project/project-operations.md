@@ -109,6 +109,14 @@ idempotent. Handoff rejects a non-lowercase or non-40-hex `head` before any GitH
 and review evidence. It closes atomically and either leaves the root idle or selects an already-complete recipient.
 The live migration completed at `f8919e2`; worker-owned resume is now the final policy.
 
+Closeout findings are bounded explicitly: `--findings none` is valid only when stored review findings are empty. With
+no `--findings` argument, automatic closeout is valid only when every stored finding is `Fixed:`. For stored
+`Rejected:` or `Deferred:` findings, only explicit `--findings resolved` proceeds; this is an operator attestation that
+required rejection evidence and explicit owner-approved deferral already exist in the durable ledger. The command does
+not authenticate those external records, and it does not broaden accepted parser values. The targeted positive and
+negative coverage is recorded against Qais's concern at
+https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5750269759.
+
 `promote` changes only a blocked or draft dependent to `Ready` after every dependency is `Closed` and its capsule is
 complete; it never activates or selects the dependent.
 

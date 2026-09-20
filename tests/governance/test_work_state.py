@@ -962,6 +962,23 @@ class WorkStateTests(unittest.TestCase):
         fresh_rejection(repository="other/r")
         fresh_rejection(attribution="different-account")
         fresh_rejection(peer="different-account")
+        def stored_findings_case(stored, requested, expected_code):
+            candidate = Path(tempfile.mkdtemp(dir=self.d)); shutil.copytree(root, candidate, dirs_exist_ok=True)
+            item_path = candidate / "docs/project/work-items/GH-57.json"; item_value = json.loads(item_path.read_text()); item_value["reviewFindings"] = [stored]; item_value["review"]["findings"] = [stored]; item_path.write_text(ws.dump(item_value))
+            before = {q.relative_to(candidate).as_posix(): q.read_bytes() for q in candidate.rglob("*") if q.is_file()}; calls=[]
+            def fixed_run(command, *args, **kwargs):
+                calls.append(" ".join(command))
+                if any("reviews" in part for part in command): value = [[{"user":{"login":"Peer","type":"User"},"state":"APPROVED","commit_id":h2}]]
+                else: value = dict(pr, state="MERGED", headRefOid=h2, mergeCommit={"oid":merge})
+                return type("R",(),{"stdout":json.dumps(value),"returncode":0})()
+            with patch("subprocess.run", side_effect=fixed_run): code, output = self.operation(candidate, "closeout", **dict(base, findings=requested))
+            self.assertEqual(code, expected_code, (stored, requested, output)); self.assertTrue(all("issues/comments" not in call for call in calls))
+            if expected_code != 0: self.assertEqual(before, {q.relative_to(candidate).as_posix(): q.read_bytes() for q in candidate.rglob("*") if q.is_file()}); self.assertEqual(calls, [])
+        stored_findings_case("Fixed: independently verified", "none", 1)
+        stored_findings_case("Rejected: evidence retained", "none", 1)
+        stored_findings_case("Deferred: owner approval: ledger entry", "none", 1)
+        stored_findings_case("Rejected: evidence retained", "resolved", 0)
+        stored_findings_case("Deferred: owner approval: ledger entry", "resolved", 0)
         for bad in (dict(findings="open"), dict(pr="https://github.com/o/r/pull/109"), dict(head=h1), dict(merge_sha="a"*40), dict(attribution="other")):
             before={q.relative_to(root).as_posix():q.read_bytes() for q in root.rglob("*") if q.is_file()}
             with patch("subprocess.run", side_effect=run): self.assertNotEqual(self.operation(root, "closeout", **dict(base, **bad))[0], 0)

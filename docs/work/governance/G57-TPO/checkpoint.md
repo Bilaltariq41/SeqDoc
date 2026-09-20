@@ -161,8 +161,8 @@ mutation, while nonempty partial journals remain fail-closed evidence.
 Blocking journal admission: an existing runtime or legacy journal blocks every new atomic mutation and write-mode
 projection before originals, stages, or a replacement journal are touched. The diagnostic requires `recover`; read-only
 projection checks remain usable and `recover` alone consumes the journal. This is the Phase-5 regression for Qais's
-comment `issuecomment-5750269759`. The separate closeout-attestation and process-history concerns remain unresolved
-non-blocking findings for later disposition.
+comment https://github.com/Bilaltariq41/SeqDoc/pull/110#issuecomment-5750269759. Process evidence and the
+closeout-attestation boundary are Fixed; only Qais's formal approval and the final gate remain pending.
 
 F30 verification correction: the targeted unresolved-journal test completed **1/1 passed**, not skipped, and the full
 focused command completed **28/28 passed**. The local symlink/reparse partition was conditionally unavailable, but it no
@@ -181,5 +181,18 @@ capability skip**. F32 corrects evidence wording only.
 https://github.com/Bilaltariq41/SeqDoc/pull/110#issuecomment-5751178429, with commit attribution `f6a6694`
 (Qhatahet → Abood-essa) and `2f76354` (Abood-essa → Qhatahet). These are availability reassignments, not takeover
 authorization or approval. The current runtime/schema contains `resume` only and no `takeover`, as established by
-`cd6a7b0` and `f8919e2`; there is no fixed repair stop. Qais approval and the final gate are not claimed, and the
-closeout-attestation concern remains open.
+`cd6a7b0` and `f8919e2`; there is no fixed repair stop. Qais formal approval and the final gate are not claimed and
+remain pending.
+
+## Closeout-attestation boundary
+
+**Fixed by documented and tightened boundary:** `--findings none` succeeds only for genuinely empty stored review
+findings. Automatic closeout without a findings argument remains limited to all-`Fixed:` stored findings. Stored
+`Rejected:` or `Deferred:` findings require explicit `--findings resolved`, which is an operator attestation that
+rejection evidence and explicit owner-approved deferral are already durable in the ledger; the command does not
+authenticate those external records. The targeted positive/negative closeout coverage is tied to Qais's comment
+https://github.com/Bilaltariq41/SeqDoc/pull/110#issuecomment-5750269759. The operator attestation is an accepted
+documented boundary, not an unresolved concern. Only Qais formal approval and the final gate remain pending.
+
+Latest closeout verification receipt: the named closeout test ran **1 passed**; the full command reported `Ran 29 tests`
+and `OK (skipped=1)`, meaning **28 passed and 1 explicit capability skip**.

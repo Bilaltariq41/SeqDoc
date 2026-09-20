@@ -1137,8 +1137,25 @@ def closeout(root, args):
         errors.append("head identity mismatch")
     if not args.focused_receipt or not args.final_receipt or not args.attribution or not SHA.match(args.merge_sha or ""):
         errors.append("closeout receipt or identity missing")
-    effective_findings = args.findings or ("resolved" if review.get("findings") and all(value.startswith("Fixed:") for value in review.get("findings", [])) else None)
-    if effective_findings not in {"resolved", "none"}:
+    stored_findings = review.get("findings") if isinstance(review.get("findings"), list) else None
+    effective_findings = None
+    if args.findings not in {None, "resolved", "none"}:
+        errors.append("findings unresolved")
+    elif stored_findings is None:
+        errors.append("stored review findings missing")
+    elif args.findings == "none":
+        if stored_findings:
+            errors.append("findings unresolved")
+        else:
+            effective_findings = "none"
+    elif args.findings == "resolved":
+        if stored_findings and all(value.startswith(("Fixed:", "Rejected:", "Deferred:")) for value in stored_findings):
+            effective_findings = "resolved"
+        else:
+            errors.append("findings unresolved")
+    elif stored_findings and all(value.startswith("Fixed:") for value in stored_findings):
+        effective_findings = "resolved"
+    else:
         errors.append("findings unresolved")
     observation = None
     if not errors:

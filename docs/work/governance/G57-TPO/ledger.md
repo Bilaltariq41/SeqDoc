@@ -184,8 +184,8 @@ gate is claimed.
   `f6a6694` (Qhatahet → Abood-essa) and `2f76354` (Abood-essa → Qhatahet). These are availability reassignments,
   not takeover authorization or approval.
 - The current runtime/schema contains `resume` only and no `takeover`, as established by `cd6a7b0` and `f8919e2`.
-  There is no fixed repair stop. This record does not claim Qais approval or a final gate; the closeout-attestation
-  concern remains open for later disposition.
+  There is no fixed repair stop. Qais formal approval and the final gate remain pending; process evidence and the
+  closeout-attestation boundary are Fixed.
 
 ## F13 identity repair disposition
 
@@ -266,7 +266,7 @@ gate is claimed.
 
 ## Phase-5 Qais blocking journal repair
 
-- Finding source: https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5750269759
+- Finding source: https://github.com/Bilaltariq41/SeqDoc/pull/110#issuecomment-5750269759
 - Diagnosis: a new atomic mutation or projection write could overwrite an existing runtime or legacy unresolved
   journal before recovery consumed it, destroying the recovery boundary and invalidating its hashes.
 - **Fixed** — one central unparsed runtime-or-legacy journal admission guard now runs before atomic preimage/stage/new
@@ -276,8 +276,8 @@ gate is claimed.
 - Regression: the focused single test and full suite cover prepared/interrupted runtime and legacy journals, preserved
   bytes, read-only coherence, and post-recovery mutation. Focused results: **28 passed, 1 actual symlink-capability
   skip**.
-- Qais's non-blocking closeout-attestation concern and process-history concerns are explicitly unresolved and deferred;
-  they are not addressed by this repair.
+- Qais formal approval and the final gate remain pending; the closeout-attestation boundary is Fixed and the process
+  evidence is recorded separately. No approval or gate is claimed here.
 
 ## Reviewer F30 verification correction
 
@@ -298,6 +298,19 @@ gate is claimed.
 
 - F32: **Fixed** — removed the false claim that F31 changed no tests. This subsequent correction changes durable evidence
   wording only; source, tests, and state lifecycle remain unchanged.
+
+## Qhatahet closeout-attestation disposition
+
+- **Fixed by documented and tightened boundary** — `--findings none` is accepted only for empty stored review findings;
+  automatic closeout remains limited to all-`Fixed:` findings. Stored `Rejected:` or `Deferred:` findings require
+  explicit `--findings resolved`, an operator attestation that rejection evidence and explicit owner-approved deferral
+  are already durable in the ledger. The command does not authenticate those external records or accept new values.
+- Positive coverage proves explicit `resolved` proceeds for valid rejected/deferred records; negative coverage proves
+  `none` fails before GitHub observation and preserves bytes when any finding is stored. Source concern:
+  https://github.com/Bilaltariq41/SeqDoc/pull/110#issuecomment-5750269759.
+- The operator attestation is an accepted documented boundary, not an unresolved concern. The named closeout test ran
+  **1 passed**; the full command reported `Ran 29 tests` and `OK (skipped=1)`, meaning **28 passed and 1 explicit
+  capability skip**. Only Qais formal approval and the final gate remain pending.
 
 ## Reviewer F28
 
