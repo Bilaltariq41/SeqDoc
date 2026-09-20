@@ -74,6 +74,8 @@ Reviewer receipt and first observable:
 
 One latest-head non-author human peer approval (agent self-review is not approval):
 
+Reserved reviewer at claim/readiness and eligibility replacement record:
+
 Final gate and result:
 
 ```text

@@ -121,8 +121,9 @@ Copilot is separate. Disable auto-review-on-push after mandatory receipts are ac
 ## What happens after a failed repair?
 
 The worker continues repairing, replanning, pairing, and absorbing necessary acceptance work on the same issue/PR,
-updating the checkpoint and running focused tests and the Reviewer agent again. Block only for an external dependency,
-conflicting active work/path lease, or T4 action. A separate capability/outcome requires a new issue.
+updating the checkpoint and running focused tests and the Reviewer agent again. Block only as permitted by the
+[collaboration model](collaboration-model.md), including `reviewer unavailable`; the owner is not an automatic fallback.
+A separate capability/outcome requires a new issue.
 
 ## What the letters mean
 
@@ -134,4 +135,5 @@ conflicting active work/path lease, or T4 action. A separate capability/outcome 
 
 - Keep the work separate now.
 - Combine accepted work later.
-- Normal request-changes flow ends with one latest-head non-author human peer approval; there is no automatic takeover or repair stop.
+- Normal request-changes flow ends with one latest-head non-author human peer approval; there is no automatic takeover, and
+  repair stops only at the blockers defined by the collaboration model.

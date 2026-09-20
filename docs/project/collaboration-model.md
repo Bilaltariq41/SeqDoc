@@ -54,14 +54,31 @@ add a Reviewer run. Final receipts, human approvals, Copilot, red tests, and unc
 Existing I13, P17-R1, and QHTTP-B are grandfathered under their frozen one-review rules through closure. DGP1 itself,
 I13, P17-R1, and QHTTP-B retain their frozen one-review rules.
 
+## Reviewer reservation
+
+At claim/readiness, reserve and record one eligible non-author human as the intended final reviewer. Candidate
+contributor activity is counted only when it is incorporated into the current candidate: the PR author and any human who
+commits, directly edits, performs a repair, or authors implementation or design incorporated into that candidate. Unrelated
+prior repository work never disqualifies a reviewer. Reporting findings, discussing trade-offs, and requesting changes as
+a reviewer do not by themselves make that person a candidate contributor.
+
+Before any new person contributes a commit, edit, repair, or incorporated implementation or design, recompute eligibility.
+If the reserved reviewer would become a candidate contributor, record an eligible untouched replacement before that
+contribution; no replacement is required while the reservation remains eligible. If a contribution would exhaust the
+available reviewer pool, stop it before it happens and reassign the work; preserve at least one eligible reviewer whenever
+possible. If none is available despite planning, report `reviewer unavailable` as a staffing blocker. The owner is not an
+automatic fallback, and authorization cannot substitute for independence. This does not add an approval: one latest-head
+non-author human approval remains required.
+
 ## Repair, leases, and containment
 
 1. The worker owns continuation: absorb reasonably necessary repairs, replanning, pairing, and acceptance work on the
    same issue/PR, update its scope and checkpoint, run the Reviewer agent again, and continue until sound and green.
 2. Human preapproval is required only for a genuinely separate capability/outcome, a conflicting active worker or
    path lease, or T4 owner administration. A difficult repair is not itself a stop.
-3. Block only for a real external dependency, conflicting active work, or T4 action. Preserve evidence and attribution;
-   do not require a split, transfer, takeover, or fixed repair-round limit.
+3. Block only for a real external dependency, conflicting active work, T4 action, or `reviewer unavailable`. Preserve
+   evidence and attribution; do not require a split, transfer, takeover, or fixed repair-round limit. The owner is not an
+   automatic fallback for reviewer unavailability.
 
 A repair requires a changed candidate when the defect requires a code change; environment outages, optional-lane
 unavailability, and no-change retries are not findings. A lease names exact paths,

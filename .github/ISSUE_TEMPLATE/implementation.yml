@@ -64,7 +64,7 @@ body:
   - type: textarea
     id: planned-governance
     attributes:
-      label: Decision tier, proposed exact path lease, first observable, focused command, and final gate
-      description: Record planning-time governance and verification inputs; candidate head and receipts belong in the PR.
+      label: Decision tier, path lease, first observable, verification, and reviewer reservation
+      description: Record planning-time governance, the reserved untouched non-author human, and any replacement; candidate head and receipts belong in the PR. Follow the reservation rules in collaboration-model.md.
     validations:
       required: true
