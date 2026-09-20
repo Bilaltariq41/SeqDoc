@@ -249,6 +249,12 @@ gate is claimed.
 - Focused verification: **28 passed, 1 actual symlink-capability skip**. No lifecycle invocation, commit, push, GitHub
   operation, or final gate is claimed.
 
+## Reviewer F28
+
+- F28: **Fixed** — rollback now promotes each pre-staged original directly with one reversed-order `os.replace`, never
+  rewrites a stage. Consumed and missing stages are cleanup-safe; a failed rollback rename preserves the journal and
+  remaining evidence for successful recovery.
+
 ## Reviewer F16
 
 - F16: **Fixed** — handoff now has direct cross-repository, malformed or missing source URL, and mismatched

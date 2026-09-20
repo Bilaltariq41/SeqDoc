@@ -219,19 +219,25 @@ class WorkStateTests(unittest.TestCase):
         with patch("os.replace",side_effect=fail): self.assertNotEqual(ws.transition(self.d,a),0)
         self.assertGreaterEqual(count[0],2)
         self.assertEqual(before,{p:p.read_bytes() for p in before})
+        strict_root = self.synthetic(); strict_action = type("A",(),{"id":"A","state":"Active","reason":"strict rollback","next_action":"strict rollback","select":True,"check":False,"dry_run":False})(); strict_before = {p.relative_to(strict_root).as_posix(): p.read_bytes() for p in strict_root.rglob("*") if p.is_file()}; strict_count = [0]; strict_replace = __import__("os").replace
+        def strict_fail(source, target):
+            strict_count[0] += 1
+            if strict_count[0] == 2: raise OSError("commit replacement failure")
+            return strict_replace(source, target)
+        def forbidden_rewrite(path, data):
+            raise AssertionError("rollback used Path.write_bytes")
+        with patch("os.replace", side_effect=strict_fail), patch.object(Path, "write_bytes", new=forbidden_rewrite):
+            self.assertEqual(ws.transition(strict_root, strict_action), 0)
+        self.assertEqual(strict_before, {p.relative_to(strict_root).as_posix(): p.read_bytes() for p in strict_root.rglob("*") if p.is_file()}); self.assertFalse(ws.runtime_journal(strict_root).exists()); self.assertFalse(list(strict_root.rglob(".work-state-*")))
         recover_root = self.synthetic()
         recover_action = type("A",(),{"id":"A","state":"Active","reason":"recoverable mutation","select":True,"check":False,"dry_run":False})()
         recover_before = {p.relative_to(recover_root).as_posix(): p.read_bytes() for p in recover_root.rglob("*") if p.is_file()}
-        replace_count = [0]; write_count = [0]; real_replace = __import__("os").replace; real_write = Path.write_bytes
+        replace_count = [0]; real_replace = __import__("os").replace
         def fail_after_first(source, target):
             replace_count[0] += 1
-            if replace_count[0] == 2: raise OSError("interrupted commit")
+            if replace_count[0] in (2, 3): raise OSError("interrupted commit or rollback")
             return real_replace(source, target)
-        def fail_restore(path, data):
-            write_count[0] += 1
-            if write_count[0] == 1: raise OSError("interrupted restoration")
-            return real_write(path, data)
-        with patch("os.replace", side_effect=fail_after_first), patch.object(Path, "write_bytes", new=fail_restore):
+        with patch("os.replace", side_effect=fail_after_first):
             self.assertNotEqual(ws.transition(recover_root, recover_action), 0)
         self.assertTrue(ws.runtime_journal(recover_root).exists())
         self.assertTrue(list(recover_root.rglob(".work-state-*")))
