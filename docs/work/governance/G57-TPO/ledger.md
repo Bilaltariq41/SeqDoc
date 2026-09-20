@@ -55,7 +55,12 @@ Focused verification passed 28/28 tests with 1 platform-dependent symlink skip. 
   `is_bot` is type-checked, and bot authors are rejected for the human-peer workflow. Top-level PR identity, state,
   head, merge, and SHA validation remains strict.
 
-## Owner-authorized takeover trace
+> **HISTORICAL EVIDENCE — SUPERSEDED, NOT CURRENT INSTRUCTIONS**: Every section from the takeover trace below through
+> phase-B reconciliation is chronological evidence only. The current authority is
+> `docs/project/collaboration-model.md`, lines 57-64. Do not use historical takeover receipts, routes, or stop rules as
+> operational policy.
+
+## Historical — superseded: Owner-authorized takeover trace
 
 - `resume` is bounded to one `Blocked` → `ResolvingFindings` transition. It authenticates the actual clean checkout
   HEAD, branch, and 40-character start head, while treating caller-supplied values only as expectations.
@@ -67,7 +72,7 @@ Focused verification passed 28/28 tests with 1 platform-dependent symlink skip. 
 - Focused verification after the path-normalization expectation repair: `python -B -m unittest
   tests.governance.test_work_state` — **28/28 passed**, with **1 skipped** platform-dependent symlink case.
 
-## Strengthened takeover and author boundaries
+## Historical — superseded: Strengthened takeover and author boundaries
 
 - `resume` now requires explicit nonempty `current_head`, `start_head`, and `next_action`; both heads must be
   lowercase 40-character SHAs matching the actual observed HEAD. Success persists `reason` as `statusReason` and
@@ -76,7 +81,7 @@ Focused verification passed 28/28 tests with 1 platform-dependent symlink skip. 
   boolean `is_bot`; whitespace, invalid, overlong, numeric, boolean, and missing node IDs are rejected. Human handoff
   continues to reject `is_bot: true`, while benign author fields remain compatible.
 
-## Resume execution trace
+## Historical — superseded: Resume execution trace
 
 - `resume` was invoked successfully at start head `d3110626d011b46729f8fcf3c4c33e359341a4d5`.
 - Durable state moved to `ResolvingFindings` in commit `d5e336c`.
@@ -99,7 +104,7 @@ Focused verification passed 28/28 tests with 1 platform-dependent symlink skip. 
 The earlier owner-receipt migration note is superseded by the authenticated two-peer resume below. No rereview or final
 gate is claimed.
 
-## Authorized two-peer takeover route
+## Historical — superseded: Authorized two-peer takeover route
 
 - Exact peer approvals: issue comment `5713964023` by `Abood-essa`; issue comment `5714397001` by `Qhatahet`.
 - Route: exactly two authenticated `--peer-authorization-receipt` URLs plus `--authorization-head`, mutually exclusive
@@ -112,7 +117,7 @@ gate is claimed.
   marker with exactly one final LF, resolving the live-receipt compatibility boundary without weakening identity checks.
 - State remains **Blocked**. No resume invocation, GitHub write, lifecycle invocation, rereview, or final gate is claimed.
 
-## Live two-peer resume
+## Historical — superseded: Live two-peer resume
 
 - `resume` succeeded at start head `5ab1b19027339aabfd8175317b31e0afe5e9cc3d`, using authorization head
   `07319b35ad2d7c1d2ee12f6c1438ad0e13e7afde` and exact peer comments `5713964023` / `5714397001`.
@@ -151,7 +156,7 @@ gate is claimed.
   revalidation, plus edited/deleted receipt complete byte-snapshot rejection coverage.
 - No production code changed. Focused verification: **28 passed, 1 platform skip**.
 
-## Current-policy reconciliation (phase A)
+## Historical — superseded: Current-policy reconciliation (phase A)
 
 - The owner/two-peer takeover protocol, fixed repair-limit requirement, and closeout takeover revalidation are
   **superseded policy**. The current authority is `docs/project/collaboration-model.md`, lines 57-64; the historical
@@ -164,13 +169,23 @@ gate is claimed.
   is claimed by this repair.
 - This is a repair disposition only; no independent rereview or final gate is claimed.
 
-## Phase-B migration completion
+## Historical — superseded: Phase-B migration completion
 
 - The historical owner/two-peer authorization and takeover entries above are retained as evidence only and are
   explicitly **superseded** by current collaboration policy.
 - Live GH-57 migration completed at `f8919e2`: the current record contains `resume` and no `takeover`. The obsolete
   schema allowance and runtime validation machinery are now deleted; worker-owned resume is final.
 - F13 identity repair remains **Fixed**. No lifecycle invocation, handoff, commit, push, or final gate is claimed.
+
+## Current process-evidence disposition
+
+- **Fixed — process evidence**: owner-directed reviewer availability was reassigned in public PR comment
+  https://github.com/Bilaltariq41/SeqDoc/pull/110#issuecomment-5751178429, with commit attribution
+  `f6a6694` (Qhatahet → Abood-essa) and `2f76354` (Abood-essa → Qhatahet). These are availability reassignments,
+  not takeover authorization or approval.
+- The current runtime/schema contains `resume` only and no `takeover`, as established by `cd6a7b0` and `f8919e2`.
+  There is no fixed repair stop. This record does not claim Qais approval or a final gate; the closeout-attestation
+  concern remains open for later disposition.
 
 ## F13 identity repair disposition
 

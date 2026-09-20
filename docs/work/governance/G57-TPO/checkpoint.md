@@ -174,3 +174,12 @@ F31 was a test-only structural repair in `tests/governance/test_work_state.py`, 
 that 29th dedicated capability-gated method. The receipt was run against the exact test content later committed at
 `462986fd54031dfea4dc31256a1664f08c7d7705`: targeted F30 **1/1 passed**; full **29 total, 28 passed, 1 explicit
 capability skip**. F32 corrects evidence wording only.
+
+## Process-evidence disposition
+
+**Fixed — process evidence:** owner-directed reviewer availability was reassigned in public PR comment
+https://github.com/Bilaltariq41/SeqDoc/pull/110#issuecomment-5751178429, with commit attribution `f6a6694`
+(Qhatahet → Abood-essa) and `2f76354` (Abood-essa → Qhatahet). These are availability reassignments, not takeover
+authorization or approval. The current runtime/schema contains `resume` only and no `takeover`, as established by
+`cd6a7b0` and `f8919e2`; there is no fixed repair stop. Qais approval and the final gate are not claimed, and the
+closeout-attestation concern remains open.
