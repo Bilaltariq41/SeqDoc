@@ -66,11 +66,12 @@ projection command. Tests must simulate GitHub writes and must not mutate live i
 
 ## Existing coverage
 
-`tests/governance/test_work_state.py` contains 15 tests for schema validation, dependency cycles, frozen baseline shape,
-singular selection, transition legality, execution projection, dry-run label commands, basic multi-file rollback,
-selection handoff, idle deselection, and lifecycle-label projection. It does not model execution instances, path or
-resource claims, checkpoint scaffolding, stale Git baselines, deterministic operation packets, interrupted recovery,
-review identity, full closeout, or dependent promotion.
+`tests/governance/test_work_state.py` contains 28 grouped tests covering schema validation, dependency cycles, frozen
+baseline shape, execution instances, normalized claims, checkpoint scaffolding, stale Git baselines, deterministic
+packets, rollback and recovery, review identity, full closeout, dependent promotion, and projection. Reviewer F16 adds
+handoff negatives for a direct cross-repository PR, malformed or missing source URLs, and mismatched issue numbers;
+each proves that GitHub subprocess observation is not reached and the registry, capsule, and execution projection
+remain byte-identical. One symlink-capability case is skipped on unsupported platforms.
 
 ## Test budget
 

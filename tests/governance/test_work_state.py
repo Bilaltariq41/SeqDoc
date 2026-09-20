@@ -756,6 +756,22 @@ class WorkStateTests(unittest.TestCase):
         root = self.synthetic(second=True, dependency=True); old = root / "docs/project/work-items/A.json"; old.rename(root / "docs/project/work-items/GH-57.json"); (root / "docs/work/checkpoints/A").rename(root / "docs/work/checkpoints/G57-TPO"); path = root / "docs/project/work-items/GH-57.json"; item = json.loads(path.read_text()); item.update(id="GH-57", kind="github-issue", number=57, checkpointId="G57-TPO", checkpointPath="docs/work/checkpoints/G57-TPO", sourceUrl="https://github.com/o/r/issues/57", pr="https://github.com/o/r/pull/110", expectedGithubState="OPEN"); path.write_text(ws.dump(item)); dep = root / "docs/project/work-items/B.json"; value = json.loads(dep.read_text()); value["dependencies"]=["GH-57"]; dep.write_text(ws.dump(value)); self.assertEqual(ws.validate(root), 0)
         execution = "GH-57:G57-TPO"; h1, h2, merge = "d"*40, "e"*40, "f"*40; self.assertEqual(self.activate(root, item="GH-57", execution_id=execution, claim="src/a", current_branch="feature/a", worktree_id="worktree-gh57")[0], 0)
         pr = {"number":110,"url":"https://github.com/o/r/pull/110","state":"OPEN","isDraft":False,"author":{"login":"Actual-Author","id":"U_author","is_bot":False,"name":"Author"},"headRefOid":h1,"mergeCommit":None,"reviewDecision":"APPROVED"}; calls=[]
+        def handoff_binding_rejection(item_changes, repository="other/r", supplied_pr="https://github.com/other/r/pull/110"):
+            candidate = Path(tempfile.mkdtemp(dir=self.d)); shutil.copytree(root, candidate, dirs_exist_ok=True)
+            item_path = candidate / "docs/project/work-items/GH-57.json"; item_value = json.loads(item_path.read_text())
+            for key, value in item_changes.items():
+                if value is None: item_value.pop(key, None)
+                else: item_value[key] = value
+            item_path.write_text(ws.dump(item_value))
+            before = {q.relative_to(candidate).as_posix(): q.read_bytes() for q in candidate.rglob("*") if q.is_file()}
+            with patch("subprocess.run") as api:
+                rejected, _ = self.operation(candidate, "handoff", id="GH-57", execution_id=execution, pr=supplied_pr, head=h1, observed_head="x", observed_author="x", peer="pEeR", epoch="1", finding=["Fixed: check"], repository=repository)
+            self.assertNotEqual(rejected, 0, item_changes); api.assert_not_called()
+            self.assertEqual(before, {q.relative_to(candidate).as_posix(): q.read_bytes() for q in candidate.rglob("*") if q.is_file()})
+        handoff_binding_rejection({"pr":"https://github.com/other/r/pull/110"})
+        handoff_binding_rejection({"pr":"https://github.com/other/r/pull/110", "sourceUrl":"malformed"})
+        handoff_binding_rejection({"pr":"https://github.com/other/r/pull/110", "sourceUrl":None})
+        handoff_binding_rejection({"pr":"https://github.com/other/r/pull/110", "sourceUrl":"https://github.com/o/r/issues/58"})
         def run(command, *args, **kwargs):
             text=" ".join(command); calls.append(text); self.assertNotIn("issues/comments", text)
             if "reviews" in text: return type("R",(),{"stdout":json.dumps([[{"user":{"login":"Peer","type":"User"},"state":"APPROVED","commit_id":h1}]]),"returncode":0})()

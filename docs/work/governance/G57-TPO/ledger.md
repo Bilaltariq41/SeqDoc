@@ -194,3 +194,11 @@ gate is claimed.
 - F15: **Fixed** — persisted claim objects must equal their normalized records, while caller-supplied claims retain
   normalization and duplicate-after-normalization rejection.
 - These are complete-candidate repairs only; no lifecycle invocation, handoff, commit, push, or final gate is claimed.
+
+## Reviewer F16
+
+- F16: **Fixed** — handoff now has direct cross-repository, malformed or missing source URL, and mismatched
+  issue-number negatives. Each proves canonical identity rejection before subprocess observation and preserves
+  byte-identical registry, capsule, and execution projection state.
+- Supplied focused coverage is green at **28/28**, with one symlink-capability skip. No focused rerun was needed for
+  this documentation-only update; no lifecycle invocation, handoff, commit, push, or final gate is claimed.
