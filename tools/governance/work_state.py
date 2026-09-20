@@ -94,7 +94,10 @@ def claim_records(item):
     normalized = []
     for record in raw:
         try:
-            normalized.append(normalize_claim_record(record))
+            canonical = normalize_claim_record(record)
+            normalized.append(canonical)
+            if record != canonical:
+                errors.append("noncanonical claim")
         except ValueError as error:
             errors.append(str(error))
     keys = [(x["kind"], x["value"]) for x in normalized]
@@ -842,6 +845,8 @@ def handoff(root, args):
     observation = None
     if not errors:
         try:
+            if current.get("kind") == "github-issue":
+                canonical_repository_binding(current, args.repository)
             observation = authenticated_pr(args.repository, args.pr)
         except ValueError as error:
             errors.append(str(error))
@@ -923,6 +928,8 @@ def closeout(root, args):
     observation = None
     if not errors:
         try:
+            if current.get("kind") == "github-issue":
+                canonical_repository_binding(current, args.repository)
             match = PR_URL.fullmatch(args.pr or "")
             if not match:
                 raise ValueError("malformed PR URL")

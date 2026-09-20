@@ -186,3 +186,11 @@ gate is claimed.
   `Obtain one latest-head non-author peer review.` when omitted; empty values are rejected.
 - Resume documentation no longer claims legacy metadata removal. The live-migrated checkpoint is `ResolvingFindings`
   pending verification and handoff; no work-item or execution-state edit is claimed here.
+
+## Complete-candidate F14/F15 repairs
+
+- F14: **Fixed** — handoff and closeout validate canonical source issue, item number, PR repository, and supplied
+  repository before any GitHub observation or write; issue and PR numbers remain independent.
+- F15: **Fixed** — persisted claim objects must equal their normalized records, while caller-supplied claims retain
+  normalization and duplicate-after-normalization rejection.
+- These are complete-candidate repairs only; no lifecycle invocation, handoff, commit, push, or final gate is claimed.

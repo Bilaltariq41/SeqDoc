@@ -662,6 +662,13 @@ class WorkStateTests(unittest.TestCase):
                 errors = ws.validate_items([candidate], root, {candidate["checkpointPath"]: capsule})
                 self.assertTrue(errors, (field, value))
                 self.assertTrue(any(diagnostic in error.lower() or field.lower() in error.lower() for error in errors), errors)
+        for persisted in ("SRC/A", "src\\a", "src/./a", "src//a"):
+            candidate = __import__("copy").deepcopy(baseline); candidate["claims"] = [{"kind":"path", "value":persisted}]
+            self.assertTrue(ws.validate_items([candidate], root), persisted)
+        collision = __import__("copy").deepcopy(baseline); collision["claims"] = [{"kind":"path", "value":"src/a"}, {"kind":"path", "value":"SRC\\a"}]
+        self.assertTrue(ws.validate_items([collision], root))
+        canonical = __import__("copy").deepcopy(baseline); canonical["claims"] = [{"kind":"path", "value":"src/a"}]
+        self.assertEqual(ws.validate_items([canonical], root), [])
         former = __import__("copy").deepcopy(baseline)
         former["lifecycle"], former["lifecycleLabel"], former["selectedForExecution"] = "Blocked", "blocked", False
         former["takeover"] = {"mode":"two-peer", "authorizationHead":"1"*40, "authorizationReceipts":[{"url":"https://github.com/o/r/issues/57#issuecomment-1", "authorizationDigest":"a"*64, "authorizedBy":"worker-one"}, {"url":"https://github.com/o/r/issues/57#issuecomment-2", "authorizationDigest":"b"*64, "authorizedBy":"worker-two"}], "reason":"recorded state", "startHead":"1"*40}
@@ -786,6 +793,18 @@ class WorkStateTests(unittest.TestCase):
             self.assertNotEqual(rejected, 0, arguments or changes or review_value)
             self.assertEqual(before, {q.relative_to(candidate).as_posix(): q.read_bytes() for q in candidate.rglob("*") if q.is_file()})
             self.assertTrue(all("issues/comments" not in str(call) for call in api.call_args_list))
+        def canonical_binding_rejection(item_changes, repository="other/r", supplied_pr="https://github.com/other/r/pull/110"):
+            candidate = Path(tempfile.mkdtemp(dir=self.d)); shutil.copytree(root, candidate, dirs_exist_ok=True)
+            item_path = candidate / "docs/project/work-items/GH-57.json"; item_value = json.loads(item_path.read_text()); item_value.update(item_changes); item_path.write_text(ws.dump(item_value))
+            before = {q.relative_to(candidate).as_posix(): q.read_bytes() for q in candidate.rglob("*") if q.is_file()}
+            with patch("subprocess.run") as api:
+                rejected, _ = self.operation(candidate, "closeout", **dict(base, repository=repository, pr=supplied_pr))
+            self.assertNotEqual(rejected, 0, item_changes); api.assert_not_called()
+            self.assertEqual(before, {q.relative_to(candidate).as_posix(): q.read_bytes() for q in candidate.rglob("*") if q.is_file()})
+        canonical_binding_rejection({"pr":"https://github.com/other/r/pull/110"})
+        canonical_binding_rejection({"pr":"https://github.com/other/r/pull/110", "sourceUrl":"malformed"})
+        canonical_binding_rejection({"pr":"https://github.com/other/r/pull/110", "sourceUrl":None})
+        canonical_binding_rejection({"pr":"https://github.com/other/r/pull/110", "sourceUrl":"https://github.com/o/r/issues/58"})
         for changes in ({"state":"OPEN"}, {"state":"CLOSED"}, {"headRefOid":h1}, {"mergeCommit":{"oid":"a"*40}}, {"author":{"login":"Other","id":"U_other","is_bot":False,"name":"Other"}}, {"number":None}, {"state":None}, {"isDraft":None}, {"author":None}, {"headRefOid":None}, {"mergeCommit":None}, {"reviewDecision":None}):
             fresh_rejection(changes)
         for review_value in ([{"bad":"outer"}], [["bad"]], [[{"user":{"login":"Peer","type":"User"},"state":"APPROVED","commit_id":h1}]], [[{"user":{"login":"Other","type":"User"},"state":"APPROVED","commit_id":h2}]], [[{"user":{"login":"Peer","type":"User"},"state":"COMMENTED","commit_id":h2}]], [[{"user":{"login":"Peer","type":"Bot"},"state":"APPROVED","commit_id":h2}]], [[{"user":{"login":"Peer","type":"App"},"state":"APPROVED","commit_id":h2}]], [[{"user":{"login":"Peer"},"state":"APPROVED","commit_id":h2}]], [[{"user":{"login":7,"type":"User"},"state":"APPROVED","commit_id":h2}]], [[{"user":{"login":"Peer","type":"User"},"state":"APPROVED","commit_id":7}]]):

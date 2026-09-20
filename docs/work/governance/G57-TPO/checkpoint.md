@@ -122,3 +122,7 @@ worker-owned T2/T3 behavior is final.
 The current policy uses case-insensitive GitHub login identity for handoff, review matching, self-review rejection,
 and attribution while persisting exact authenticated spellings. Live migration completed at `f8919e2`; no legacy
 authorization metadata remains in the current state model.
+
+Complete-candidate repairs: F14 validates canonical issue/PR repository and issue identity before any handoff or
+closeout GitHub observation, without conflating issue and PR numbers. F15 requires persisted claims to equal their
+normalized records; caller claims continue to normalize at admission.

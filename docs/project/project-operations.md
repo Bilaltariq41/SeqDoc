@@ -42,6 +42,8 @@ budget, focused and final commands, review boundary, and acceptance proof. Unkno
 it is not silently inferred. `activate` requires an eligible item, closed dependencies, exact frozen baseline, observed
 HEAD/branch/clean worktree identity, a stable execution and worktree ID, and normalized typed claims. Use `--dry-run`
 first. Claims may cover fixtures, governance tools, and exclusive resources; equal exclusive claims conflict.
+Persisted claim records must already use their normalized kind and path spelling; caller-supplied claims are normalized
+before admission, while noncanonical persisted records and duplicates after normalization are rejected.
 
 `resume` accepts only a `Blocked` item, moves it directly to `ResolvingFindings`, and observes the actual Git HEAD,
 branch, and clean status from the checkout. Explicit `current_head`, `start_head`, `current_branch`, `reason`, and
@@ -64,6 +66,8 @@ authenticated current PR author, current head, non-author peer, and a review epo
 rejected. Findings are sorted and must receive deterministic dispositions before closure.
 
 `handoff` invokes authenticated `gh pr view` internally and requires an open, non-draft PR, current head, observed author, and a non-author peer. The first handoff from `Active` uses epoch 1; a repair handoff from `ResolvingFindings` requires a larger integer epoch, an advanced PR head, the same peer (or explicit `--allow-peer-change`), and complete dispositions stored in sorted order. A supplied nonempty `next_action` is persisted verbatim; when omitted, the deterministic default is `Obtain one latest-head non-author peer review.` Empty values are rejected. It replaces the authenticated `requestHead` boundary and returns the capsule to `ReviewRequired`. Observed caller fields are test seams only; handoff requests review and does not claim approval.
+Before any GitHub observation, handoff and closeout validate the canonical issue source URL, item number, PR repository,
+and supplied repository binding. Issue and PR numbers remain independent.
 
 `closeout` invokes authenticated PR and paginated review observations, requiring a merged PR, its actual final head and merge SHA, and an exact-final-head `APPROVED` review by the stored peer. The handoff request head is retained only as a historical boundary; the caller's closeout head must match the authenticated final head. It requires matching execution/PR identity, focused and final receipts, attribution, resolved findings,
 and review evidence. It closes atomically and either leaves the root idle or selects an already-complete recipient.
