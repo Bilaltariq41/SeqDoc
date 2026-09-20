@@ -561,6 +561,18 @@ class WorkStateTests(unittest.TestCase):
     def test_failed_transaction_rolls_back_and_recovery_does_not_replace_newer_state(self):
         root = self.synthetic()
         self.assertEqual(ws.validate(root), 0)
+        def unresolved_journal_case(status, legacy=False):
+            candidate = self.synthetic(); execution_bytes = (candidate / "docs/project/execution.json").read_bytes(); encoded = base64.b64encode(execution_bytes).decode("ascii"); digest = ws.file_hash(execution_bytes)
+            journal = {"generation":"unresolved-generation", "status":status, "entries":[{"path":"docs/project/execution.json", "originalExists":True, "originalHash":digest, "targetHash":digest, "original":encoded, "target":encoded}]}
+            journal_path = candidate / "docs/project/work-state.journal.json" if legacy else ws.runtime_journal(candidate); journal_path.parent.mkdir(parents=True, exist_ok=True); journal_path.write_text(json.dumps(journal), encoding="utf-8"); journal_bytes = journal_path.read_bytes(); before = {p.relative_to(candidate).as_posix(): p.read_bytes() for p in candidate.rglob("*") if p.is_file()}
+            code, output = self.activate(candidate, execution_id="blocked-by-recovery", claim="src/recovery")
+            self.assertNotEqual(code, 0, (status, legacy, output)); self.assertIn("recover", output.lower()); self.assertEqual(journal_bytes, journal_path.read_bytes()); self.assertEqual(before, {p.relative_to(candidate).as_posix(): p.read_bytes() for p in candidate.rglob("*") if p.is_file()})
+            projection_before = {p.relative_to(candidate).as_posix(): p.read_bytes() for p in candidate.rglob("*") if p.is_file()}
+            self.assertNotEqual(ws.execution(candidate, False), 0); self.assertEqual(projection_before, {p.relative_to(candidate).as_posix(): p.read_bytes() for p in candidate.rglob("*") if p.is_file()}); self.assertEqual(ws.execution(candidate, True), 0)
+            journal_path.unlink(); self.assertEqual(self.activate(candidate, execution_id="after-recover", claim="src/recovery")[0], 0)
+        for journal_status in ("prepared", "interrupted"):
+            unresolved_journal_case(journal_status)
+        unresolved_journal_case("interrupted", legacy=True)
         short_root = self.synthetic(second=True); short_before = {p.relative_to(short_root).as_posix(): p.read_bytes() for p in short_root.rglob("*") if p.is_file()}; real_write = __import__("os").write
         def short_write(fd, data):
             prefix = data[:max(1, len(data) // 2)]
@@ -653,8 +665,8 @@ class WorkStateTests(unittest.TestCase):
                 code, output = self.operation(link_root, "recover", execution_id="safe")
                 self.assertNotEqual(code, 0, output)
                 self.assertEqual(outside_file.read_text(encoding="utf-8"), "outside")
-            except OSError as error:
-                self.skipTest("symlink fixture unavailable: " + str(error))
+            except OSError:
+                continue
 
     def test_packets_and_projection_are_order_and_checkout_independent(self):
         left, right = self.synthetic(), self.synthetic()

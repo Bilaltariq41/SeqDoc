@@ -157,3 +157,13 @@ stage metadata in legacy hashless entries, and permits only missing stages consu
 F27: **Fixed** — all descriptor writes use checked write-all progress and centralized fsynced stage creation with
 descriptor/temp cleanup. Short writes cannot make a stage replaceable; zero journal writes fail without canonical
 mutation, while nonempty partial journals remain fail-closed evidence.
+
+Blocking journal admission: an existing runtime or legacy journal blocks every new atomic mutation and write-mode
+projection before originals, stages, or a replacement journal are touched. The diagnostic requires `recover`; read-only
+projection checks remain usable and `recover` alone consumes the journal. This is the Phase-5 regression for Qais's
+comment `issuecomment-5750269759`. The separate closeout-attestation and process-history concerns remain unresolved
+non-blocking findings for later disposition.
+
+F30 verification correction: the targeted unresolved-journal test completed **1/1 passed**, not skipped, and the full
+focused command completed **28/28 passed**. The local symlink/reparse partition was conditionally unavailable, but it no
+longer masks the journal regression; existing non-link recovery and claim boundaries remain active.

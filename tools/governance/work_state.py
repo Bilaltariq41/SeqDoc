@@ -385,6 +385,11 @@ def execution_payload(items):
 
 def execution(root, check=False):
     with repository_lock(root):
+        if not check:
+            try:
+                reject_unresolved_journal(root)
+            except OSError:
+                return 1
         return _execution_unlocked(root, check)
 
 
@@ -531,6 +536,13 @@ def file_hash(value):
     return hashlib.sha256(value or b"").hexdigest()
 
 
+def reject_unresolved_journal(root):
+    if read_journal(root) is not None:
+        message = "unresolved transaction journal exists; run recover before retrying"
+        print(message, file=sys.stderr)
+        raise OSError(message)
+
+
 def write_journal(path, value):
     encoded = dump(value).encode("utf-8")
     fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC)
@@ -555,6 +567,7 @@ def write_journal(path, value):
 def atomic_write(root, payloads):
     if not payloads:
         return
+    reject_unresolved_journal(root)
     paths = sorted(payloads, key=lambda path: str(path.relative_to(root)).replace("\\", "/"))
     originals = {path: (path.read_bytes() if path.exists() else None) for path in paths}
     entries = []

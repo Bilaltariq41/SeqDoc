@@ -249,6 +249,27 @@ gate is claimed.
 - Focused verification: **28 passed, 1 actual symlink-capability skip**. No lifecycle invocation, commit, push, GitHub
   operation, or final gate is claimed.
 
+## Phase-5 Qais blocking journal repair
+
+- Finding source: https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5750269759
+- Diagnosis: a new atomic mutation or projection write could overwrite an existing runtime or legacy unresolved
+  journal before recovery consumed it, destroying the recovery boundary and invalidating its hashes.
+- **Fixed** — one central unparsed runtime-or-legacy journal admission guard now runs before atomic preimage/stage/new
+  journal work and before write-mode execution projection. It emits one `recover` diagnostic, preserves all bytes, leaves
+  read-only checks usable, and leaves `recover` as the sole consumer. After removal or successful recovery, mutation
+  succeeds again under the released repository lock.
+- Regression: the focused single test and full suite cover prepared/interrupted runtime and legacy journals, preserved
+  bytes, read-only coherence, and post-recovery mutation. Focused results: **28 passed, 1 actual symlink-capability
+  skip**.
+- Qais's non-blocking closeout-attestation concern and process-history concerns are explicitly unresolved and deferred;
+  they are not addressed by this repair.
+
+## Reviewer F30 verification correction
+
+- The targeted unresolved-journal regression completed **1/1 passed**; it was not skipped.
+- The full focused command completed **28/28 passed**. The local symlink/reparse partition was conditionally unavailable,
+  but it no longer masks the journal test; existing non-link recovery and claim boundaries remain active.
+
 ## Reviewer F28
 
 - F28: **Fixed** — rollback now promotes each pre-staged original directly with one reversed-order `os.replace`, never

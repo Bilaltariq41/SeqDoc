@@ -91,6 +91,12 @@ bytes before returning, and removes incomplete temporary stages. Journal write f
 transaction; a zero-byte journal is removed while a nonempty partial journal remains available for fail-closed
 inspection.
 
+An existing runtime or legacy journal is an unresolved transaction boundary. Before any new atomic mutation or
+projection write, the operation refuses without parsing, rewriting, deleting, or normalizing that journal and reports
+`recover` as the required next action. Read-only projection checks remain available; `recover` is the only operation
+that may consume or repair the journal. This closes the journal-overwrite bug recorded by Qais at
+https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5750269759.
+
 `prepare --scaffold` derives target mutations, validation, and execution output from one deep-copied candidate. Path,
 fixture, and governance-tool claims reject existing symlink, junction, or reparse components under the repository;
 nonexistent ordinary components remain admissible, and abstract exclusive resources are not filesystem paths.
