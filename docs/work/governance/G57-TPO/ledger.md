@@ -274,8 +274,15 @@ gate is claimed.
 
 - F31: **Fixed** — symlink/reparse claim and recovery checks are isolated in one dedicated capability-gated method;
   ordinary claims and the F30 unresolved-journal test never skip.
-- Verification is **29 total: 28 passed, 1 explicit local capability skip**. This corrects only durable evidence; no
-  source, test, or state lifecycle change is claimed here.
+- F31 was a test-only structural repair in `tests/governance/test_work_state.py`, moving active reparse assertions into
+  the 29th dedicated capability-gated method. The receipt ran against the exact test content later committed at
+  `462986fd54031dfea4dc31256a1664f08c7d7705`: targeted F30 **1/1 passed**; full **29 total, 28 passed, 1 explicit
+  capability skip**.
+
+## Reviewer F32
+
+- F32: **Fixed** — removed the false claim that F31 changed no tests. This subsequent correction changes durable evidence
+  wording only; source, tests, and state lifecycle remain unchanged.
 
 ## Reviewer F28
 

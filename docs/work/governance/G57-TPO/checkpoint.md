@@ -170,3 +170,7 @@ longer masks the journal regression; existing non-link recovery and claim bounda
 
 F31: **Fixed** — symlink/reparse claim and recovery checks are isolated in one dedicated capability-gated method. The
 ordinary claims and F30 journal test never skip. Verification is **29 total, 28 passed, 1 explicit local capability skip**.
+F31 was a test-only structural repair in `tests/governance/test_work_state.py`, moving active reparse assertions into
+that 29th dedicated capability-gated method. The receipt was run against the exact test content later committed at
+`462986fd54031dfea4dc31256a1664f08c7d7705`: targeted F30 **1/1 passed**; full **29 total, 28 passed, 1 explicit
+capability skip**. F32 corrects evidence wording only.
