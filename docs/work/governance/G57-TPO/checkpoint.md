@@ -71,7 +71,9 @@ baseline shape, execution instances, normalized claims, checkpoint scaffolding, 
 packets, rollback and recovery, review identity, full closeout, dependent promotion, and projection. Reviewer F16 adds
 handoff negatives for a direct cross-repository PR, malformed or missing source URLs, and mismatched issue numbers;
 each proves that GitHub subprocess observation is not reached and the registry, capsule, and execution projection
-remain byte-identical. One symlink-capability case is skipped on unsupported platforms.
+remain byte-identical. At test-changing head `76551dc3c36f99d5225b46b3d6240b2af35f1c22`, the exact focused command
+ran 28 tests in 14.297s and passed; one symlink-capability case is skipped on unsupported platforms. F17 corrects
+durable evidence wording only; source, tests, and lifecycle state are unchanged.
 
 ## Test budget
 

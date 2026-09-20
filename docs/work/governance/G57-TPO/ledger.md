@@ -200,5 +200,10 @@ gate is claimed.
 - F16: **Fixed** — handoff now has direct cross-repository, malformed or missing source URL, and mismatched
   issue-number negatives. Each proves canonical identity rejection before subprocess observation and preserves
   byte-identical registry, capsule, and execution projection state.
-- Supplied focused coverage is green at **28/28**, with one symlink-capability skip. No focused rerun was needed for
-  this documentation-only update; no lifecycle invocation, handoff, commit, push, or final gate is claimed.
+- F16 changed the supplied tests. The exact focused command at test-changing head
+  `76551dc3c36f99d5225b46b3d6240b2af35f1c22` ran 28 tests in 14.297s and passed, with one symlink-capability skip.
+
+## Reviewer F17
+
+- F17: **Fixed** — corrected the F16 verification record. This subsequent repair changes durable evidence text only;
+  it does not change source, tests, or lifecycle state.
