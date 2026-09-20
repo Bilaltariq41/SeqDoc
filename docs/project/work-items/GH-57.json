@@ -83,9 +83,9 @@
   "expectedGithubState": "OPEN",
   "id": "GH-57",
   "kind": "github-issue",
-  "lifecycle": "ResolvingFindings",
-  "lifecycleLabel": "resolving-findings",
-  "nextAction": "Delete legacy takeover schema allowance, verify the complete candidate, and request one latest-head non-author peer review.",
+  "lifecycle": "ReviewRequired",
+  "lifecycleLabel": "review-required",
+  "nextAction": "Obtain one latest-head non-author human peer approval from Qhatahet before the final gate.",
   "number": 57,
   "owner": "ahmad",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
@@ -93,6 +93,22 @@
     "reason": "Current collaboration policy supersedes historical repair limits and takeover authorization; continue worker-owned F13 repair.",
     "startHead": "4ff513d4237a4be634716c59eaa2114b4bcb3e95"
   },
+  "review": {
+    "author": "AhmadKrarha",
+    "epoch": "1",
+    "executionId": "GH-57:G57-TPO",
+    "findings": [
+      "Fixed: complete-candidate self-review findings F1-F17 resolved with evidence in the checkpoint ledger"
+    ],
+    "peer": "Qhatahet",
+    "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
+    "requestHead": "a1d7e472bfdfd195021ed5999a6c607c210b7ebd"
+  },
+  "reviewEpoch": "1",
+  "reviewFindings": [
+    "Fixed: complete-candidate self-review findings F1-F17 resolved with evidence in the checkpoint ledger"
+  ],
+  "reviewPeer": "Qhatahet",
   "schemaVersion": 1,
   "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/57",

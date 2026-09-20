@@ -90,7 +90,7 @@
   ],
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Delete legacy takeover schema allowance, verify the complete candidate, and request one latest-head non-author peer review.",
+  "nextAction": "Obtain one latest-head non-author human peer approval from Qhatahet before the final gate.",
   "schemaVersion": 2,
   "sourceId": "GH-57"
 }
