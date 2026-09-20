@@ -544,19 +544,6 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(self.activate(root, execution_id="a", claim="src/a")[0], 0)
         self.assertEqual(self.activate(root, item="B", execution_id="b", claim="docs/b", fixture="fixture-b",
                                        governance_tool="tools/other.py", resource="other")[0], 0)
-        links = root / "links"; real = root / "real"; real.mkdir(); (real / "file.txt").write_text("x")
-        link_capable = True
-        try:
-            links.symlink_to(real, target_is_directory=True)
-        except (OSError, NotImplementedError):
-            link_capable = False
-        if link_capable:
-            linked = self.synthetic(second=True)
-            real_path, link_path = linked / "real", linked / "links"
-            real_path.mkdir(); (real_path / "file.txt").write_text("x"); link_path.symlink_to(real_path, target_is_directory=True)
-            self.assertEqual(self.activate(linked, execution_id="real", claim="real/file.txt")[0], 0)
-            alias_code, _ = self.activate(linked, item="B", execution_id="alias", claim="links/file.txt")
-            self.assertNotEqual(alias_code, 0)
 
     def test_failed_transaction_rolls_back_and_recovery_does_not_replace_newer_state(self):
         root = self.synthetic()
@@ -644,29 +631,25 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertFalse(absent.exists())
         self.assertEqual(empty.read_bytes(), b"")
-        for parent_link in (False, True):
-            link_root = self.synthetic()
-            outside_dir = Path(tempfile.mkdtemp(dir=link_root.parent))
-            outside_file = outside_dir / "sentinel.txt"
-            outside_file.write_text("outside", encoding="utf-8")
-            try:
-                if parent_link:
-                    link = link_root / "docs/project/linked"
-                    link.symlink_to(outside_dir, target_is_directory=True)
-                    target = link / "sentinel.txt"
-                else:
-                    target = link_root / "docs/project/work-items/linked.txt"
-                    target.symlink_to(outside_file)
-                payload = target.read_bytes()
-                journal = {"executionId":"safe", "entries":[{"path":str(target.relative_to(link_root)).replace("\\","/"),
-                    "originalExists":True, "originalHash":ws.file_hash(payload), "targetHash":ws.file_hash(b"replacement"),
-                    "original":base64.b64encode(payload).decode(), "target":base64.b64encode(b"replacement").decode()}]}
-                (link_root / "docs/project/work-state.journal.json").write_text(json.dumps(journal), encoding="utf-8")
-                code, output = self.operation(link_root, "recover", execution_id="safe")
-                self.assertNotEqual(code, 0, output)
-                self.assertEqual(outside_file.read_text(encoding="utf-8"), "outside")
-            except OSError:
-                continue
+
+    def test_symlink_and_reparse_boundaries_are_confined(self):
+        link_root = self.synthetic(second=True)
+        outside_dir = Path(tempfile.mkdtemp(dir=link_root.parent)); outside_file = outside_dir / "sentinel.txt"; outside_file.write_text("outside", encoding="utf-8")
+        real_path, alias_path = link_root / "real", link_root / "links"; real_path.mkdir(); (real_path / "file.txt").write_text("inside", encoding="utf-8")
+        try:
+            alias_path.symlink_to(real_path, target_is_directory=True)
+            parent_link = link_root / "docs/project/linked"; parent_link.symlink_to(outside_dir, target_is_directory=True)
+            file_link = link_root / "docs/project/work-items/linked.txt"; file_link.symlink_to(outside_file)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest("symlink/reparse capability unavailable: " + str(error))
+        self.assertEqual(self.activate(link_root, execution_id="real", claim="real/file.txt")[0], 0)
+        alias_code, _ = self.activate(link_root, item="B", execution_id="alias", claim="links/file.txt")
+        self.assertNotEqual(alias_code, 0)
+        for target in (parent_link / "sentinel.txt", file_link):
+            payload = target.read_bytes(); journal = {"executionId":"safe", "entries":[{"path":str(target.relative_to(link_root)).replace("\\","/"), "originalExists":True, "originalHash":ws.file_hash(payload), "targetHash":ws.file_hash(b"replacement"), "original":base64.b64encode(payload).decode(), "target":base64.b64encode(b"replacement").decode()}]}
+            journal_path = link_root / "docs/project/work-state.journal.json"; journal_path.write_text(json.dumps(journal), encoding="utf-8")
+            code, output = self.operation(link_root, "recover", execution_id="safe")
+            self.assertNotEqual(code, 0, output); self.assertEqual(outside_file.read_text(encoding="utf-8"), "outside")
 
     def test_packets_and_projection_are_order_and_checkout_independent(self):
         left, right = self.synthetic(), self.synthetic()

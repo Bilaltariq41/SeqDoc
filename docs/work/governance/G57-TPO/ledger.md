@@ -270,6 +270,13 @@ gate is claimed.
 - The full focused command completed **28/28 passed**. The local symlink/reparse partition was conditionally unavailable,
   but it no longer masks the journal test; existing non-link recovery and claim boundaries remain active.
 
+## Reviewer F31
+
+- F31: **Fixed** — symlink/reparse claim and recovery checks are isolated in one dedicated capability-gated method;
+  ordinary claims and the F30 unresolved-journal test never skip.
+- Verification is **29 total: 28 passed, 1 explicit local capability skip**. This corrects only durable evidence; no
+  source, test, or state lifecycle change is claimed here.
+
 ## Reviewer F28
 
 - F28: **Fixed** — rollback now promotes each pre-staged original directly with one reversed-order `os.replace`, never
