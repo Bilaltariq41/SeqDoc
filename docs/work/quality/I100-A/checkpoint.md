@@ -2,7 +2,7 @@
 
 ## State
 
-`ReviewRequired`
+`ResolvingFindings`
 
 ## Authority and frozen state
 
@@ -939,6 +939,13 @@ transactional `handoff` command cannot represent this PR-specific exception beca
 as peer, so the authenticated bypass and exact role separation are recorded here and in the ledger without inventing an
 independent reviewer. Ahmad must post exact-head `PASS` or `BLOCK`; only PASS permits transition to `Verifying` and the
 single final gate.
+
+Ahmad returned exact-head `BLOCK` on `1af4eddb03812cdb23342494f60a14133b6b55d5` at
+https://github.com/Bilaltariq41/SeqDoc/pull/109#issuecomment-5752921086. He accepted the five Bilal repair outcomes and
+raised two bounded findings: F10, required CI exposes that the real-repository projection assertion derives its expected
+idle state from normalized synthetic fixtures instead of `ws.load(ROOT)`; F11, the existing xUnit 2.9.3
+`DisableParallelization` guarantee needs a concise adjacent comment and durable evidence. Repair only those findings,
+preserve the existing non-mutation assertions and 76 tests, require green CI and rereview, and keep the final gate unrun.
 
 ### Owner platform-floor amendment
 

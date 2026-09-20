@@ -17,7 +17,7 @@
   ],
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Abood must commit and push the final candidate, then request Ahmad's authenticated exact-head PASS or BLOCK under Bilal's PR #109 owner bypass. Do not describe the review as independent and do not run the final gate before PASS.",
+  "nextAction": "Repair only F10/F11, run Ahmad's ordered verification, obtain independent rereview, push a new exact head, require green validate CI, and request Ahmad's non-independent PASS or BLOCK. Do not run the final gate.",
   "schemaVersion": 2,
   "sourceId": "GH-106"
 }

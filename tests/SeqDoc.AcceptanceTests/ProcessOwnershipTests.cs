@@ -6,6 +6,8 @@ using Xunit;
 
 namespace SeqDoc.AcceptanceTests;
 
+// With pinned xUnit 2.9.3, opting this collection out guarantees it does not run in parallel with any other
+// collection, protecting process-global environment/test seams: https://xunit.net/docs/running-tests-in-parallel#opting-a-test-collection-out-of-parallelism
 [CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class ProcessOwnershipGroup
 {

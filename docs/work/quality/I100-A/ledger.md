@@ -742,3 +742,11 @@ final technical review despite non-independence, forbids the final pusher from a
 earlier reservation. Abood is the final pusher; Ahmad is the non-independent final technical reviewer and must return
 exact-head `PASS` or `BLOCK`. The transactional handoff's non-author invariant cannot encode this explicit exception, so
 the bypass is recorded verbatim rather than misidentifying an independent peer. The final gate remains unrun.
+
+Ahmad exact-head review receipt:
+https://github.com/Bilaltariq41/SeqDoc/pull/109#issuecomment-5752921086 — `BLOCK` on
+`1af4eddb03812cdb23342494f60a14133b6b55d5`. F10 requires the real-repository projection expectation to come from
+`ws.load(ROOT)`/`ws.execution_object(real_items)` rather than synthetic `self.items`. F11 requires an adjacent comment
+recording the xUnit 2.9.3 opted-out collection guarantee from
+https://xunit.net/docs/running-tests-in-parallel#opting-a-test-collection-out-of-parallelism. No accepted
+ProcessOwnership behavior may change; required CI and Ahmad rereview precede the final gate.
