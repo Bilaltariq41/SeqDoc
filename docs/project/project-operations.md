@@ -69,15 +69,17 @@ rejected. Findings are sorted and must receive deterministic dispositions before
 Before any GitHub observation, handoff and closeout validate the canonical issue source URL, item number, PR repository,
 and supplied repository binding. Issue and PR numbers remain independent.
 
-All filesystem-mutating operations (`prepare`, `activate`, `resume`, `handoff`, `closeout`, `promote`, `recover`, and
-`transition`) take the repository-scoped blocking lock before loading state and hold it through validation, observation,
+All filesystem-mutating operations (`prepare`, `activate`, `resume`, `handoff`, `closeout`, `promote`, `recover`,
+`transition`, and `project-execution` write mode) take the repository-scoped blocking lock before loading state and hold it through validation, observation,
 journaling, replacement, rollback, or recovery completion. The lock is adjacent to the runtime journal, is an exactly
 one-byte `O_CREAT|O_RDWR` file, uses a blocking `msvcrt` nonblocking-acquisition loop on Windows and `fcntl` on POSIX,
 and is never stale-deleted. GitHub projection remains outside this filesystem transaction.
 
 Transactions stage target preimages before replacement. Every journal entry is validated in deterministic order against
 the current hash and confined, non-reparse path. Staged target and original paths are canonical repository-relative
-names, adjacent to their target, and carry their exact stage prefix; absolute or escaped stage paths are refused.
+names, adjacent to their target, and carry their exact stage prefix; absolute or escaped stage paths are refused. When
+stage files exist, their regular-file bytes and hashes must match the journal role; missing stages are allowed because a
+successful rename may have consumed them. Legacy hashless journals cannot authorize staged cleanup.
 Journal rewrites use an fsyncing helper. Recovery restores originals with staged `os.replace` operations and removes
 journal/staging evidence only after all restores succeed; interrupted rollback preserves both for retry. For an
 originally absent target, the recovery boundary remains a validated direct unlink after the current-hash check because

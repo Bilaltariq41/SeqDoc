@@ -15,6 +15,7 @@ import json
 import os
 import re
 import subprocess
+import stat
 import sys
 import tempfile
 import time
@@ -383,6 +384,11 @@ def execution_payload(items):
 
 
 def execution(root, check=False):
+    with repository_lock(root):
+        return _execution_unlocked(root, check)
+
+
+def _execution_unlocked(root, check=False):
     items = load(root)
     errors = validate_items(items, root)
     if errors:
@@ -596,6 +602,22 @@ def confined_stage(root, target, value, prefix):
             (prefix == ".work-state-" and stage.name.startswith(".work-state-original-"))):
         raise ValueError("staged path is not adjacent and canonical")
     return stage
+
+
+def validate_stage_file(stage, expected, expected_hash):
+    if stage.is_symlink() or (hasattr(stage, "is_junction") and stage.is_junction()):
+        raise ValueError("staged evidence follows symlink or reparse point")
+    if not stage.exists():
+        return
+    try:
+        attributes = stage.stat().st_file_attributes
+    except AttributeError:
+        attributes = 0
+    if attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400) or not stage.is_file():
+        raise ValueError("staged evidence is not a regular file")
+    value = stage.read_bytes()
+    if value != expected or file_hash(value) != expected_hash:
+        raise ValueError("staged evidence content does not match journal")
 
 
 @filesystem_operation
@@ -1204,16 +1226,20 @@ def recover(root, args):
         except ValueError as error:
             print(f"recovery refused: {error}", file=sys.stderr)
             return 1
+        stage_paths = {}
         try:
             if entry.get("targetStage") is not None:
-                evidence_stages.append(confined_stage(root, target, entry["targetStage"], ".work-state-"))
+                stage_paths["target"] = confined_stage(root, target, entry["targetStage"], ".work-state-")
             if entry.get("originalStage") is not None:
-                evidence_stages.append(confined_stage(root, target, entry["originalStage"], ".work-state-original-"))
+                stage_paths["original"] = confined_stage(root, target, entry["originalStage"], ".work-state-original-")
         except ValueError as error:
             print(f"recovery refused: {error}", file=sys.stderr)
             return 1
         current = target.read_bytes() if target.exists() else None
         if "originalHash" not in entry:
+            if stage_paths:
+                print("recovery refused: legacy journal cannot authorize staged evidence", file=sys.stderr)
+                return 1
             original_exists = entry.get("original") is not None
             original = entry.get("original")
             if original is not None and not isinstance(original, str):
@@ -1240,6 +1266,18 @@ def recover(root, args):
             return 1
         if file_hash(original if original_exists else None) != entry["originalHash"] or file_hash(target_bytes) != entry["targetHash"]:
             print("recovery refused: journal hash does not match its preimage", file=sys.stderr)
+            return 1
+        try:
+            if "target" in stage_paths:
+                validate_stage_file(stage_paths["target"], target_bytes, entry["targetHash"])
+                evidence_stages.append(stage_paths["target"])
+            if "original" in stage_paths:
+                if not original_exists:
+                    raise ValueError("original stage is present for an absent target")
+                validate_stage_file(stage_paths["original"], original, entry["originalHash"])
+                evidence_stages.append(stage_paths["original"])
+        except ValueError as error:
+            print(f"recovery refused: {error}", file=sys.stderr)
             return 1
         if file_hash(current) not in {entry["originalHash"], entry["targetHash"]}:
             print("recovery refused: newer state exists; inspect journal before retrying", file=sys.stderr)

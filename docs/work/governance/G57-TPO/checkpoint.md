@@ -149,3 +149,8 @@ these boundaries, including both actual symlink-capability partitions without sk
 F19 stages only canonical repository-relative adjacent paths and durably fsyncs journal rewrites. Recovery uses staged
 renames for present originals; validated direct unlink is retained only for an originally absent target, where no
 preimage exists.
+
+F25: **Fixed** — `project-execution` now holds the repository lock across load, validation, compare, and write in both
+check and write modes, while `execution_payload` remains pure. F26: **Fixed** — recovery validates existing staged
+regular-file bytes and hashes against their target/original journal roles before any restoration or cleanup, rejects
+stage metadata in legacy hashless entries, and permits only missing stages consumed by rename.

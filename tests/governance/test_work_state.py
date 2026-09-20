@@ -363,6 +363,12 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(ws.execution(supplied, False), 0)
         execution = json.loads((supplied / "docs/project/execution.json").read_text(encoding="utf-8"))
         self.assertEqual(execution["activeCheckpointPath"], "docs/work/custom-a")
+        with patch.object(ws, "repository_lock", wraps=ws.repository_lock) as lock:
+            self.assertEqual(ws.execution(supplied, False), 0)
+            self.assertTrue(lock.called)
+        with patch.object(ws, "repository_lock", wraps=ws.repository_lock) as lock:
+            self.assertEqual(ws.execution(supplied, True), 0)
+            self.assertTrue(lock.called)
         for checkpoint_id, checkpoint_path in (("custom-a", "/outside"), ("custom-a", "../outside"),
                                                 ("custom-a", "docs/work"), ("bad/id", "docs/work/bad-id"),
                                                 ("other", "docs/work/custom-a")):
@@ -492,6 +498,17 @@ class WorkStateTests(unittest.TestCase):
         with patch("os.replace", side_effect=OSError("injected commit failure")):
             self.assertNotEqual(self.activate(release, item="B", execution_id="after-failure", claim="src/b")[0], 0)
         self.assertEqual(self.activate(release, item="B", execution_id="after-failure-retry", claim="src/b")[0], 0)
+        projected = self.synthetic()
+        projection_barrier = Path(tempfile.mkdtemp(dir=self.d)); projection_start = projection_barrier / "start"
+        projection_child = "import pathlib,sys,time; import tools.governance.work_state as w; r=pathlib.Path(sys.argv[1]); pathlib.Path(sys.argv[2]).write_text('ready'); s=pathlib.Path(sys.argv[3]);\nwhile not s.exists(): time.sleep(.005)\nprint(w.execution(r,False))"
+        transaction_child = "import pathlib,sys,time; from types import SimpleNamespace; import tools.governance.work_state as w; r=pathlib.Path(sys.argv[1]); pathlib.Path(sys.argv[2]).write_text('ready'); s=pathlib.Path(sys.argv[3]);\nwhile not s.exists(): time.sleep(.005)\na=SimpleNamespace(id='A',state='Active',reason='projection race',next_action='projection race',select=True,select_id=None,check=False,dry_run=False); print(w.transition(r,a))"
+        projection_process = subprocess.Popen([__import__("sys").executable,"-B","-c",projection_child,str(projected),str(projection_barrier/"projection"),str(projection_start)],cwd=str(ROOT),stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        transaction_process = subprocess.Popen([__import__("sys").executable,"-B","-c",transaction_child,str(projected),str(projection_barrier/"transaction"),str(projection_start)],cwd=str(ROOT),stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        deadline = __import__("time").time() + 10
+        while not all((projection_barrier / name).exists() for name in ("projection", "transaction")) and __import__("time").time() < deadline: __import__("time").sleep(.01)
+        self.assertTrue(all((projection_barrier / name).exists() for name in ("projection", "transaction"))); projection_start.write_text("go")
+        self.assertTrue(projection_process.communicate(timeout=10)[0].rstrip().endswith("0")); self.assertTrue(transaction_process.communicate(timeout=10)[0].rstrip().endswith("0"))
+        self.assertEqual(json.loads((projected / "docs/project/execution.json").read_text()), json.loads(ws.execution_payload(ws.load(projected)))); self.assertEqual(ws.execution(projected, True), 0)
 
     def test_claim_normalization_rejects_windows_ancestor_fixture_and_tool_conflicts_but_not_disjoint(self):
         root = self.synthetic(second=True)
@@ -562,6 +579,15 @@ class WorkStateTests(unittest.TestCase):
         canonical_before = {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
         staged_code, staged_output = self.operation(root, "recover")
         self.assertNotEqual(staged_code, 0); self.assertIn("refused", staged_output.lower()); self.assertEqual(staged_sentinel.read_text(encoding="utf-8"), "must remain staged"); self.assertEqual(canonical_before, {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()})
+        forged_stage = root / "docs/project/.work-state-forged"; forged_stage.write_text("wrong staged bytes", encoding="utf-8")
+        forged_entry = {"path":"docs/project/execution.json", "originalExists":True, "originalHash":digest, "targetHash":digest, "original":encoded, "target":encoded, "targetStage":"docs/project/.work-state-forged"}
+        forged_journal = root / "docs/project/work-state.journal.json"; forged_journal.write_text(json.dumps({"generation":generation,"status":"interrupted","entries":[forged_entry]}), encoding="utf-8")
+        forged_before = {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+        forged_code, forged_output = self.operation(root, "recover")
+        self.assertNotEqual(forged_code, 0); self.assertIn("refused", forged_output.lower()); self.assertEqual(forged_stage.read_text(encoding="utf-8"), "wrong staged bytes"); self.assertEqual(forged_before, {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()})
+        legitimate_target_stage = root / "docs/project/.work-state-target-legitimate"; legitimate_original_stage = root / "docs/project/.work-state-original-legitimate"; legitimate_target = b"legitimate staged target"; legitimate_target_stage.write_bytes(legitimate_target); legitimate_original_stage.write_bytes(current_execution)
+        forged_journal.write_text(json.dumps({"generation":generation,"status":"interrupted","entries":[{"path":"docs/project/execution.json", "originalExists":True, "originalHash":digest, "targetHash":ws.file_hash(legitimate_target), "original":encoded, "target":base64.b64encode(legitimate_target).decode("ascii"), "targetStage":"docs/project/.work-state-target-legitimate", "originalStage":"docs/project/.work-state-original-legitimate"}]}), encoding="utf-8")
+        self.assertEqual(self.operation(root, "recover")[0], 0); self.assertFalse(legitimate_target_stage.exists()); self.assertFalse(legitimate_original_stage.exists())
         absent = root / "docs/project/recovery-absent.json"
         empty = root / "docs/project/recovery-empty.json"
         absent.unlink(missing_ok=True)

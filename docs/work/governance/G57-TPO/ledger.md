@@ -231,6 +231,16 @@ gate is claimed.
   unexpected acquisition errors close the descriptor without an unlock attempt, preserving the original failure while
   retaining blocking contention and finally-release semantics.
 
+## Reviewer F25/F26
+
+- F25: **Fixed** — `execution` now takes the repository lock across load, validation, comparison, and projection write
+  for both check and write modes; `execution_payload` remains pure and concurrent projection tests preserve coherence.
+- F26: **Fixed** — existing stage files are validated as regular non-reparse files with exact role bytes and hashes before
+  restoration or cleanup. Absolute/escaped/external stages, wrong-content adjacent stages, and legacy hashless stage
+  metadata fail closed without mutation; missing stages remain valid when a prior rename consumed them.
+- Focused verification after these repairs: **28 passed, 1 actual symlink-capability skip**. No lifecycle invocation,
+  commit, push, GitHub operation, or final gate is claimed.
+
 ## Reviewer F16
 
 - F16: **Fixed** — handoff now has direct cross-repository, malformed or missing source URL, and mismatched
