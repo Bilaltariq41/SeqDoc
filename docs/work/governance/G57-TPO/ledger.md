@@ -7,6 +7,9 @@
 - Branch: `feature/issue-57-transactional-project-operations`.
 - Claim receipt: https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5711611308
 - Current-main validation before activation: 50 work items valid; execution projection current and idle.
+- Canonical contract reconciliation: owner-published `main`/Issue #57 state at `ab6e3e1` and later records GH-57 as
+  `Ready`/active execution with no dependencies. This supersedes the older sequencing-only GH-13 comments for GH-57;
+  GH-13 is unchanged.
 
 ## Verification
 
@@ -179,13 +182,15 @@ gate is claimed.
 
 ## Current process-evidence disposition
 
-- **Fixed — process evidence**: owner-directed reviewer availability was reassigned in public PR comment
+- **Fixed — process evidence**: worker coordination changed reviewer availability, recorded in public PR comment
   https://github.com/Bilaltariq41/SeqDoc/pull/110#issuecomment-5751178429, with commit attribution
   `f6a6694` (Qhatahet → Abood-essa) and `2f76354` (Abood-essa → Qhatahet). These are availability reassignments,
-  not takeover authorization or approval.
+not takeover authorization or approval; no authenticated public owner direction established them. Qhatahet is the current
+reserved reviewer.
 - The current runtime/schema contains `resume` only and no `takeover`, as established by `cd6a7b0` and `f8919e2`.
-  There is no fixed repair stop. Qais formal approval and the final gate remain pending; process evidence and the
-  closeout-attestation boundary are Fixed.
+  There is no fixed repair stop. Qhatahet independently verified the technical fixes at `0f9fdb8` but withheld formal
+  approval over the now-reconciled #13 and false owner-direction records; owner closeout audit/bypass decision is pending.
+  Do not claim gate, merge, or approval. Process evidence and the closeout-attestation boundary are Fixed.
 
 ## F13 identity repair disposition
 
@@ -303,14 +308,16 @@ gate is claimed.
 
 - **Fixed by documented and tightened boundary** — `--findings none` is accepted only for empty stored review findings;
   automatic closeout remains limited to all-`Fixed:` findings. Stored `Rejected:` or `Deferred:` findings require
-  explicit `--findings resolved`, an operator attestation that rejection evidence and explicit owner-approved deferral
+  explicit `--findings resolved`, an operator attestation that rejection evidence and the current peer verification record
   are already durable in the ledger. The command does not authenticate those external records or accept new values.
 - Positive coverage proves explicit `resolved` proceeds for valid rejected/deferred records; negative coverage proves
   `none` fails before GitHub observation and preserves bytes when any finding is stored. Source concern:
   https://github.com/Bilaltariq41/SeqDoc/pull/110#issuecomment-5750269759.
 - The operator attestation is an accepted documented boundary, not an unresolved concern. The named closeout test ran
   **1 passed**; the full command reported `Ran 29 tests` and `OK (skipped=1)`, meaning **28 passed and 1 explicit
-  capability skip**. Only Qais formal approval and the final gate remain pending.
+  capability skip**. Qhatahet independently verified the technical fixes at `0f9fdb8` but withheld formal approval over
+  the now-reconciled #13 and false owner-direction records; owner closeout audit/bypass decision is pending. Do not claim
+  gate, merge, or approval.
 
 ## Reviewer F28
 
@@ -338,3 +345,28 @@ gate is claimed.
 
 - F17: **Fixed** — corrected the F16 verification record. This subsequent repair changes durable evidence text only;
   it does not change source, tests, or lifecycle state.
+
+## Independent findings G57-TPO-F1..F4
+
+- F1: **Fixed** — persisted checkpoint paths use one canonical, nonmutating repository-relative/reparse-safe validator
+  before capsule reads, payload construction, or GitHub observation.
+- F2: **Fixed** — write-mode execution projection is routed through locked `atomic_write`; the adapted regression injects
+  a real `os.replace` failure and verifies old bytes or durable journal evidence.
+- F3: **Fixed** — ordinary deferred findings require the case-insensitive final non-author peer disposition marker with
+  nonempty evidence; pending owner approval is rejected.
+- F4: **Fixed** — peer-change review metadata is all-or-nothing and durable, with CLI arguments for reason, evidence, and
+  replacement eligibility; unchanged reviews retain the base shape.
+- Exact focused verification after these repairs: `python -B -m unittest tests.governance.test_work_state` — **33/33
+  passed**. No human approval, final gate, merge, or GitHub mutation is claimed.
+
+## Final findings G57-TPO-F5/F6
+
+- F5: **Fixed** — centralized lstat-first detection rejects Windows reparse attributes, in addition to aliases, across
+  claim admission, persisted checkpoint paths, journal/recovery confinement, and staged evidence. The grouped mocked
+  attribute regression remains alongside the actual capability-gated partition.
+- F6: **Fixed** — projection loads one registry snapshot and validates it completely before `read_remote` or any GitHub
+  subprocess. Projection actions use only that snapshot; invalid input is nonzero and non-observing, while dry-run and
+  idempotence are preserved.
+- Focused repair verification: `python -B -m unittest tests.governance.test_work_state` — **35/35 passed**.
+- Canonical validation, projection check, and `git diff --check` were run after the green focused lane and passed. No
+  human approval, final gate, merge, or GitHub mutation is claimed; lifecycle remains `ReviewRequired`.

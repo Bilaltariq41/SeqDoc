@@ -30,7 +30,7 @@ TRANSITIONS = {
     "ResolvingFindings": {"ReviewRequired", "Verifying", "Blocked"},
     "Verifying": {"Closed", "ReviewRequired", "Blocked"}, "Closed": set(), "Cancelled": set(),
 }
-CAPSULE_STATES = {"Ready": "NotStarted", "Active": "Building", "ReviewRequired": "ReviewRequired", "ResolvingFindings": "ResolvingFindings", "Verifying": "Verifying", "Closed": "Closed", "Blocked": "Blocked", "Cancelled": "Cancelled"}
+CAPSULE_STATES = {"Draft": "NotStarted", "Ready": "NotStarted", "Active": "Building", "ReviewRequired": "ReviewRequired", "ResolvingFindings": "ResolvingFindings", "Verifying": "Verifying", "Closed": "Closed", "Blocked": "Blocked", "Cancelled": "Cancelled"}
 SHA = re.compile(r"^[0-9a-f]{40}$")
 NODE_ID = re.compile(r"^[A-Za-z0-9_]{1,100}$")
 URL = re.compile(r"^https://github\.com/[^/]+/[^/]+/(?:issues|pull)/[0-9]+(?:#.*)?$")
@@ -90,13 +90,31 @@ def normalize_claim_record(record):
     return {"kind": record["kind"], "value": normalize_claim(record["value"])}
 
 
+def is_reparse_point(path):
+    """Inspect one component without resolving a filesystem alias."""
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return False
+    if stat.S_ISLNK(info.st_mode):
+        return True
+    attributes = getattr(info, "st_file_attributes", 0)
+    # lstat rejects aliases first.  The second metadata read is retained for
+    # Windows attribute providers (and platform-independent mocked providers).
+    try:
+        attributes |= getattr(path.stat(), "st_file_attributes", 0)
+    except FileNotFoundError:
+        pass
+    return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+
+
 def claim_reparse_errors(root, record):
     if record["kind"] == "exclusive":
         return []
     current = root
     for component in record["value"].split("/"):
         current = current / component
-        if current.is_symlink() or (hasattr(current, "is_junction") and current.is_junction()):
+        if is_reparse_point(current):
             return ["claim follows symlink or reparse point"]
         if not current.exists():
             break
@@ -165,13 +183,15 @@ def metadata_errors(item, root=None):
     review = item.get("review")
     if review is not None:
         required = {"executionId", "pr", "requestHead", "author", "peer", "epoch", "findings"}
-        if not isinstance(review, dict) or set(review) != required or not isinstance(review.get("findings"), list):
+        peer_change = {"peerChangeReason", "peerChangeEvidence", "replacementEligibility"}
+        if not isinstance(review, dict) or set(review) not in (required, required | peer_change) or not isinstance(review.get("findings"), list):
             errors.append("invalid review record")
         elif not (isinstance(review["executionId"], str) and ID.fullmatch(review["executionId"]) and
                   isinstance(review["pr"], str) and PR_URL.match(review["pr"]) and SHA.fullmatch(review["requestHead"]) and
                   all(isinstance(review[key], str) and ID.fullmatch(review[key]) for key in ("author", "peer")) and EPOCH.fullmatch(review["epoch"]) and
                   review["author"].casefold() != review["peer"].casefold() and review["findings"] == sorted(set(review["findings"])) and
-                  all(valid_finding(value) for value in review["findings"])):
+                  all(valid_finding(value) for value in review["findings"]) and
+                  (set(review) == required or all(isinstance(review[key], str) and review[key].strip() for key in peer_change))):
              errors.append("invalid review record")
         if isinstance(review, dict):
             if not isinstance(review.get("peer"), str) or not isinstance(peer, str) or peer.casefold() != review["peer"].casefold():
@@ -200,14 +220,17 @@ def valid_finding(value):
     if disposition == "Rejected":
         return bool(evidence.strip())
     if disposition == "Deferred":
-        return bool(re.search(r"owner approval\s*[:=-]\s*\S", evidence, re.I))
+        return bool(re.match(r"^\s*final non-author peer accepted disposition\s*:\s*\S", evidence, re.I))
     return False
 
 
 def capsule_text(root, item):
     if not item.get("checkpointPath"):
         return None
-    path = root / item["checkpointPath"] / "checkpoint.md"
+    try:
+        path = checkpoint_path(root, item["checkpointPath"])
+    except ValueError:
+        return None
     return path.read_text(encoding="utf-8") if path.exists() else None
 
 
@@ -326,8 +349,13 @@ def validate_items(items, root=None, capsule_overrides=None):
                 errors.append(f"{item_id} invalid baseline")
         if item.get("selectedForExecution") and (lifecycle not in {"Active", "ReviewRequired", "ResolvingFindings", "Verifying"} or not item.get("checkpointId") or not item.get("checkpointPath") or not item.get("nextAction")):
             errors.append(f"selected item incomplete {item_id}")
+        try:
+            if item.get("checkpointPath") is not None:
+                checkpoint_path(root, item["checkpointPath"])
+        except ValueError as error:
+            errors.append(f"{item_id} invalid checkpoint path: {error}")
         errors.extend(f"{item_id} {error}" for error in metadata_errors(item, root))
-        text = (capsule_overrides or {}).get(item.get("checkpointPath"), capsule_text(root, item))
+        text = None if any(error.startswith(f"{item_id} invalid checkpoint path") for error in errors) else (capsule_overrides or {}).get(item.get("checkpointPath"), capsule_text(root, item))
         if item.get("checkpointPath") and text is None:
             errors.append(f"{item_id} missing checkpoint capsule")
         elif item.get("checkpointPath"):
@@ -406,7 +434,10 @@ def _execution_unlocked(root, check=False):
         print("execution.json is stale", file=sys.stderr)
         return 1
     if not check and actual != expected:
-        path.write_text(expected, encoding="utf-8")
+        try:
+            atomic_write(root, {path: expected})
+        except OSError:
+            return 1
     print("execution projection: " + ("current" if check else "written"))
     return 0
 
@@ -639,7 +670,7 @@ def confined_path(root, relative):
     current = root
     for component in relative.split("/"):
         current = current / component
-        if current.is_symlink() or (hasattr(current, "is_junction") and current.is_junction()):
+        if is_reparse_point(current):
             raise ValueError("journal path follows symlink or reparse point")
     resolved = current.resolve(strict=False)
     if resolved != root and root not in resolved.parents:
@@ -661,15 +692,13 @@ def confined_stage(root, target, value, prefix):
 
 
 def validate_stage_file(stage, expected, expected_hash):
-    if stage.is_symlink() or (hasattr(stage, "is_junction") and stage.is_junction()):
+    if is_reparse_point(stage):
         raise ValueError("staged evidence follows symlink or reparse point")
-    if not stage.exists():
-        return
     try:
-        attributes = stage.stat().st_file_attributes
-    except AttributeError:
-        attributes = 0
-    if attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400) or not stage.is_file():
+        mode = stage.lstat().st_mode
+    except FileNotFoundError:
+        return
+    if not stat.S_ISREG(mode):
         raise ValueError("staged evidence is not a regular file")
     value = stage.read_bytes()
     if value != expected or file_hash(value) != expected_hash:
@@ -694,12 +723,12 @@ def prepare(root, args):
                 print(f"{item['id']} checkpoint ID and path must be supplied together", file=sys.stderr)
                 return 1
             checkpoint_id = supplied_id or item.get("checkpointId") or item["id"]
-            checkpoint_path = supplied_path or item.get("checkpointPath") or f"docs/work/checkpoints/{checkpoint_id}"
+            checkpoint_relative = supplied_path or item.get("checkpointPath") or f"docs/work/checkpoints/{checkpoint_id}"
             if not ID.fullmatch(checkpoint_id):
                 print(f"{item['id']} invalid checkpoint ID", file=sys.stderr)
                 return 1
             try:
-                relative = normalize_repository_path(checkpoint_path)
+                relative = normalize_repository_path(checkpoint_relative)
             except ValueError as error:
                 print(f"{item['id']} invalid checkpoint path: {error}", file=sys.stderr)
                 return 1
@@ -707,7 +736,7 @@ def prepare(root, args):
                 print(f"{item['id']} checkpoint ID/path mismatch", file=sys.stderr)
                 return 1
             item["checkpointId"], item["checkpointPath"] = checkpoint_id, relative
-            path = root / relative / "checkpoint.md"
+            path = checkpoint_path(root, relative)
             if not path.exists():
                 state = CAPSULE_STATES.get(item.get("lifecycle"), "NotStarted")
                 if item.get("lifecycle") == "Active":
@@ -744,13 +773,26 @@ def normalize_repository_path(value):
     parts = []
     for part in value.replace("\\", "/").split("/"):
         if part in ("", "."):
-            continue
+            raise ValueError("noncanonical path")
         if part == "..":
             raise ValueError("parent traversal")
         parts.append(part)
     if not parts or parts[-1].lower() == "checkpoint.md":
         raise ValueError("checkpoint path must name a directory")
     return "/".join(parts)
+
+
+def checkpoint_path(root, value):
+    """Validate a persisted capsule directory without following reparse aliases."""
+    relative = normalize_repository_path(value)
+    if relative != value:
+        raise ValueError("noncanonical path")
+    current = root.resolve()
+    for component in relative.split("/"):
+        current = current / component
+        if is_reparse_point(current):
+            raise ValueError("path follows symlink or reparse point")
+    return root / relative / "checkpoint.md"
 
 
 def normalize_journal_path(value):
@@ -931,7 +973,7 @@ def activate(root, args):
         print("\n".join(sorted(set(errors))), file=sys.stderr)
         return 1
     item.update(lifecycle="Active", lifecycleLabel="active", executionId=args.execution_id, worktreeId=args.worktree_id, claims=claims, selectedForExecution=not any(value.get("selectedForExecution") for value in candidate), nextAction=item.get("nextAction") or "continue active execution")
-    capsule_path = root / item["checkpointPath"] / "checkpoint.md"
+    capsule_path = checkpoint_path(root, item["checkpointPath"])
     capsule_lines = capsule_path.read_text(encoding="utf-8").splitlines()
     state_index = next((index for index, line in enumerate(capsule_lines) if line.strip() == "## State"), None)
     if state_index is None:
@@ -978,8 +1020,12 @@ def resume(root, args):
         errors.append("next action is required")
     if not args.expected_baseline or not SHA.fullmatch(args.expected_baseline) or (item and args.expected_baseline != item.get("baseline")):
         errors.append("baseline identity mismatch")
-    if item and (not item.get("checkpointId") or not item.get("checkpointPath") or not (root / item["checkpointPath"] / "checkpoint.md").is_file()):
-        errors.append("checkpoint is missing")
+    if item:
+        try:
+            if not item.get("checkpointId") or not item.get("checkpointPath") or not checkpoint_path(root, item["checkpointPath"]).is_file():
+                errors.append("checkpoint is missing")
+        except ValueError as error:
+            errors.append(f"invalid checkpoint path: {error}")
     if item and any(next((dependency for dependency in candidate if dependency.get("id") == dep), {}).get("lifecycle") != "Closed"
                     for dep in item.get("dependencies", [])):
         errors.append("dependency not closed")
@@ -1024,7 +1070,7 @@ def resume(root, args):
                 worktreeId=args.worktree_id, selectedForExecution=True, claims=claims,
                 nextAction=args.next_action, statusReason=args.reason,
                 resume={"reason": args.reason, "startHead": actual_head})
-    capsule_path = root / item["checkpointPath"] / "checkpoint.md"
+    capsule_path = checkpoint_path(root, item["checkpointPath"])
     lines = capsule_path.read_text(encoding="utf-8").splitlines()
     state_index = next((i for i, line in enumerate(lines) if line.strip() == "## State"), None)
     value_index = next((i for i in range((state_index or 0) + 1, len(lines)) if lines[i].strip()), None) if state_index is not None else None
@@ -1052,6 +1098,11 @@ def handoff(root, args):
     errors = []
     if not current or current.get("executionId") != args.execution_id or current.get("lifecycle") not in {"Active", "ResolvingFindings"}:
         errors.append("execution identity mismatch")
+    if current:
+        try:
+            checkpoint_path(root, current.get("checkpointPath"))
+        except ValueError as error:
+            errors.append(f"invalid checkpoint path: {error}")
     if not args.pr or (current and current.get("pr") and current.get("pr") != args.pr):
         errors.append("PR identity mismatch")
     if not SHA.fullmatch(args.head or ""):
@@ -1085,16 +1136,27 @@ def handoff(root, args):
         if not isinstance(prior_review, dict) or observation is None or observation["headRefOid"] == prior_review.get("requestHead"):
             errors.append("PR head did not advance")
         allow_peer_change = getattr(args, "allow_peer_change", False)
-        if not allow_peer_change and (not isinstance(prior_review, dict) or args.peer.casefold() != prior_review.get("peer", "").casefold()):
-            errors.append("review peer changed without explicit authorization")
+        peer_changed = not isinstance(prior_review, dict) or args.peer.casefold() != prior_review.get("peer", "").casefold()
+        change_fields = ("peer_change_reason", "peer_change_evidence", "replacement_eligibility")
+        change_values = {name: getattr(args, name, None) for name in change_fields}
+        if peer_changed:
+            if not allow_peer_change:
+                errors.append("review peer changed without explicit authorization")
+            if any(not isinstance(value, str) or not value.strip() for value in change_values.values()):
+                errors.append("peer change metadata is incomplete")
+        elif any(value is not None for value in change_values.values()):
+            errors.append("peer change metadata is unauthorized")
     if errors:
         print("\n".join(sorted(set(errors))), file=sys.stderr)
         return 1
     candidate = copy.deepcopy(items)
     item = next(value for value in candidate if value["id"] == current["id"])
     findings = sorted(set(args.finding or []))
-    item.update(lifecycle="ReviewRequired", lifecycleLabel="review-required", pr=args.pr, reviewEpoch=args.epoch, reviewPeer=args.peer, reviewFindings=findings, nextAction=next_action, review={"executionId": args.execution_id, "pr": args.pr, "requestHead": args.head, "author": author, "peer": args.peer, "epoch": args.epoch, "findings": findings})
-    capsule_path = root / item["checkpointPath"] / "checkpoint.md"
+    review_value = {"executionId": args.execution_id, "pr": args.pr, "requestHead": args.head, "author": author, "peer": args.peer, "epoch": args.epoch, "findings": findings}
+    if prior_review and args.peer.casefold() != prior_review.get("peer", "").casefold():
+        review_value.update(peerChangeReason=args.peer_change_reason, peerChangeEvidence=args.peer_change_evidence, replacementEligibility=args.replacement_eligibility)
+    item.update(lifecycle="ReviewRequired", lifecycleLabel="review-required", pr=args.pr, reviewEpoch=args.epoch, reviewPeer=args.peer, reviewFindings=findings, nextAction=next_action, review=review_value)
+    capsule_path = checkpoint_path(root, item["checkpointPath"])
     lines = capsule_path.read_text(encoding="utf-8").splitlines()
     state_index = next((index for index, line in enumerate(lines) if line.strip() == "## State"), None)
     if state_index is None:
@@ -1125,6 +1187,11 @@ def closeout(root, args):
     review = current.get("review", {}) if current else {}
     if not current or current.get("executionId") != args.execution_id:
         errors.append("execution identity mismatch")
+    if current:
+        try:
+            checkpoint_path(root, current.get("checkpointPath"))
+        except ValueError as error:
+            errors.append(f"invalid checkpoint path: {error}")
     if current and current.get("lifecycle") != "ReviewRequired":
         errors.append("review handoff required")
     if not isinstance(review, dict) or review.get("executionId") != args.execution_id:
@@ -1194,7 +1261,7 @@ def closeout(root, args):
             return 1
         for value in candidate:
             value["selectedForExecution"] = value is recipient
-    capsule_path = root / item["checkpointPath"] / "checkpoint.md"
+    capsule_path = checkpoint_path(root, item["checkpointPath"])
     lines = capsule_path.read_text(encoding="utf-8").splitlines()
     state_index = next((index for index, line in enumerate(lines) if line.strip() == "## State"), None)
     if state_index is None:
@@ -1231,7 +1298,7 @@ def promote(root, args):
     candidate = copy.deepcopy(items)
     item = next(value for value in candidate if value["id"] == current["id"])
     item.update(lifecycle="Ready", lifecycleLabel="ready"); item.pop("executionId", None); item.pop("worktreeId", None); item.pop("claims", None)
-    capsule_path = root / item["checkpointPath"] / "checkpoint.md"
+    capsule_path = checkpoint_path(root, item["checkpointPath"])
     lines = capsule_path.read_text(encoding="utf-8").splitlines()
     state_index = next((index for index, line in enumerate(lines) if line.strip() == "## State"), None)
     if state_index is None:
@@ -1398,11 +1465,16 @@ def read_remote(repository):
 
 
 def github_projection(args, root):
+    items = load(root)
+    errors = validate_items(items, root)
+    if errors:
+        print("\n".join(errors), file=sys.stderr)
+        return 1
     remote = read_remote(args.repository)
     if remote is None:
         return 1
     lifecycle_labels = set(LABELS.values()); label_commands = []; edit_commands = []; comment_commands = []
-    for item in load(root):
+    for item in items:
         if "number" not in item:
             continue
         observed = remote.get(item["number"])
@@ -1437,7 +1509,7 @@ def github_projection(args, root):
                 comment_commands.append(["gh", "issue", "comment", str(item["number"]), "--repo", args.repository, "--body", marker + f"\nSeqDoc packet: {phase} {item['id']}"])
     if args.command == "check-github":
         drift = []
-        for item in load(root):
+        for item in items:
             if "number" in item:
                 observed = remote[item["number"]]; expected = LABELS.get(item["lifecycle"]); labels = {label.get("name") for label in observed.get("labels", []) if isinstance(label, dict)} & lifecycle_labels
                 if observed.get("state") != item.get("expectedGithubState") or labels != ({expected} if expected else set()):
@@ -1506,7 +1578,11 @@ def transition(root, args):
         item["selectedForExecution"] = False
     overrides = {}
     if item.get("checkpointPath"):
-        path = root / item["checkpointPath"] / "checkpoint.md"
+        try:
+            path = checkpoint_path(root, item["checkpointPath"])
+        except ValueError as error:
+            print(f"invalid checkpoint path: {error}", file=sys.stderr)
+            return 1
         if path.exists():
             lines = path.read_text(encoding="utf-8").splitlines(); state_index = next((i for i, line in enumerate(lines) if line.strip() == "## State"), None)
             if state_index is not None:
@@ -1536,7 +1612,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["validate", "project-execution", "check-github", "sync-github", "project", "transition", "prepare", "activate", "resume", "handoff", "closeout", "promote", "recover"])
     parser.add_argument("--root", type=Path, default=Path(".")); parser.add_argument("--check", action="store_true"); parser.add_argument("--dry-run", action="store_true"); parser.add_argument("--repository", default="Bilaltariq41/SeqDoc")
-    for option in ("id", "state", "reason", "start-head", "select-id", "checkpoint-id", "checkpoint-path", "next-action", "pr", "branch", "baseline", "contract-revision", "execution-id", "expected-baseline", "current-head", "current-branch", "worktree-id", "observed-head", "observed-author", "peer", "epoch", "findings", "focused-receipt", "final-receipt", "attribution", "merge-sha", "head"):
+    for option in ("id", "state", "reason", "start-head", "select-id", "checkpoint-id", "checkpoint-path", "next-action", "pr", "branch", "baseline", "contract-revision", "execution-id", "expected-baseline", "current-head", "current-branch", "worktree-id", "observed-head", "observed-author", "peer", "epoch", "findings", "focused-receipt", "final-receipt", "attribution", "merge-sha", "head", "peer-change-reason", "peer-change-evidence", "replacement-eligibility"):
         parser.add_argument("--" + option)
     parser.add_argument("--allow-peer-change", action="store_true")
     parser.add_argument("--select", action="store_true"); parser.add_argument("--clean", action="store_true"); parser.add_argument("--dirty", action="store_true"); parser.add_argument("--scaffold", action="store_true")

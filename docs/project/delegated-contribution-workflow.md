@@ -6,8 +6,9 @@ checkpoint prose are projections. Preserve the submitted branch, record its base
 classify each area as accepted, repairable, or rejected. Follow [collaboration-model.md](collaboration-model.md) for
 review, receipts, continuation, and T4 decisions. Record findings with file/line evidence, risk, expected behavior, and
 one focused verification command. Findings continue on the same PR; the worker repairs, replans, pairs, and absorbs
-necessary acceptance work until the latest head is ready. Block only for an external dependency, conflicting active
-work, or T4 action.
+necessary acceptance work until the latest head is ready. Block only as permitted by
+[collaboration-model.md](collaboration-model.md), including `reviewer unavailable`; the owner is not an automatic
+fallback.
 
 Use the transactional `handoff` packet for the review boundary. It authenticates the observed PR head and author,
 rejects the contributor as peer, and records the review epoch atomically. `closeout` consumes the focused/final receipts,

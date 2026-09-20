@@ -36,7 +36,11 @@ Assignment freezes the contract revision, baseline, dependencies, allowlist, neg
 plan. The worker may amend the existing issue/checkpoint and paths with anything reasonably needed for its outcome,
 including production, tests, fixtures, docs, config, scripts, blocking defects, refactors, and contract adjustments.
 Record the reason and affected risks, run self-review and the Reviewer agent, and continue. Human preapproval is needed
-only for a genuinely separate capability/outcome, a conflicting lease/active worker, or T4 owner administration.
+only for a genuinely separate capability/outcome, a conflicting lease/active worker, or T4 owner administration;
+`reviewer unavailable` is a permitted staffing blocker, not an owner fallback.
+At claim/readiness, reserve an eligible untouched non-author human reviewer and record replacements as required by the
+[reviewer reservation policy](collaboration-model.md). If no eligible reviewer exists, report `reviewer unavailable`;
+the owner is not a fallback.
 
 ## Complete delivery and review
 
@@ -48,7 +52,8 @@ boundaries, and deterministic ordering remain explicit.
 Use the review and continuation rules in [collaboration-model.md](collaboration-model.md). DGP1 and grandfathered
 I13/P17-R1/QHTTP-B retain their frozen one-review rules. New work gets one latest-head non-author human peer approval;
 agent readiness and self-review are not additional human approvals. Continue repairing on the same issue/PR; block only
-for an external dependency, conflicting active work, or T4 action.
+for an external dependency, conflicting active work, T4 action, or `reviewer unavailable`. The owner is not an automatic
+fallback.
 
 ## Status transitions and acceptance boundary
 

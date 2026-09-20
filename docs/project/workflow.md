@@ -34,12 +34,13 @@ paths, non-goals, risks, existing coverage, a soft test budget, one focused impl
 
 The Orchestrator drafts the capsule and delegates implementation; it does not edit product source, tests, build, or
 OpenCode configuration. Follow [collaboration-model.md](collaboration-model.md) for review and continuation rules.
+At claim/readiness, reserve the untouched non-author human reviewer required by that policy before implementation begins.
 DGP1, I13, P17-R1, and QHTTP-B use one independent complete-candidate review under frozen rules. New work uses worker
 readiness/self-review, focused tests, the worker's Reviewer agent after repairs, and one latest-head independent
 non-author human peer approval. Record every finding as `Fixed`, `Rejected` with evidence, or `Deferred` with a
 disposition accepted by the final non-author peer; owner approval is required only for T4. Run the final gate only after
-findings are resolved; continue on the same issue/PR unless a separate
-outcome, conflict, or T4 action requires a decision.
+findings are resolved; continue on the same issue/PR unless a separate outcome, conflict, T4 action, or
+`reviewer unavailable` requires a decision. The owner is not an automatic fallback for reviewer unavailability.
 
 Accepted pushes to `main` run validation first and then automatically synchronize only GitHub lifecycle labels. The
 explicit `sync-github --dry-run` and manual synchronization commands remain maintainer tools. CI never rewrites pull

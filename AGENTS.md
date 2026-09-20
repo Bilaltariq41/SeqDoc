@@ -113,8 +113,11 @@ documentation to SeqDoc. See `docs/usage.md` for setup.
 - Open a draft PR early for substantial work, but request review only after tests and self-review pass.
 - Fix every finding on the same PR branch, record the repair trace, run the Reviewer agent again, rerun focused tests,
   and request one latest-head non-author human peer approval.
+- Reserve that untouched non-author human at claim/readiness and follow the candidate-contributor and replacement rules
+  in [`collaboration-model.md`](docs/project/collaboration-model.md); review-only feedback does not make a contributor.
 - Continue repairing and replanning on the same issue/PR; block only for a real external dependency, conflicting active
-  work/path lease, or T4 action. Preserve attribution and evidence.
+  work/path lease, T4 action, or `reviewer unavailable`. Preserve attribution and evidence; the owner is not an automatic
+  fallback.
 - Update the existing issue/checkpoint and affected paths when the outcome requires it; do not force roadmap/status
   churn or rewrite them merely to claim completion.
 
@@ -124,6 +127,6 @@ documentation to SeqDoc. See `docs/usage.md` for setup.
 2. Prefer another independent Ready issue.
 3. Do not create child issues or stack a new implementation issue merely to route a discovery; return it to the parent
    backlog. Continue repairing the same issue/PR unless it becomes a separate outcome, conflicts with active work/path
-   leases, or needs T4 owner administration.
+   leases, needs T4 owner administration, or encounters `reviewer unavailable`; the owner is not an automatic fallback.
 
 The repository is licensed under MPL-2.0. By contributing, you agree to the terms in `docs/contributing.md`.

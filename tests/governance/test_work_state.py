@@ -81,6 +81,8 @@ class WorkStateTests(unittest.TestCase):
         with patch("subprocess.run", return_value=type("R",(),{"stdout":payload})()) as run: self.assertEqual(ws.gh(type("A",(),{"command":"check-github","repository":"x"})(),self.d),0); run.assert_called_once()
         for state in ("Draft", "Cancelled"):
             x=self.find("GH-12"); x["lifecycle"]=state; x["lifecycleLabel"]=None; self.write()
+            capsule = self.d / "docs/work/persistence/I12/checkpoint.md"
+            lines = capsule.read_text().splitlines(keepends=True); lines[4] = f"`{ws.CAPSULE_STATES[state]}`\n"; capsule.write_text("".join(lines))
             remote=[]
             for y in self.items:
                 if "number" in y:
@@ -651,6 +653,199 @@ class WorkStateTests(unittest.TestCase):
             code, output = self.operation(link_root, "recover", execution_id="safe")
             self.assertNotEqual(code, 0, output); self.assertEqual(outside_file.read_text(encoding="utf-8"), "outside")
 
+    def test_persisted_checkpoint_paths_cannot_escape_or_follow_reparse_parents(self):
+        outside = Path(tempfile.mkdtemp(dir=self.d))
+        sentinel = outside / "checkpoint.md"
+        sentinel.write_bytes(b"outside checkpoint bytes")
+        root = self.synthetic()
+        record_path = root / "docs/project/work-items/A.json"
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        record["checkpointPath"] = "../" + outside.name
+        record_path.write_text(ws.dump(record), encoding="utf-8")
+        before = {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+        self.assertNotEqual(ws.validate(root), 0)
+        self.assertEqual(before, {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()})
+        self.assertEqual(sentinel.read_bytes(), b"outside checkpoint bytes")
+        action = type("A", (), {"id":"A", "state":"Active", "reason":"path boundary", "select":True,
+                                 "select_id":None, "check":False, "dry_run":False, "checkpoint_path":"../" + outside.name,
+                                 "checkpoint_id":"A", "next_action":"path boundary", "pr":None, "branch":None,
+                                 "baseline":None, "contract_revision":None})()
+        self.assertNotEqual(ws.transition(root, action), 0)
+        self.assertEqual(before, {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()})
+        self.assertEqual(sentinel.read_bytes(), b"outside checkpoint bytes")
+
+        close_root = self.synthetic()
+        self.assertEqual(self.activate(close_root, claim="src/a")[0], 0)
+        pr = type("R", (), {"stdout": json.dumps({"number":1, "url":"https://github.com/o/r/pull/1",
+            "state":"OPEN", "isDraft":False, "author":{"login":"author", "id":"U_kgDODXRwzA", "is_bot":False},
+            "headRefOid":"c" * 40, "mergeCommit":None, "reviewDecision":None})})()
+        with patch("subprocess.run", return_value=pr):
+            self.assertEqual(self.operation(close_root, "handoff", id="A", execution_id="exec-a",
+                pr="https://github.com/o/r/pull/1", head="c" * 40, peer="reviewer", epoch="1",
+                finding=["Fixed: boundary"])[0], 0)
+        close_record_path = close_root / "docs/project/work-items/A.json"
+        close_record = json.loads(close_record_path.read_text(encoding="utf-8"))
+        close_record["checkpointPath"] = "../" + outside.name
+        close_record_path.write_text(ws.dump(close_record), encoding="utf-8")
+        close_before = {p.relative_to(close_root).as_posix(): p.read_bytes() for p in close_root.rglob("*") if p.is_file()}
+        with patch("subprocess.run") as github:
+            code, _ = self.operation(close_root, "closeout", id="A", execution_id="exec-a",
+                findings="resolved", focused_receipt="focused", final_receipt="final", attribution="author",
+                pr="https://github.com/o/r/pull/1", head="c" * 40, peer="reviewer", merge_sha="d" * 40)
+        self.assertNotEqual(code, 0)
+        github.assert_not_called()
+        self.assertEqual(close_before, {p.relative_to(close_root).as_posix(): p.read_bytes() for p in close_root.rglob("*") if p.is_file()})
+        self.assertEqual(sentinel.read_bytes(), b"outside checkpoint bytes")
+
+        link_root = self.synthetic()
+        link_outside = Path(tempfile.mkdtemp(dir=self.d.parent))
+        link_sentinel = link_outside / "checkpoint.md"
+        link_sentinel.write_bytes(b"reparse sentinel")
+        try:
+            (link_root / "docs/work/checkpoints/alias").symlink_to(link_outside, target_is_directory=True)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest("symlink/reparse capability unavailable: " + str(error))
+        linked_path = link_root / "docs/project/work-items/A.json"
+        linked = json.loads(linked_path.read_text(encoding="utf-8"))
+        linked["checkpointPath"] = "docs/work/checkpoints/alias"
+        linked_path.write_text(ws.dump(linked), encoding="utf-8")
+        linked_before = {p.relative_to(link_root).as_posix(): p.read_bytes() for p in link_root.rglob("*") if p.is_file()}
+        self.assertNotEqual(ws.validate(link_root), 0)
+        self.assertEqual(linked_before, {p.relative_to(link_root).as_posix(): p.read_bytes() for p in link_root.rglob("*") if p.is_file()})
+        self.assertEqual(link_sentinel.read_bytes(), b"reparse sentinel")
+
+    def test_file_attribute_reparse_components_block_claims_and_recovery_before_mutation(self):
+        root = self.synthetic(second=True)
+        component = root / "reparse-component"
+        component.mkdir()
+        target = component / "target.txt"
+        target.write_bytes(b"must remain")
+        real_stat = Path.stat
+
+        class ReparseStat:
+            st_file_attributes = 0x400
+
+            def __init__(self, path):
+                self.path = path
+
+            def __getattr__(self, name):
+                return getattr(real_stat(self.path), name)
+
+        def mocked_stat(path, *args, **kwargs):
+            if path == component:
+                return ReparseStat(path)
+            return real_stat(path, *args, **kwargs)
+
+        failures = []
+        before_claim = {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+        with patch.object(Path, "stat", new=mocked_stat):
+            admitted, output = self.activate(root, execution_id="reparse-claim", claim="reparse-component/file.txt")
+        if admitted == 0:
+            failures.append("claim was admitted: " + output)
+        if "reparse" not in output.lower():
+            failures.append("claim rejection omitted reparse diagnostic: " + output)
+        if before_claim != {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}:
+            failures.append("claim admission mutated the registry")
+
+        journal = root / "docs/project/work-state.journal.json"
+        journal.write_text(json.dumps({"executionId": "safe", "entries": [{
+            "path": "reparse-component/target.txt", "original": "must remain"
+        }]}), encoding="utf-8")
+        journal_before = journal.read_bytes()
+        target_before = target.read_bytes()
+        with patch.object(Path, "stat", new=mocked_stat):
+            recovered, output = self.operation(root, "recover", execution_id="safe")
+        if recovered == 0:
+            failures.append("recovery followed a reparse component: " + output)
+        if "reparse" not in output.lower():
+            failures.append("recovery rejection omitted reparse diagnostic: " + output)
+        if not journal.exists() or journal.read_bytes() != journal_before or target.read_bytes() != target_before:
+            failures.append("recovery mutated confined state")
+        self.assertFalse(failures, "\n".join(failures))
+
+    def test_invalid_registry_is_rejected_before_github_remote_observation(self):
+        root = self.synthetic()
+        item_path = root / "docs/project/work-items/A.json"
+        item = json.loads(item_path.read_text(encoding="utf-8"))
+        item["owner"] = None
+        item_path.write_text(ws.dump(item), encoding="utf-8")
+        with patch.object(ws, "read_remote", return_value={}) as remote, patch("subprocess.run") as run:
+            code, output = self.operation(root, "sync-github", dry_run=True)
+        self.assertNotEqual(code, 0, output)
+        remote.assert_not_called()
+        run.assert_not_called()
+
+    def test_project_execution_write_fault_preserves_projection_or_journal_evidence(self):
+        root = self.synthetic()
+        self.assertEqual(self.activate(root, claim="src/a")[0], 0)
+        projection = root / "docs/project/execution.json"
+        old = projection.read_bytes()
+        item_path = root / "docs/project/work-items/A.json"
+        item = json.loads(item_path.read_text(encoding="utf-8"))
+        item["nextAction"] = "changed projection"
+        item_path.write_text(ws.dump(item), encoding="utf-8")
+        expected = ws.execution_payload(ws.load(root))
+        real_replace = __import__("os").replace
+        def interrupted_replace(source, target):
+            if Path(target) == projection:
+                raise OSError("simulated projection replacement failure")
+            return real_replace(source, target)
+
+        with patch("os.replace", side_effect=interrupted_replace):
+            self.assertNotEqual(ws.execution(root, False), 0)
+        self.assertTrue(projection.read_bytes() == old or ws.runtime_journal(root).exists(),
+                        "a failed projection write must preserve the old bytes or leave journal evidence")
+        if ws.runtime_journal(root).exists():
+            self.assertGreater(ws.runtime_journal(root).stat().st_size, 0)
+
+    def test_deferred_finding_requires_final_peer_disposition_not_owner_approval(self):
+        for finding, expected in (("Deferred: final non-author peer accepted disposition: bounded follow-up", 0),
+                                  ("Deferred: pending owner decision", 1)):
+            root = self.synthetic()
+            self.assertEqual(self.activate(root, claim="src/a")[0], 0)
+            response = type("R", (), {"stdout": json.dumps({"number":1, "url":"https://github.com/o/r/pull/1",
+                "state":"OPEN", "isDraft":False, "author":{"login":"author", "id":"U_kgDODXRwzA", "is_bot":False},
+                "headRefOid":"c" * 40, "mergeCommit":None, "reviewDecision":None})})()
+            before = {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+            with patch("subprocess.run", return_value=response):
+                code, output = self.operation(root, "handoff", id="A", execution_id="exec-a",
+                    pr="https://github.com/o/r/pull/1", head="c" * 40, peer="reviewer", epoch="1", finding=[finding])
+            self.assertEqual(code, expected, output)
+            if expected:
+                self.assertEqual(before, {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()})
+
+    def test_peer_change_requires_durable_availability_and_replacement_eligibility_evidence(self):
+        root = self.synthetic()
+        self.assertEqual(self.activate(root, claim="src/a")[0], 0)
+        def pr(head):
+            return type("R", (), {"stdout": json.dumps({"number":1, "url":"https://github.com/o/r/pull/1",
+                "state":"OPEN", "isDraft":False, "author":{"login":"author", "id":"U_kgDODXRwzA", "is_bot":False},
+                "headRefOid":head, "mergeCommit":None, "reviewDecision":None})})()
+        with patch("subprocess.run", return_value=pr("c" * 40)):
+            self.assertEqual(self.operation(root, "handoff", id="A", execution_id="exec-a", pr="https://github.com/o/r/pull/1",
+                head="c" * 40, peer="reserved", epoch="1", finding=["Fixed: check"])[0], 0)
+        self.assertEqual(ws.transition(root, type("A", (), {"id":"A", "state":"ResolvingFindings", "reason":"repair",
+            "select":False, "select_id":None, "check":False, "dry_run":False})()), 0)
+        common = dict(id="A", execution_id="exec-a", pr="https://github.com/o/r/pull/1", head="d" * 40,
+                      observed_head="spoofed", observed_author="spoofed", peer="replacement", epoch="2",
+                      finding=["Deferred: final non-author peer accepted disposition: bounded follow-up"], allow_peer_change=True,
+                      next_action=None)
+        with patch("subprocess.run", return_value=pr("d" * 40)):
+            rejected, _ = self.operation(root, "handoff", **common)
+        self.assertNotEqual(rejected, 0)
+        args = type("Args", (), dict(repository="o/r", **common,
+            peer_change_reason="reserved reviewer factually unavailable",
+            peer_change_evidence="recorded availability notice: reviewer unavailable",
+            replacement_eligibility="replacement is untouched non-author human"))()
+        with patch("subprocess.run", return_value=pr("d" * 40)):
+            accepted = ws.handoff(root, args)
+        self.assertEqual(accepted, 0)
+        stored = json.loads((root / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
+        self.assertEqual(stored["review"]["peer"], "replacement")
+        self.assertEqual(stored["review"].get("peerChangeReason"), "reserved reviewer factually unavailable")
+        self.assertTrue(stored["review"].get("peerChangeEvidence"))
+        self.assertTrue(stored["review"].get("replacementEligibility"))
+
     def test_packets_and_projection_are_order_and_checkout_independent(self):
         left, right = self.synthetic(), self.synthetic()
         self.assertEqual(ws.validate(left), 0)
@@ -737,7 +932,7 @@ class WorkStateTests(unittest.TestCase):
         resolving = type("A",(),{"id":"A","state":"ResolvingFindings","reason":"repair in progress",
                                   "select":False,"dry_run":False,"check":False})()
         self.assertEqual(ws.transition(root, resolving), 0)
-        repaired_findings = ["Fixed: final verification", "Deferred: owner approval: bounded follow-up"]
+        repaired_findings = ["Fixed: final verification", "Deferred: final non-author peer accepted disposition: bounded follow-up"]
         repaired_view = pr_view(headRefOid="d" * 40)
         for epoch, authenticated_head in (("1", "d" * 40), ("2", "c" * 40)):
             with patch("subprocess.run", return_value=repaired_view):
@@ -873,12 +1068,17 @@ class WorkStateTests(unittest.TestCase):
         self.assertIn("DRY-RUN", output)
         item["lifecycle"], item["lifecycleLabel"] = "Active", "active"
         item_path.write_text(ws.dump(item), encoding="utf-8")
+        capsule = root / "docs/work/checkpoints/A/checkpoint.md"
+        capsule.write_text(capsule.read_text(encoding="utf-8").replace("`NotStarted`", "`Building`"), encoding="utf-8")
+        capsule = root / "docs/work/checkpoints/A/checkpoint.md"
+        capsule.write_text(capsule.read_text(encoding="utf-8").replace("`NotStarted`", "`Building`"), encoding="utf-8")
         with patch("subprocess.run", return_value=type("R", (), {"stdout": json.dumps([{"number": 57, "state": "OPEN", "labels": [{"name": "ready"}]}])})()):
             code, output = self.operation(root, "sync-github", dry_run=True)
         self.assertEqual(code, 0, output)
         self.assertIn("--remove-label ready --add-label active", output)
         item["lifecycle"], item["lifecycleLabel"], item["expectedGithubState"] = "Closed", None, "CLOSED"
         item_path.write_text(ws.dump(item), encoding="utf-8")
+        capsule.write_text(capsule.read_text(encoding="utf-8").replace("`Building`", "`Closed`"), encoding="utf-8")
         with patch("subprocess.run", return_value=type("R", (), {"stdout": json.dumps([{"number": 57, "state": "CLOSED", "labels": [{"name": "active"}]}])})()):
             code, output = self.operation(root, "sync-github", dry_run=True)
         self.assertEqual(code, 0, output)
@@ -976,9 +1176,9 @@ class WorkStateTests(unittest.TestCase):
             if expected_code != 0: self.assertEqual(before, {q.relative_to(candidate).as_posix(): q.read_bytes() for q in candidate.rglob("*") if q.is_file()}); self.assertEqual(calls, [])
         stored_findings_case("Fixed: independently verified", "none", 1)
         stored_findings_case("Rejected: evidence retained", "none", 1)
-        stored_findings_case("Deferred: owner approval: ledger entry", "none", 1)
+        stored_findings_case("Deferred: final non-author peer accepted disposition: ledger entry", "none", 1)
         stored_findings_case("Rejected: evidence retained", "resolved", 0)
-        stored_findings_case("Deferred: owner approval: ledger entry", "resolved", 0)
+        stored_findings_case("Deferred: final non-author peer accepted disposition: ledger entry", "resolved", 0)
         for bad in (dict(findings="open"), dict(pr="https://github.com/o/r/pull/109"), dict(head=h1), dict(merge_sha="a"*40), dict(attribution="other")):
             before={q.relative_to(root).as_posix():q.read_bytes() for q in root.rglob("*") if q.is_file()}
             with patch("subprocess.run", side_effect=run): self.assertNotEqual(self.operation(root, "closeout", **dict(base, **bad))[0], 0)
@@ -1031,6 +1231,8 @@ class WorkStateTests(unittest.TestCase):
         self.assertIn("CLOSED", output)
         item["lifecycle"], item["lifecycleLabel"] = "Active", "active"
         item_path.write_text(ws.dump(item), encoding="utf-8")
+        capsule = root / "docs/work/checkpoints/A/checkpoint.md"
+        capsule.write_text(capsule.read_text(encoding="utf-8").replace("`NotStarted`", "`Building`"), encoding="utf-8")
         marker_remote = json.dumps([{"number": 1, "state": "OPEN", "labels": [{"name": "ready"}, {"name": "keep"}],
                                      "comments": [{"body": "seqdoc-state-v1:A:Closed\nitem=A state=Closed checkpoint=old next=closed"}]}])
         with patch("subprocess.run", return_value=type("R", (), {"stdout": marker_remote})()) as run:

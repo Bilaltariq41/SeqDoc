@@ -74,6 +74,10 @@ Reviewer receipt and first observable:
 
 One latest-head non-author human peer approval (agent self-review is not approval):
 
+Reserved reviewer at claim/readiness and eligibility replacement record:
+
+T4 owner receipt URL/commit, or `Not applicable` (private-session claims are invalid):
+
 Final gate and result:
 
 ```text

@@ -90,7 +90,7 @@
   ],
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Obtain Qhatahet formal latest-head approval before the final gate.",
+  "nextAction": "Qhatahet independently verified the technical fixes at 0f9fdb8 but withheld formal approval over the now-reconciled #13 and false owner-direction records; owner closeout audit/bypass decision is pending. Do not claim gate, merge, or approval.",
   "schemaVersion": 2,
   "sourceId": "GH-57"
 }

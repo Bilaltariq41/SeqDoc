@@ -85,7 +85,7 @@
   "kind": "github-issue",
   "lifecycle": "ReviewRequired",
   "lifecycleLabel": "review-required",
-  "nextAction": "Obtain Qhatahet formal latest-head approval before the final gate.",
+  "nextAction": "Qhatahet independently verified the technical fixes at 0f9fdb8 but withheld formal approval over the now-reconciled #13 and false owner-direction records; owner closeout audit/bypass decision is pending. Do not claim gate, merge, or approval.",
   "number": 57,
   "owner": "ahmad",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
@@ -98,7 +98,7 @@
     "epoch": "5",
     "executionId": "GH-57:G57-TPO",
     "findings": [
-      "Fixed: Qhatahet unresolved-journal blocker, closeout-attestation boundary, reviewer-direction evidence, and superseded-policy wording are dispositioned"
+      "Fixed: Qhatahet independently verified the technical fixes at 0f9fdb8 but withheld formal approval over the now-reconciled #13 and false owner-direction records; owner closeout audit/bypass decision is pending"
     ],
     "peer": "Qhatahet",
     "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
@@ -106,13 +106,13 @@
   },
   "reviewEpoch": "5",
   "reviewFindings": [
-    "Fixed: Qhatahet unresolved-journal blocker, closeout-attestation boundary, reviewer-direction evidence, and superseded-policy wording are dispositioned"
+    "Fixed: Qhatahet independently verified the technical fixes at 0f9fdb8 but withheld formal approval over the now-reconciled #13 and false owner-direction records; owner closeout audit/bypass decision is pending"
   ],
   "reviewPeer": "Qhatahet",
   "schemaVersion": 1,
   "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
-  "statusReason": "Qhatahet found that a new mutation can overwrite an unresolved prepared or interrupted recovery journal.",
+  "statusReason": "Qhatahet independently verified the technical fixes at 0f9fdb8 but withheld formal approval over the now-reconciled #13 and false owner-direction records; owner closeout audit/bypass decision is pending. Do not claim gate, merge, or approval.",
   "title": "[Governance] Transactional project operations and repository-native handoff",
   "track": "governance",
   "worktreeId": "feature-issue-57-transactional-ops"

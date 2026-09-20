@@ -10,6 +10,9 @@
 - Contract revision: current Issue #57 body at claim receipt
   https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5711611308
 - Baseline: `ab6e3e1cf16213ee5346506b16949fa32c4ddfa4`
+- The owner-published canonical `main`/Issue #57 contract at `ab6e3e1` and later records GH-57 as `Ready`/active
+  execution with an empty dependency list. It supersedes the older sequencing-only GH-13 comments for GH-57; GH-13 is
+  unchanged.
 - Branch: `feature/issue-57-transactional-project-operations`
 - Owner: `ahmad`
 
@@ -108,7 +111,7 @@ python -B tools/governance/work_state.py validate --root .; if ($LASTEXITCODE -n
 ## Review boundary
 
 The implementer runs the focused command, inspects the complete diff, and runs one complete-candidate Reviewer pass.
-Every finding must be fixed, rejected with evidence, or deferred with explicit approval. A latest-head non-author human
+Every finding must be fixed, rejected with evidence, or have a final non-author peer accepted disposition. A latest-head non-author human
 peer then reviews the same SHA. The Gate Runner runs the final gate once after all findings are resolved.
 
 ## Acceptance proof
@@ -177,22 +180,52 @@ capability skip**. F32 corrects evidence wording only.
 
 ## Process-evidence disposition
 
-**Fixed — process evidence:** owner-directed reviewer availability was reassigned in public PR comment
+**Fixed — process evidence:** worker coordination changed reviewer availability, recorded in public PR comment
 https://github.com/Bilaltariq41/SeqDoc/pull/110#issuecomment-5751178429, with commit attribution `f6a6694`
 (Qhatahet → Abood-essa) and `2f76354` (Abood-essa → Qhatahet). These are availability reassignments, not takeover
-authorization or approval. The current runtime/schema contains `resume` only and no `takeover`, as established by
-`cd6a7b0` and `f8919e2`; there is no fixed repair stop. Qais formal approval and the final gate are not claimed and
-remain pending.
+authorization or approval; no authenticated public owner direction established them. Qhatahet is the current reserved
+reviewer. The current runtime/schema contains `resume` only and no `takeover`, as established by `cd6a7b0` and `f8919e2`;
+there is no fixed repair stop. Qhatahet independently verified the technical fixes at `0f9fdb8` but withheld formal
+approval over the now-reconciled #13 and false owner-direction records; owner closeout audit/bypass decision is pending.
+Do not claim gate, merge, or approval.
 
 ## Closeout-attestation boundary
 
 **Fixed by documented and tightened boundary:** `--findings none` succeeds only for genuinely empty stored review
 findings. Automatic closeout without a findings argument remains limited to all-`Fixed:` stored findings. Stored
 `Rejected:` or `Deferred:` findings require explicit `--findings resolved`, which is an operator attestation that
-rejection evidence and explicit owner-approved deferral are already durable in the ledger; the command does not
+rejection evidence and the current peer verification record are already durable in the ledger; the command does not
 authenticate those external records. The targeted positive/negative closeout coverage is tied to Qais's comment
 https://github.com/Bilaltariq41/SeqDoc/pull/110#issuecomment-5750269759. The operator attestation is an accepted
-documented boundary, not an unresolved concern. Only Qais formal approval and the final gate remain pending.
+documented boundary, not an unresolved concern. Qhatahet's formal approval remains withheld; owner closeout audit/bypass
+decision is pending. Do not claim gate, merge, or approval.
 
 Latest closeout verification receipt: the named closeout test ran **1 passed**; the full command reported `Ran 29 tests`
 and `OK (skipped=1)`, meaning **28 passed and 1 explicit capability skip**.
+
+## Independent findings G57-TPO-F1..F4
+
+- F1: **Fixed** — one canonical checkpoint-path helper rejects absolute, traversal, dot/empty aliases, and existing
+  symlink/junction/reparse components before capsule reads, payload construction, or GitHub observation.
+- F2: **Fixed** — write-mode execution projection now uses journaled `atomic_write` under the repository lock; check mode
+  remains read-only. The focused fault test injects replacement failure at `os.replace` and verifies rollback/evidence.
+- F3: **Fixed** — `Deferred:` requires `final non-author peer accepted disposition: <evidence>`; owner-approval wording is
+  rejected by the ordinary parser.
+- F4: **Fixed** — peer changes require and persist reason, evidence, and replacement-eligibility metadata; partial,
+  unauthorized, or bare `--allow-peer-change` requests fail, while unchanged-peer review shape remains unchanged.
+
+Focused repair verification: `python -B -m unittest tests.governance.test_work_state` — **33/33 passed**. No human
+approval, final gate, merge, or GitHub mutation is claimed.
+
+## Final findings G57-TPO-F5/F6
+
+- F5: **Fixed** — one lstat-first reparse helper now centralizes FILE_ATTRIBUTE_REPARSE_POINT detection for claims,
+  persisted checkpoint paths, journal/recovery targets, and staged evidence. Alias components fail closed before reads,
+  writes, or recovery; the platform-independent mocked attribute regression and the actual capability partition both
+  remain covered.
+- F6: **Fixed** — GitHub projection loads the registry once, validates the complete snapshot before remote observation,
+  and derives every projection action from that validated snapshot. Invalid registries return nonzero without remote
+  observation or mutation; dry-run and idempotent behavior remain covered.
+
+Focused repair verification after F5/F6: `python -B -m unittest tests.governance.test_work_state` — **35/35 passed**.
+No human approval, final gate, merge, or GitHub mutation is claimed.

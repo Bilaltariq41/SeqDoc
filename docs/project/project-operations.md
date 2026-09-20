@@ -65,7 +65,7 @@ for compatibility. Disjoint claims may run concurrently; closeout releases only 
 authenticated current PR author, current head, non-author peer, and a review epoch; stale SHA and author-as-peer are
 rejected. Findings are sorted and must receive deterministic dispositions before closure.
 
-`handoff` invokes authenticated `gh pr view` internally and requires an open, non-draft PR, current head, observed author, and a non-author peer. The first handoff from `Active` uses epoch 1; a repair handoff from `ResolvingFindings` requires a larger integer epoch, an advanced PR head, the same peer (or explicit `--allow-peer-change`), and complete dispositions stored in sorted order. A supplied nonempty `next_action` is persisted verbatim; when omitted, the deterministic default is `Obtain one latest-head non-author peer review.` Empty values are rejected. It replaces the authenticated `requestHead` boundary and returns the capsule to `ReviewRequired`. Observed caller fields are test seams only; handoff requests review and does not claim approval.
+`handoff` invokes authenticated `gh pr view` internally and requires an open, non-draft PR, current head, observed author, and a non-author peer. The first handoff from `Active` uses epoch 1; a repair handoff from `ResolvingFindings` requires a larger integer epoch, an advanced PR head, the same peer or `--allow-peer-change` plus nonempty `--peer-change-reason`, `--peer-change-evidence`, and `--replacement-eligibility`, and complete dispositions stored in sorted order. A supplied nonempty `next_action` is persisted verbatim; when omitted, the deterministic default is `Obtain one latest-head non-author peer review.` Empty values are rejected. It replaces the authenticated `requestHead` boundary and returns the capsule to `ReviewRequired`. Observed caller fields are test seams only; handoff requests review and does not claim approval. Peer-change attestations are durable review metadata, not live collaborator enumeration.
 Before any GitHub observation, handoff and closeout validate the canonical issue source URL, item number, PR repository,
 and supplied repository binding. Issue and PR numbers remain independent.
 
@@ -111,8 +111,8 @@ The live migration completed at `f8919e2`; worker-owned resume is now the final 
 
 Closeout findings are bounded explicitly: `--findings none` is valid only when stored review findings are empty. With
 no `--findings` argument, automatic closeout is valid only when every stored finding is `Fixed:`. For stored
-`Rejected:` or `Deferred:` findings, only explicit `--findings resolved` proceeds; this is an operator attestation that
-required rejection evidence and explicit owner-approved deferral already exist in the durable ledger. The command does
+`Rejected:` or `Deferred:` findings, only explicit `--findings resolved` proceeds; `Deferred:` requires `final non-author peer accepted disposition: <evidence>` and never treats owner approval as an ordinary disposition. This is an operator attestation that
+required rejection evidence and a final non-author peer accepted disposition already exist in the durable ledger. The command does
 not authenticate those external records, and it does not broaden accepted parser values. The targeted positive and
 negative coverage is recorded against Qais's concern at
 https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5750269759.
