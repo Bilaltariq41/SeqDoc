@@ -3,39 +3,101 @@
   "branch": "feature/issue-57-transactional-project-operations",
   "checkpointId": "G57-TPO",
   "checkpointPath": "docs/work/governance/G57-TPO",
+  "claims": [
+    {
+      "kind": "exclusive",
+      "value": "execution"
+    },
+    {
+      "kind": "exclusive",
+      "value": "github-projection"
+    },
+    {
+      "kind": "exclusive",
+      "value": "registry"
+    },
+    {
+      "kind": "governance-tool",
+      "value": "tools/governance/work_state.py"
+    },
+    {
+      "kind": "path",
+      "value": ".github/workflows/work-state.yml"
+    },
+    {
+      "kind": "path",
+      "value": "agents.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/delegated-contribution-workflow.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/execution.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/issue-readiness.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/project-operations.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/work-items/gh-57.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/work-state.schema.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/workflow.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/readme.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/work/governance/g57-tpo/checkpoint.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/work/governance/g57-tpo/ledger.md"
+    },
+    {
+      "kind": "path",
+      "value": "tests/governance/test_work_state.py"
+    },
+    {
+      "kind": "path",
+      "value": "tools/governance/work_state.py"
+    }
+  ],
   "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
   "dependencies": [],
+  "executionId": "GH-57:G57-TPO",
   "expectedGithubState": "OPEN",
   "id": "GH-57",
   "kind": "github-issue",
-  "lifecycle": "Blocked",
-  "lifecycleLabel": "blocked",
-  "nextAction": "Preserve PR #110 and obtain separate authorization for one F13 regression and casefolded identity repair, focused verification, and independent rereview. Do not run the final gate.",
+  "lifecycle": "ResolvingFindings",
+  "lifecycleLabel": "resolving-findings",
+  "nextAction": "Delete legacy takeover schema allowance, verify the complete candidate, and request one latest-head non-author peer review.",
   "number": 57,
   "owner": "ahmad",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
-  "schemaVersion": 1,
-  "selectedForExecution": false,
-  "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
-  "statusReason": "F13 remains outside the F12 test-only takeover scope: casing-only variants can bypass the distinct non-author peer check.",
-  "takeover": {
-    "authorizationHead": "d3453f08067bc9dedd159a8b66bf082cbd070cac",
-    "authorizationReceipts": [
-      {
-        "authorizationDigest": "315bb6135d9e82057afe06f087ea80fdd2ba356baeb1b0e21543648374b07c12",
-        "authorizedBy": "Abood-essa",
-        "url": "https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5716001245"
-      },
-      {
-        "authorizationDigest": "57cce3bde30d37dd64f7545bb3dedca1a7c2ffebfff74b5e081bd990109f684f",
-        "authorizedBy": "Qhatahet",
-        "url": "https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5715444371"
-      }
-    ],
-    "mode": "two-peer",
-    "reason": "Abood-essa and Qhatahet authorized the F12 test-only bounded takeover through exact authenticated Issue #57 receipts.",
-    "startHead": "d3453f08067bc9dedd159a8b66bf082cbd070cac"
+  "resume": {
+    "reason": "Current collaboration policy supersedes historical repair limits and takeover authorization; continue worker-owned F13 repair.",
+    "startHead": "4ff513d4237a4be634716c59eaa2114b4bcb3e95"
   },
+  "schemaVersion": 1,
+  "selectedForExecution": true,
+  "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
+  "statusReason": "Current collaboration policy supersedes historical repair limits and takeover authorization; continue worker-owned F13 repair.",
   "title": "[Governance] Transactional project operations and repository-native handoff",
-  "track": "governance"
+  "track": "governance",
+  "worktreeId": "feature-issue-57-transactional-ops"
 }
