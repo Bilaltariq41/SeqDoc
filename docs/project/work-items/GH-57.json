@@ -1,23 +1,119 @@
 {
-  "baseline": "3c86171e13f2001824289e5cda79276ba78d6169",
-  "branch": null,
-  "checkpointId": null,
-  "checkpointPath": null,
+  "baseline": "ab6e3e1cf16213ee5346506b16949fa32c4ddfa4",
+  "branch": "feature/issue-57-transactional-project-operations",
+  "checkpointId": "G57-TPO",
+  "checkpointPath": "docs/work/governance/G57-TPO",
+  "claims": [
+    {
+      "kind": "exclusive",
+      "value": "execution"
+    },
+    {
+      "kind": "exclusive",
+      "value": "github-projection"
+    },
+    {
+      "kind": "exclusive",
+      "value": "registry"
+    },
+    {
+      "kind": "governance-tool",
+      "value": "tools/governance/work_state.py"
+    },
+    {
+      "kind": "path",
+      "value": ".github/workflows/work-state.yml"
+    },
+    {
+      "kind": "path",
+      "value": "agents.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/delegated-contribution-workflow.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/execution.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/issue-readiness.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/project-operations.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/work-items/gh-57.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/work-state.schema.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/workflow.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/readme.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/work/governance/g57-tpo/checkpoint.md"
+    },
+    {
+      "kind": "path",
+      "value": "docs/work/governance/g57-tpo/ledger.md"
+    },
+    {
+      "kind": "path",
+      "value": "tests/governance/test_work_state.py"
+    },
+    {
+      "kind": "path",
+      "value": "tools/governance/work_state.py"
+    }
+  ],
   "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
   "dependencies": [],
+  "executionId": "GH-57:G57-TPO",
   "expectedGithubState": "OPEN",
   "id": "GH-57",
   "kind": "github-issue",
-  "lifecycle": "Ready",
-  "lifecycleLabel": "ready",
-  "nextAction": "Any contributor may claim this item, create or update its checkpoint capsule, self-review readiness, and implement without a separate readiness PR.",
+  "lifecycle": "ReviewRequired",
+  "lifecycleLabel": "review-required",
+  "nextAction": "Qhatahet independently verified the technical fixes at 0f9fdb8 but withheld formal approval over the now-reconciled #13 and false owner-direction records; owner closeout audit/bypass decision is pending. Do not claim gate, merge, or approval.",
   "number": 57,
-  "owner": "unassigned",
-  "pr": null,
+  "owner": "ahmad",
+  "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
+  "resume": {
+    "reason": "Current collaboration policy supersedes historical repair limits and takeover authorization; continue worker-owned F13 repair.",
+    "startHead": "4ff513d4237a4be634716c59eaa2114b4bcb3e95"
+  },
+  "review": {
+    "author": "AhmadKrarha",
+    "epoch": "5",
+    "executionId": "GH-57:G57-TPO",
+    "findings": [
+      "Fixed: Qhatahet independently verified the technical fixes at 0f9fdb8 but withheld formal approval over the now-reconciled #13 and false owner-direction records; owner closeout audit/bypass decision is pending"
+    ],
+    "peer": "Qhatahet",
+    "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
+    "requestHead": "e9cb7b50807539f524542553b92ec74c5b081e9d"
+  },
+  "reviewEpoch": "5",
+  "reviewFindings": [
+    "Fixed: Qhatahet independently verified the technical fixes at 0f9fdb8 but withheld formal approval over the now-reconciled #13 and false owner-direction records; owner closeout audit/bypass decision is pending"
+  ],
+  "reviewPeer": "Qhatahet",
   "schemaVersion": 1,
-  "selectedForExecution": false,
+  "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
-  "statusReason": "Ready and contributor-claimable. Any contributor may record and freeze the baseline, create or update the capsule, self-review readiness, and implement without a separate readiness PR or human approval. Includes transactional project operations, repository-native handoff, and parallel execution evidence.",
+  "statusReason": "Qhatahet independently verified the technical fixes at 0f9fdb8 but withheld formal approval over the now-reconciled #13 and false owner-direction records; owner closeout audit/bypass decision is pending. Do not claim gate, merge, or approval.",
   "title": "[Governance] Transactional project operations and repository-native handoff",
-  "track": "governance"
+  "track": "governance",
+  "worktreeId": "feature-issue-57-transactional-ops"
 }

@@ -1,10 +1,96 @@
 {
-  "activeCheckpointId": null,
-  "activeCheckpointPath": null,
+  "activeCheckpointId": "G57-TPO",
+  "activeCheckpointPath": "docs/work/governance/G57-TPO",
   "activePlanPath": null,
+  "executions": [
+    {
+      "branch": "feature/issue-57-transactional-project-operations",
+      "checkpointId": "G57-TPO",
+      "checkpointPath": "docs/work/governance/G57-TPO",
+      "claims": [
+        {
+          "kind": "exclusive",
+          "value": "execution"
+        },
+        {
+          "kind": "exclusive",
+          "value": "github-projection"
+        },
+        {
+          "kind": "exclusive",
+          "value": "registry"
+        },
+        {
+          "kind": "governance-tool",
+          "value": "tools/governance/work_state.py"
+        },
+        {
+          "kind": "path",
+          "value": ".github/workflows/work-state.yml"
+        },
+        {
+          "kind": "path",
+          "value": "agents.md"
+        },
+        {
+          "kind": "path",
+          "value": "docs/project/delegated-contribution-workflow.md"
+        },
+        {
+          "kind": "path",
+          "value": "docs/project/execution.json"
+        },
+        {
+          "kind": "path",
+          "value": "docs/project/issue-readiness.md"
+        },
+        {
+          "kind": "path",
+          "value": "docs/project/project-operations.md"
+        },
+        {
+          "kind": "path",
+          "value": "docs/project/work-items/gh-57.json"
+        },
+        {
+          "kind": "path",
+          "value": "docs/project/work-state.schema.json"
+        },
+        {
+          "kind": "path",
+          "value": "docs/project/workflow.md"
+        },
+        {
+          "kind": "path",
+          "value": "docs/readme.md"
+        },
+        {
+          "kind": "path",
+          "value": "docs/work/governance/g57-tpo/checkpoint.md"
+        },
+        {
+          "kind": "path",
+          "value": "docs/work/governance/g57-tpo/ledger.md"
+        },
+        {
+          "kind": "path",
+          "value": "tests/governance/test_work_state.py"
+        },
+        {
+          "kind": "path",
+          "value": "tools/governance/work_state.py"
+        }
+      ],
+      "dependencies": [],
+      "executionId": "GH-57:G57-TPO",
+      "owner": "ahmad",
+      "sourceId": "GH-57",
+      "worktreeId": "feature-issue-57-transactional-ops"
+    }
+  ],
   "generatedBy": "tools/governance/work_state.py",
-  "mode": "idle",
-  "nextAction": "No work item is selected.",
-  "schemaVersion": 1,
-  "sourceId": null
+  "mode": "active",
+  "nextAction": "Qhatahet independently verified the technical fixes at 0f9fdb8 but withheld formal approval over the now-reconciled #13 and false owner-direction records; owner closeout audit/bypass decision is pending. Do not claim gate, merge, or approval.",
+  "schemaVersion": 2,
+  "sourceId": "GH-57"
 }

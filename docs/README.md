@@ -26,6 +26,9 @@ boundaries, and preservation of the previous valid state after failed analysis.
 projection. GitHub labels, `execution.json`, status, parallel topology, and checkpoint state are projections or history.
 Use the governance `transition` command for lifecycle changes.
 
+Repository-native preparation, activation, transactional recovery, review handoff, closeout, promotion, and bounded
+GitHub projection are documented in [`docs/project/project-operations.md`](project/project-operations.md).
+
 Read the selected record in `docs/project/work-items/`, then `docs/project/status.md`, `docs/project/workflow.md`, and `docs/project/execution.json` at session start.
 `execution.json` identifies the selected active checkpoint when one exists. When it is idle, the root Orchestrator may
 not delegate product work without owner activation; contributors may claim eligible `Ready` items, establish or update
