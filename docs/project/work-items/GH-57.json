@@ -85,7 +85,7 @@
   "kind": "github-issue",
   "lifecycle": "ReviewRequired",
   "lifecycleLabel": "review-required",
-  "nextAction": "Obtain Abood-essa latest-head human rereview approval before the final gate.",
+  "nextAction": "Obtain Qhatahet latest-head human rereview approval before the final gate.",
   "number": 57,
   "owner": "ahmad",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
@@ -95,24 +95,24 @@
   },
   "review": {
     "author": "AhmadKrarha",
-    "epoch": "3",
+    "epoch": "4",
     "executionId": "GH-57:G57-TPO",
     "findings": [
       "Fixed: Abood findings F18-F24 and complete-candidate findings F25-F29 resolved with evidence in the checkpoint ledger"
     ],
-    "peer": "Abood-essa",
+    "peer": "Qhatahet",
     "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
-    "requestHead": "6202dce7a3237e4d81f8efffffee829d33127aaf"
+    "requestHead": "4bf2c648dd043d513be3c37580906a436d3e125d"
   },
-  "reviewEpoch": "3",
+  "reviewEpoch": "4",
   "reviewFindings": [
     "Fixed: Abood findings F18-F24 and complete-candidate findings F25-F29 resolved with evidence in the checkpoint ledger"
   ],
-  "reviewPeer": "Abood-essa",
+  "reviewPeer": "Qhatahet",
   "schemaVersion": 1,
   "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
-  "statusReason": "Abood-essa requested changes at f6a6694: repository lock, transactional recovery, scaffold projection, reparse-aware claims, projection ordering, pre-GitHub head validation, and scope amendment.",
+  "statusReason": "Abood-essa is unavailable; owner requested reassignment of the latest-head human rereview to Qhatahet.",
   "title": "[Governance] Transactional project operations and repository-native handoff",
   "track": "governance",
   "worktreeId": "feature-issue-57-transactional-ops"
