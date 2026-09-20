@@ -255,6 +255,14 @@ gate is claimed.
   rewrites a stage. Consumed and missing stages are cleanup-safe; a failed rollback rename preserves the journal and
   remaining evidence for successful recovery.
 
+## Reviewer F29
+
+- F29: **Fixed** — removed the `rollback_success` parameter and all caller special cases. Immediate rollback always
+  re-raises the original canonical replacement error; subsequent retry remains successful after byte-identical cleanup.
+- The compatible concurrent activation diagnostic was captured with each worker's return code, stdout, and stderr. Both
+  workers use explicit independent IDs, executions, branches, worktrees, and claims, synchronize on both ready files and
+  one shared start signal, and now persist successfully under the repository lock. No production race was observed.
+
 ## Reviewer F16
 
 - F16: **Fixed** — handoff now has direct cross-repository, malformed or missing source URL, and mismatched

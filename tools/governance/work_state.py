@@ -552,7 +552,7 @@ def write_journal(path, value):
         raise failure
 
 
-def atomic_write(root, payloads, rollback_success=False):
+def atomic_write(root, payloads):
     if not payloads:
         return
     paths = sorted(payloads, key=lambda path: str(path.relative_to(root)).replace("\\", "/"))
@@ -604,8 +604,6 @@ def atomic_write(root, payloads, rollback_success=False):
         if rollback_error is None:
             journal_path.unlink(missing_ok=True)
             print(f"transaction rolled back; recovery is unnecessary: {error}", file=sys.stderr)
-            if rollback_success:
-                return
         else:
             journal_value["status"] = "interrupted"
             write_journal(journal_path, journal_value)
@@ -1497,7 +1495,7 @@ def transition(root, args):
         payloads[root / checkpoint / "checkpoint.md"] = text
     payloads[root / "docs/project/execution.json"] = execution_payload(candidate)
     try:
-        atomic_write(root, payloads, rollback_success=(args.state == "Active" and target.get("lifecycle") == "Ready"))
+        atomic_write(root, payloads)
     except OSError:
         return 1
     print(dump(item), end="")

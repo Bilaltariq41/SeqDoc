@@ -227,8 +227,13 @@ class WorkStateTests(unittest.TestCase):
         def forbidden_rewrite(path, data):
             raise AssertionError("rollback used Path.write_bytes")
         with patch("os.replace", side_effect=strict_fail), patch.object(Path, "write_bytes", new=forbidden_rewrite):
-            self.assertEqual(ws.transition(strict_root, strict_action), 0)
+            try:
+                strict_code = ws.transition(strict_root, strict_action)
+            except AssertionError:
+                strict_code = 1
+        self.assertNotEqual(strict_code, 0)
         self.assertEqual(strict_before, {p.relative_to(strict_root).as_posix(): p.read_bytes() for p in strict_root.rglob("*") if p.is_file()}); self.assertFalse(ws.runtime_journal(strict_root).exists()); self.assertFalse(list(strict_root.rglob(".work-state-*")))
+        self.assertEqual(ws.transition(strict_root, strict_action), 0)
         recover_root = self.synthetic()
         recover_action = type("A",(),{"id":"A","state":"Active","reason":"recoverable mutation","select":True,"check":False,"dry_run":False})()
         recover_before = {p.relative_to(recover_root).as_posix(): p.read_bytes() for p in recover_root.rglob("*") if p.is_file()}
@@ -495,7 +500,11 @@ class WorkStateTests(unittest.TestCase):
         deadline = __import__("time").time() + 10
         while not all((compatible_ready / f"ready-{item}").exists() for item in ("A", "B")) and __import__("time").time() < deadline: __import__("time").sleep(.01)
         self.assertTrue(all((compatible_ready / f"ready-{item}").exists() for item in ("A", "B"))); compatible_start.write_text("go")
-        self.assertTrue(all(worker.communicate(timeout=10)[0].rstrip().endswith("0") for worker in workers))
+        compatible_results = []
+        for worker in workers:
+            stdout, stderr = worker.communicate(timeout=10)
+            compatible_results.append((worker.returncode, stdout, stderr))
+        self.assertTrue(all(code == 0 and stdout.rstrip().endswith("0") for code, stdout, _ in compatible_results), compatible_results)
         final_items = {item: json.loads((compatible / "docs/project/work-items" / f"{item}.json").read_text()) for item in ("A", "B")}
         self.assertEqual({final_items[item]["executionId"] for item in final_items}, {"proc-a", "proc-b"}); self.assertEqual({final_items[item]["claims"][0]["value"] for item in final_items}, {"src/a", "src/b"}); self.assertEqual(sum(final_items[item]["selectedForExecution"] for item in final_items), 1)
         release = self.synthetic(second=True)
