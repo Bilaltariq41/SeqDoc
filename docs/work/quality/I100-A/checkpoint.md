@@ -2,7 +2,7 @@
 
 ## State
 
-`ResolvingFindings`
+`ReviewRequired`
 
 ## Authority and frozen state
 
@@ -946,6 +946,20 @@ raised two bounded findings: F10, required CI exposes that the real-repository p
 idle state from normalized synthetic fixtures instead of `ws.load(ROOT)`; F11, the existing xUnit 2.9.3
 `DisableParallelization` guarantee needs a concise adjacent comment and durable evidence. Repair only those findings,
 preserve the existing non-mutation assertions and 76 tests, require green CI and rereview, and keep the final gate unrun.
+
+F10 is Fixed: the existing real-repository test now loads `ws.load(ROOT)` and compares the complete checked-in projection
+to `ws.execution_object(real_items)` while retaining its byte-level non-mutation and synthetic-state coverage. F11 is
+Verified-by-framework-contract: the unchanged collection attribute now records that pinned xUnit 2.9.3 guarantees an
+opted-out collection does not run in parallel with any other collection, citing the primary xUnit documentation above.
+No test method, product behavior, or test-count change was introduced. In a fresh detached worktree, the targeted
+governance test passed 1/1 in 9.7 seconds and the complete governance suite passed 35/35 with two skipped in 52.3
+seconds. The primary Windows worktree passed ProcessOwnership 76/76 with zero skipped in 1 minute 17 seconds; all 51
+work items validated, the execution projection was current, and `git diff --check` passed. Independent rereview and
+green required CI remain mandatory before Ahmad rereview; the final gate remains unrun.
+
+Independent rereview returned PASS with no findings. It accepted F10 Fixed, F11 Verified-by-framework-contract, the
+fresh-worktree governance receipts, the primary-worktree 76/76 receipt, the exact bounded scope, and preservation of all
+76 ProcessOwnership claims. Publish the repair, require green GitHub `validate`, and request Ahmad's exact-head rereview.
 
 ### Owner platform-floor amendment
 

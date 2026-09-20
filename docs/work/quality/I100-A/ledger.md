@@ -750,3 +750,17 @@ https://github.com/Bilaltariq41/SeqDoc/pull/109#issuecomment-5752921086 — `BLO
 recording the xUnit 2.9.3 opted-out collection guarantee from
 https://xunit.net/docs/running-tests-in-parallel#opting-a-test-collection-out-of-parallelism. No accepted
 ProcessOwnership behavior may change; required CI and Ahmad rereview precede the final gate.
+
+F10 repair derives the complete real projection from `ws.load(ROOT)` and `ws.execution_object(real_items)` without
+hard-coding GH-106, active state, or execution count; existing byte-snapshot and synthetic fixture assertions remain.
+F11 adds only the xUnit 2.9.3 collection-isolation contract comment beside `ProcessOwnershipGroup`; its attribute and
+behavior are unchanged. Fresh-worktree receipts: targeted governance 1/1 in 9.7 seconds; complete governance 35/35 with
+two skipped in 52.3 seconds. The clean-worktree Windows lane did not produce a stable verdict (`Fatal error.` on its
+first attempt; the second was manually aborted), so the required ProcessOwnership command ran in the established primary
+Windows worktree and passed 76/76 with zero skipped in 1 minute 17 seconds. Validation passed for all 51 work items,
+projection check reported current, and `git diff --check` passed. F10 is Fixed and F11 is
+Verified-by-framework-contract pending independent rereview and required CI.
+
+Independent rereview verdict: PASS, no findings. F10 and F11 dispositions, verification anomalies, exact bounded scope,
+and all 76 prior ProcessOwnership claims are accepted. Required GitHub `validate` and Ahmad exact-head rereview remain;
+the final gate is still prohibited.
