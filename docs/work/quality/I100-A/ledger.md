@@ -723,3 +723,9 @@ Medium review findings are Fixed pending independent rereview.
 Independent rereview verdict: PASS, no findings. I100-A-F1/F2 and all five Bilal preparatory findings are Fixed; all 76
 prior claims and the exact two-file technical scope remain accepted. The candidate is still uncommitted and must stop
 before current-main integration, governance-only handoff correction, Bilal request, or final gate.
+
+Publication preparation preserved the reviewed repair as `13c20c3` and integrated current `main` at `b66b0db` through
+merge commit `580353d` without conflicts. Post-integration focused verification under isolated SDK 10.0.302 passed
+76/76 with zero skipped in 1 minute 16 seconds. Governance validation passed for 51 work items, `git diff --check`
+passed, and ancestry verification confirmed `b66b0db` in the candidate. Bilal's reserved latest-head non-author human
+review is now the next gate; the final gate remains intentionally unrun.

@@ -10,14 +10,14 @@
   "kind": "github-issue",
   "lifecycle": "ReviewRequired",
   "lifecycleLabel": "review-required",
-  "nextAction": "Run independent rereview of the complete Bilal preparatory repair candidate, then stop before commit, current-main integration, governance-only handoff, Bilal request, or final gate.",
+  "nextAction": "Push the latest candidate and request Bilal's reserved latest-head non-author human review. Resolve any findings before transitioning to Verifying; do not run the final gate yet.",
   "number": 106,
   "owner": "abood",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/109",
   "schemaVersion": 1,
   "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/106",
-  "statusReason": "Independent-review proof gaps are repaired in the two existing groups. Isolated SDK 10.0.302 focused verification passed 76/76 with zero skipped in 1m16s and git diff --check passed.",
+  "statusReason": "Independent rereview passed with no findings; reviewed repair commit 13c20c3 and clean main integration 580353d include b66b0db. Post-integration focused verification passed 76/76, governance validation passed, and git diff --check passed.",
   "title": "[Testing] Prove Windows contained-process ownership primitive",
   "track": "quality"
 }

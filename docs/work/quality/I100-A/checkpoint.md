@@ -915,6 +915,12 @@ Independent rereview passed with no findings. It accepted I100-A-F1 and I100-A-F
 preparatory findings Fixed, preserved all 76 prior claims, and accepted the exact technical scope. Stop before commit,
 current-main integration, governance-only handoff correction, Bilal request, or final gate.
 
+The reviewed repair was preserved in `13c20c3`, then current `main` at `b66b0db` was integrated cleanly by merge commit
+`580353d`. Post-integration focused verification under isolated SDK 10.0.302 passed 76/76 with zero skipped in 1 minute
+16 seconds. Governance validation passed for all 51 work items, `git diff --check` passed, and `b66b0db` is an ancestor
+of the latest candidate. Return the candidate to `ReviewRequired` for Bilal's reserved latest-head non-author human
+review. The final gate remains prohibited until that review is resolved.
+
 ### Owner platform-floor amendment
 
 Abood selected the evidence-backed repair: require Windows 10 / Windows Server 2016 x64 or newer and use
