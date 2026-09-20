@@ -59,10 +59,12 @@ is licensed under the [Mozilla Public License 2.0](../LICENSE), the same license
 - Keep unrelated refactoring out of a single pull request.
 - Direct pushes to `main` are restricted; all external contributions use pull requests.
 - Address review findings on the same PR branch, run the Reviewer agent again, and request one latest-head non-author
-  human peer approval. Agent self-review is not another human approval.
+  human peer approval. Reserve that reviewer at claim/readiness and follow the eligibility and replacement rules in
+  [`collaboration-model.md`](project/collaboration-model.md); agent self-review is not another human approval.
 
 ## Waiting for review and stacked work
 
 When a completed PR is waiting, choose another independent Ready issue. Do not create child issues or stack a new
 implementation issue merely to route a discovery; return it to the parent backlog. Continue repairing the same PR unless
-the change is a separate outcome, conflicts with active work/path leases, or needs T4 owner administration.
+the change is a separate outcome, conflicts with active work/path leases, needs T4 owner administration, or encounters
+`reviewer unavailable`; the owner is not an automatic fallback.
