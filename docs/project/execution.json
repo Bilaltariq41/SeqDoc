@@ -90,7 +90,7 @@
   ],
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Obtain one latest-head non-author human peer approval from Abood-essa before the final gate.",
+  "nextAction": "Repair all seven latest-head findings, rerun focused verification, and request Abood-essa rereview.",
   "schemaVersion": 2,
   "sourceId": "GH-57"
 }
