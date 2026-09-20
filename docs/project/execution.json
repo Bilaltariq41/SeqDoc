@@ -2,9 +2,22 @@
   "activeCheckpointId": "I100-A",
   "activeCheckpointPath": "docs/work/quality/I100-A",
   "activePlanPath": null,
+  "executions": [
+    {
+      "branch": "integration/issue-106-process-ownership-ahmad",
+      "checkpointId": "I100-A",
+      "checkpointPath": "docs/work/quality/I100-A",
+      "claims": [],
+      "dependencies": [],
+      "executionId": "GH-106:I100-A",
+      "owner": "abood",
+      "sourceId": "GH-106",
+      "worktreeId": null
+    }
+  ],
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
   "nextAction": "Push the latest candidate and request Bilal's reserved latest-head non-author human review. Resolve any findings before transitioning to Verifying; do not run the final gate yet.",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "sourceId": "GH-106"
 }

@@ -14,6 +14,10 @@
 Durable repository files are execution authority. Conversation summaries, model memory, and raw session exports are
 recovery aids only.
 
+Use `prepare` and `activate --dry-run` before activation. Operations validate a complete candidate, journal a deterministic
+generation, and write atomically; use `recover` after an interruption. Parallel executions are allowed only for disjoint
+normalized claims. Use `handoff`, `closeout`, and `promote` rather than editing registry or projection fields by hand.
+
 The typed records under `docs/project/work-items/` are the sole current-state authority. `execution.json`, GitHub
 lifecycle labels, status, parallel-workstreams, and capsule state are projections or explanatory history. `Ready` and
 `Active` both authorize a contributor after the contract is frozen; only the selected record authorizes the root

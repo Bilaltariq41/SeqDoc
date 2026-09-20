@@ -10,6 +10,10 @@ necessary acceptance work until the latest head is ready. Block only as permitte
 [collaboration-model.md](collaboration-model.md), including `reviewer unavailable`; the owner is not an automatic
 fallback.
 
+Use the transactional `handoff` packet for the review boundary. It authenticates the observed PR head and author,
+rejects the contributor as peer, and records the review epoch atomically. `closeout` consumes the focused/final receipts,
+finding dispositions, merge identity, attribution, and required peer evidence in one transaction.
+
 For each finding, record a repair trace:
 
 | Finding | Production repair | Producer/boundary test | Observable assertion | Residual boundary |

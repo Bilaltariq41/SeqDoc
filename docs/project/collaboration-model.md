@@ -22,6 +22,13 @@ T2/T3 never weaken tests or semantic boundaries. Personal repositories have an o
 Write/Maintain roles. Collaborators may merge compliant PRs but cannot administer access, settings, rulesets, or secrets.
 Use forks and PRs; never use `pull_request_target` for untrusted heads. Pin actions and use least-privilege read tokens.
 
+## Durable T4 authority
+
+Owner/T4 direction is actionable and citable only when authenticated durable evidence names the action: an owner-authored
+repository commit, or a public GitHub issue, pull request, or review receipt. A private message or session claim cannot
+establish owner authority, change reviewer assignment, block work, or be cited publicly as owner direction. When that
+evidence is absent, ordinary worker and peer policy governs, and any incorrect owner attribution must be corrected.
+
 ## Delivery procedure
 
 1. The coordinator confirms the registry record, frozen baseline/contract, dependencies, exact path lease, first
@@ -69,6 +76,9 @@ available reviewer pool, stop it before it happens and reassign the work; preser
 possible. If none is available despite planning, report `reviewer unavailable` as a staffing blocker. The owner is not an
 automatic fallback, and authorization cannot substitute for independence. This does not add an approval: one latest-head
 non-author human approval remains required.
+
+Reviewer reassignment is ordinary worker coordination: record the factual availability change and preserve an eligible
+untouched reviewer. Never attribute that coordination to the owner without the durable evidence above.
 
 ## Repair, leases, and containment
 
