@@ -83,9 +83,9 @@
   "expectedGithubState": "OPEN",
   "id": "GH-57",
   "kind": "github-issue",
-  "lifecycle": "ResolvingFindings",
-  "lifecycleLabel": "resolving-findings",
-  "nextAction": "Repair all seven latest-head findings, rerun focused verification, and request Abood-essa rereview.",
+  "lifecycle": "ReviewRequired",
+  "lifecycleLabel": "review-required",
+  "nextAction": "Obtain Abood-essa latest-head human rereview approval before the final gate.",
   "number": 57,
   "owner": "ahmad",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
@@ -95,18 +95,18 @@
   },
   "review": {
     "author": "AhmadKrarha",
-    "epoch": "2",
+    "epoch": "3",
     "executionId": "GH-57:G57-TPO",
     "findings": [
-      "Fixed: complete-candidate self-review findings F1-F17 resolved with evidence in the checkpoint ledger"
+      "Fixed: Abood findings F18-F24 and complete-candidate findings F25-F29 resolved with evidence in the checkpoint ledger"
     ],
     "peer": "Abood-essa",
     "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
-    "requestHead": "a22b7abd2da659ab571993c4adda4e1dc0e69ba4"
+    "requestHead": "6202dce7a3237e4d81f8efffffee829d33127aaf"
   },
-  "reviewEpoch": "2",
+  "reviewEpoch": "3",
   "reviewFindings": [
-    "Fixed: complete-candidate self-review findings F1-F17 resolved with evidence in the checkpoint ledger"
+    "Fixed: Abood findings F18-F24 and complete-candidate findings F25-F29 resolved with evidence in the checkpoint ledger"
   ],
   "reviewPeer": "Abood-essa",
   "schemaVersion": 1,
