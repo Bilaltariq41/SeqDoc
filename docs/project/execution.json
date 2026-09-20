@@ -4,7 +4,7 @@
   "activePlanPath": null,
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Independent complete-candidate review passed with F1-F5 Fixed and no findings. Stop at ReviewRequired for Ahmad; do not run the final gate, merge, or begin GH-107 before Ahmad approval.",
+  "nextAction": "Independent review accepted the F9 rejection and returned PASS with no findings. Obtain explicit commit/push authorization, then publish the eight-file candidate and request Ahmad's latest-head review. Do not rerun focused tests or final gate.",
   "schemaVersion": 1,
   "sourceId": "GH-106"
 }

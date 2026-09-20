@@ -522,6 +522,7 @@ public sealed class ProcessOwnershipTests
         Assert.True(wait.ActiveProcessZeroObserved);
         Assert.All(new[] { process.StdOutDrainTaskForTests, process.StdErrDrainTaskForTests, process.CompletionMonitorTaskForTests },
             task => Assert.True(task is null || task.IsCompleted));
+        AssertManagedSlotsQuiescentOrReleased(process.OwnershipSnapshot);
         process.Dispose();
     }
 
@@ -2111,38 +2112,51 @@ public sealed class ProcessOwnershipTests
     }
 
     [Fact]
-    public void ConstructionFaultsExposeOneTypedReachableLedgerForEveryAcquiredNativeSlot()
+    public async Task ConstructionFaultsExposeOneTypedReachableLedgerForEveryAcquiredNativeSlot()
     {
-        var assembly = typeof(ContainedProcess).Assembly;
-        Type resourceKind = assembly.GetType("SeqDoc.AcceptanceTests.NativeResourceKind")
-            ?? throw new Xunit.Sdk.XunitException("Frozen ledger contract is missing NativeResourceKind.");
-        Assert.True(resourceKind.IsEnum);
-        string[] inventory = Enum.GetNames(resourceKind);
+        NativeResourceKind[] inventory = Enum.GetValues<NativeResourceKind>();
         Assert.Equal(15, inventory.Length);
-        foreach (string expected in new[]
+        foreach (NativeResourceKind expected in new[]
         {
-            "StdinChildRead", "StdinParentWrite", "StdoutParentRead", "StdoutChildWrite",
-            "StderrParentRead", "StderrChildWrite", "HandleListBuffer", "JobHandle",
-            "CompletionPortHandle", "JobListBuffer", "AttributeListBuffer", "CommandLineBuffer",
-            "EnvironmentBlockBuffer", "ProcessHandle", "PrimaryThreadHandle",
+            NativeResourceKind.StdinChildRead, NativeResourceKind.StdinParentWrite,
+            NativeResourceKind.StdoutParentRead, NativeResourceKind.StdoutChildWrite,
+            NativeResourceKind.StderrParentRead, NativeResourceKind.StderrChildWrite,
+            NativeResourceKind.HandleListBuffer, NativeResourceKind.JobHandle,
+            NativeResourceKind.CompletionPortHandle, NativeResourceKind.JobListBuffer,
+            NativeResourceKind.AttributeListBuffer, NativeResourceKind.CommandLineBuffer,
+            NativeResourceKind.EnvironmentBlockBuffer, NativeResourceKind.ProcessHandle,
+            NativeResourceKind.PrimaryThreadHandle,
         })
         {
             Assert.Contains(expected, inventory);
         }
 
-        Type snapshot = assembly.GetType("SeqDoc.AcceptanceTests.NativeResourceSnapshot")
-            ?? throw new Xunit.Sdk.XunitException("Frozen ledger contract is missing NativeResourceSnapshot.");
-        Assert.NotNull(snapshot.GetProperty("Kind"));
-        Assert.NotNull(snapshot.GetProperty("AcquisitionSequence"));
-        Assert.NotNull(snapshot.GetProperty("Value"));
-        Assert.NotNull(snapshot.GetProperty("State"));
-        Assert.NotNull(snapshot.GetProperty("Attempts"));
-        Assert.NotNull(snapshot.GetProperty("Evidence"));
+        NativeResourceSnapshot nativeShape = new NativeResourceSnapshot();
+        Assert.Equal(default, nativeShape.Kind);
+        Assert.Equal(0, nativeShape.AcquisitionSequence);
+        Assert.Equal(nint.Zero, nativeShape.Value);
+        Assert.Equal(0, nativeShape.Attempts);
+        Assert.NotNull(nativeShape.Evidence);
+        ProcessOwnershipSnapshot ownershipShape = new ProcessOwnershipSnapshot();
+        Assert.NotNull(ownershipShape.NativeResources);
+        Assert.True(ownershipShape.Immutable);
 
-        Type ownership = assembly.GetType("SeqDoc.AcceptanceTests.ProcessOwnershipSnapshot")
-            ?? throw new Xunit.Sdk.XunitException("Construction faults have no typed ownership snapshot.");
-        Assert.NotNull(ownership.GetProperty("NativeResources"));
-        Assert.NotNull(ownership.GetProperty("Immutable"));
+        // This is intentionally a compile-time contract. A string summary cannot prove slot identity,
+        // operation epoch, quiescence, or retained ownership.
+        IReadOnlyList<ManagedResourceSnapshot> managedShape = new ProcessOwnershipSnapshot().ManagedResources;
+        Assert.Empty(managedShape);
+        ManagedResourceKind[] managedKinds =
+        [
+            ManagedResourceKind.CompletionMonitor, ManagedResourceKind.DrainCancellation,
+            ManagedResourceKind.StdoutDrain, ManagedResourceKind.StderrDrain,
+            ManagedResourceKind.ProcessWait, ManagedResourceKind.TerminalOperation,
+            ManagedResourceKind.FamilyProof, ManagedResourceKind.Disposal,
+        ];
+        Assert.Equal(8, managedKinds.Length);
+        foreach (ManagedResourceKind expected in managedKinds)
+        {
+            Assert.Contains(expected, managedKinds);
+        }
 
         // Shape is only the admission check.  Every frozen construction point must publish the actual
         // result ledger, including the post-transfer/pre-monitor point; an empty or synthetic ledger is
@@ -2170,23 +2184,21 @@ public sealed class ProcessOwnershipTests
             try
             {
                 Assert.False(result.Succeeded);
-                object ledger = GetTypedOwnershipSnapshot(result);
-                var resources = GetRequiredProperty(ledger, "NativeResources") as System.Collections.IEnumerable;
-                Assert.NotNull(resources);
-                var entries = resources!.Cast<object>().ToArray();
+                ProcessOwnershipSnapshot ledger = GetTypedOwnershipSnapshot(result);
+                NativeResourceSnapshot[] entries = ledger.NativeResources.ToArray();
                 Assert.NotEmpty(entries);
-                var kinds = entries.Select(entry => GetRequiredProperty(entry, "Kind")).ToArray();
+                NativeResourceKind[] kinds = entries.Select(entry => entry.Kind).ToArray();
                 Assert.Equal(kinds.Length, kinds.Distinct().Count());
-                var sequences = entries.Select(entry => Convert.ToInt64(GetRequiredProperty(entry, "AcquisitionSequence"), CultureInfo.InvariantCulture)).ToArray();
+                long[] sequences = entries.Select(entry => entry.AcquisitionSequence).ToArray();
                 Assert.All(sequences, sequence => Assert.True(sequence > 0));
                 Assert.Equal(sequences.Length, sequences.Distinct().Count());
                 Assert.Equal(sequences.OrderBy(sequence => sequence), sequences);
-                foreach (object entry in entries)
+                AssertManagedSnapshotContract(GetTypedOwnershipSnapshot(result));
+                foreach (NativeResourceSnapshot entry in entries)
                 {
-                    string state = GetRequiredProperty(entry, "State").ToString()!;
-                    Assert.True(state is "Owned" or "Released");
-                    nint value = ConvertToNativeInt(GetRequiredProperty(entry, "Value"));
-                    if (state == "Owned")
+                    Assert.True(entry.State is NativeResourceState.Owned or NativeResourceState.Released);
+                    nint value = entry.Value;
+                    if (entry.State == NativeResourceState.Owned)
                     {
                         Assert.NotEqual(nint.Zero, value);
                     }
@@ -2194,18 +2206,14 @@ public sealed class ProcessOwnershipTests
 
                 if (result.CleanupOwner is null)
                 {
-                    Assert.All(entries, entry => Assert.Equal("Released", GetRequiredProperty(entry, "State").ToString()));
+                    Assert.All(entries, entry => Assert.Equal(NativeResourceState.Released, entry.State));
                 }
                 var immutable = entries.Select(entry =>
-                    (GetRequiredProperty(entry, "Kind").ToString(),
-                        GetRequiredProperty(entry, "State").ToString(),
-                        ConvertToNativeInt(GetRequiredProperty(entry, "Value")))).ToArray();
+                    (entry.Kind, entry.State, entry.Value)).ToArray();
                 result.CleanupOwner?.Dispose();
                 Assert.Equal(immutable,
                     entries.Select(entry =>
-                        (GetRequiredProperty(entry, "Kind").ToString(),
-                            GetRequiredProperty(entry, "State").ToString(),
-                            ConvertToNativeInt(GetRequiredProperty(entry, "Value")))));
+                        (entry.Kind, entry.State, entry.Value)));
             }
             finally
             {
@@ -2213,6 +2221,189 @@ public sealed class ProcessOwnershipTests
                 result.Process?.Terminate();
                 result.Process?.Dispose();
             }
+        }
+
+        // Installing the first drain lease is atomic with publication of its managed slot.  A
+        // failure at that boundary must not leave a synthetic Active slot behind or return a
+        // cleanup owner that cannot reach the resources it claims to own.
+        ProcessOwnershipConstructionResult? installFailure = null;
+        ContainedProcess.ManagedResourceInstallObserverForTests = kind =>
+        {
+            if (kind == ManagedResourceKind.DrainCancellation)
+            {
+                throw new InvalidOperationException("synthetic drain-lease installation failure");
+            }
+        };
+        try
+        {
+            installFailure = ContainedProcess.Start(
+                NewOptions(["sleep", "1000"]));
+            Assert.False(installFailure.Succeeded);
+            ProcessOwnershipSnapshot installSnapshot = GetTypedOwnershipSnapshot(installFailure);
+            AssertManagedSnapshotContract(installSnapshot);
+            foreach (ManagedResourceKind kind in new[]
+            {
+                ManagedResourceKind.DrainCancellation,
+                ManagedResourceKind.StdoutDrain,
+                ManagedResourceKind.StderrDrain,
+            })
+            {
+                ManagedResourceSnapshot entry = Assert.Single(installSnapshot.ManagedResources,
+                    item => item.Kind == kind);
+                Assert.True(entry.State == ManagedResourceState.Unacquired || !entry.HasLease);
+            }
+            Assert.DoesNotContain(installSnapshot.ManagedResources,
+                entry => (entry.State is ManagedResourceState.Active or ManagedResourceState.Retained)
+                    && !entry.HasLease);
+        }
+        finally
+        {
+            ContainedProcess.ManagedResourceInstallObserverForTests = null;
+            installFailure?.CleanupOwner?.Dispose();
+            installFailure?.Process?.Terminate();
+            installFailure?.Process?.Dispose();
+        }
+
+        // A worker must not become runnable before its typed lease is published.  The worker-start
+        // observer is intentionally a required compile-time seam: reservation-first code has not
+        // admitted these callbacks when the install observer runs.
+        using var completionStarted = new ManualResetEventSlim();
+        using var stdoutStarted = new ManualResetEventSlim();
+        using var stderrStarted = new ManualResetEventSlim();
+        ContainedProcess? normalProcess = null;
+        var workerObserver = new Action<ManagedResourceKind>(kind =>
+        {
+            switch (kind)
+            {
+                case ManagedResourceKind.CompletionMonitor:
+                    completionStarted.Set();
+                    break;
+                case ManagedResourceKind.StdoutDrain:
+                    stdoutStarted.Set();
+                    break;
+                case ManagedResourceKind.StderrDrain:
+                    stderrStarted.Set();
+                    break;
+            }
+        });
+        try
+        {
+            ContainedProcess.ManagedWorkerStartObserverForTests = workerObserver;
+            ContainedProcess.ManagedResourceInstallObserverForTests = kind =>
+            {
+                ManualResetEventSlim? marker = kind switch
+                {
+                    ManagedResourceKind.CompletionMonitor => completionStarted,
+                    ManagedResourceKind.StdoutDrain => stdoutStarted,
+                    ManagedResourceKind.StderrDrain => stderrStarted,
+                    _ => null,
+                };
+                if (marker is null)
+                {
+                    return;
+                }
+
+                Assert.False(
+                    marker.Wait(TimeSpan.FromMilliseconds(500)),
+                    $"{kind} worker started before its typed lease was installed.");
+            };
+
+            ProcessOwnershipConstructionResult normal = ContainedProcess.Start(
+                NewOptions(["echo", "reservation-order", "reservation-order"]));
+            Assert.True(normal.Succeeded, normal.Detail);
+            normalProcess = normal.Process!;
+
+            ProcessOwnershipSnapshot installed = normalProcess.OwnershipSnapshot;
+            var expectedSequences = new Dictionary<ManagedResourceKind, long>();
+            foreach (ManagedResourceKind kind in new[]
+            {
+                ManagedResourceKind.CompletionMonitor,
+                ManagedResourceKind.StdoutDrain,
+                ManagedResourceKind.StderrDrain,
+            })
+            {
+                ManagedResourceSnapshot entry = Assert.Single(installed.ManagedResources,
+                    item => item.Kind == kind);
+                Assert.True(entry.State is ManagedResourceState.Active or ManagedResourceState.Quiescent);
+                Assert.True(entry.HasLease);
+                Assert.True(entry.AcquisitionSequence > 0);
+                expectedSequences.Add(kind, entry.AcquisitionSequence);
+            }
+            Assert.Equal(3, expectedSequences.Values.Distinct().Count());
+
+            Assert.True(completionStarted.Wait(TimeSpan.FromSeconds(5)));
+            Assert.True(stdoutStarted.Wait(TimeSpan.FromSeconds(5)));
+            Assert.True(stderrStarted.Wait(TimeSpan.FromSeconds(5)));
+
+            ProcessOwnershipWaitResult normalWait = await normalProcess.WaitAsync(
+                TimeSpan.FromSeconds(10), CancellationToken.None);
+            Assert.Equal(ProcessOwnershipFailureClass.None, normalWait.FailureClass);
+            normalProcess.Dispose();
+
+            ProcessOwnershipSnapshot completed = normalProcess.OwnershipSnapshot;
+            foreach ((ManagedResourceKind kind, long sequence) in expectedSequences)
+            {
+                Assert.Equal(sequence, Assert.Single(completed.ManagedResources,
+                    item => item.Kind == kind).AcquisitionSequence);
+            }
+        }
+        finally
+        {
+            ContainedProcess.ManagedWorkerStartObserverForTests = null;
+            ContainedProcess.ManagedResourceInstallObserverForTests = null;
+            if (normalProcess is not null)
+            {
+                try { normalProcess.Terminate(); } catch { }
+                normalProcess.Dispose();
+            }
+        }
+
+        // A CompletionMonitor reservation is not runnable merely because its queue admission was
+        // attempted.  Rejecting that admission must roll back the installed typed reservation without
+        // starting the callback or allowing construction to proceed to drain-worker scheduling.
+        int completionMonitorStarted = 0;
+        ProcessOwnershipConstructionResult? monitorAdmissionFailure = null;
+        ContainedProcess.ManagedWorkerStartObserverForTests = kind =>
+        {
+            if (kind == ManagedResourceKind.CompletionMonitor)
+            {
+                Interlocked.Exchange(ref completionMonitorStarted, 1);
+            }
+        };
+        ContainedProcess.ManagedWorkerQueueForTests = (kind, _) => kind switch
+        {
+            ManagedResourceKind.CompletionMonitor => false,
+            _ => throw new InvalidOperationException($"unexpected managed worker kind: {kind}"),
+        };
+        try
+        {
+            monitorAdmissionFailure = ContainedProcess.Start(NewOptions(["sleep", "5000"]));
+
+            Assert.False(monitorAdmissionFailure.Succeeded);
+            Assert.Equal(ProcessOwnershipFailureClass.ProcessConstructionFailed, monitorAdmissionFailure.FailureClass);
+            Assert.Equal(0, Volatile.Read(ref completionMonitorStarted));
+
+            ProcessOwnershipSnapshot monitorSnapshot = GetTypedOwnershipSnapshot(monitorAdmissionFailure);
+            ManagedResourceSnapshot monitorSlot = Assert.Single(monitorSnapshot.ManagedResources,
+                entry => entry.Kind == ManagedResourceKind.CompletionMonitor);
+            Assert.True(monitorSlot.AcquisitionSequence > 0);
+            Assert.True(monitorSlot.OperationId > 0);
+            Assert.Equal(ManagedResourceState.Released, monitorSlot.State);
+            Assert.False(monitorSlot.HasLease);
+            Assert.NotEqual(ManagedResourceState.Active, monitorSlot.State);
+            Assert.NotEqual(ManagedResourceState.Retained, monitorSlot.State);
+            if (monitorSnapshot.NativeResources.Any(entry => entry.State == NativeResourceState.Owned))
+            {
+                Assert.NotNull(monitorAdmissionFailure.CleanupOwner);
+            }
+        }
+        finally
+        {
+            ContainedProcess.ManagedWorkerQueueForTests = null;
+            ContainedProcess.ManagedWorkerStartObserverForTests = null;
+            monitorAdmissionFailure?.Process?.Terminate();
+            monitorAdmissionFailure?.Process?.Dispose();
+            monitorAdmissionFailure?.CleanupOwner?.Dispose();
         }
 
         // F7: a close failure before ownership transfer must leave the raw native owner reachable.
@@ -2243,136 +2434,211 @@ public sealed class ProcessOwnershipTests
             Assert.Contains("8601", failedConstruction.Detail, StringComparison.Ordinal);
             Assert.NotNull(failedConstruction.CleanupOwner);
             Assert.NotEqual(nint.Zero, failedJob);
-            object firstSnapshot = GetTypedOwnershipSnapshot(failedConstruction);
-            object firstJob = ((System.Collections.IEnumerable)GetRequiredProperty(firstSnapshot, "NativeResources"))
-                .Cast<object>().Single(entry => GetRequiredProperty(entry, "Kind").ToString() == "JobHandle");
-            Assert.Equal("Owned", GetRequiredProperty(firstJob, "State").ToString());
-            Assert.Equal(failedJob, ConvertToNativeInt(GetRequiredProperty(firstJob, "Value")));
-            Assert.Equal(1, Convert.ToInt32(GetRequiredProperty(firstJob, "Attempts"), CultureInfo.InvariantCulture));
-            Assert.Contains("8601", GetRequiredProperty(firstJob, "Evidence").ToString(), StringComparison.Ordinal);
+            NativeResourceSnapshot firstJob = failedConstruction.OwnershipSnapshot!.NativeResources
+                .Single(entry => entry.Kind == NativeResourceKind.JobHandle);
+            Assert.Equal(NativeResourceState.Owned, firstJob.State);
+            Assert.Equal(failedJob, firstJob.Value);
+            Assert.Equal(1, firstJob.Attempts);
+            Assert.Contains("8601", firstJob.Evidence, StringComparison.Ordinal);
 
             failedConstruction.CleanupOwner!.Dispose();
-            object secondSnapshot = GetTypedOwnershipSnapshot(failedConstruction.CleanupOwner);
-            object secondJob = ((System.Collections.IEnumerable)GetRequiredProperty(secondSnapshot, "NativeResources"))
-                .Cast<object>().Single(entry => GetRequiredProperty(entry, "Kind").ToString() == "JobHandle");
-            Assert.Equal("Released", GetRequiredProperty(secondJob, "State").ToString());
-            Assert.Equal(nint.Zero, ConvertToNativeInt(GetRequiredProperty(secondJob, "Value")));
-            Assert.True(Convert.ToInt32(GetRequiredProperty(secondJob, "Attempts"), CultureInfo.InvariantCulture) >= 2);
-            Assert.Equal("Owned", GetRequiredProperty(firstJob, "State").ToString());
-            Assert.Equal(failedJob, ConvertToNativeInt(GetRequiredProperty(firstJob, "Value")));
+            NativeResourceSnapshot secondJob = failedConstruction.CleanupOwner.OwnershipSnapshot.NativeResources
+                .Single(entry => entry.Kind == NativeResourceKind.JobHandle);
+            Assert.Equal(NativeResourceState.Released, secondJob.State);
+            Assert.Equal(nint.Zero, secondJob.Value);
+            Assert.True(secondJob.Attempts >= 2);
+            Assert.Equal(NativeResourceState.Owned, firstJob.State);
+            Assert.Equal(failedJob, firstJob.Value);
         }
         finally
         {
             close.SetValue(nativeCalls, null);
             failedConstruction.CleanupOwner?.Dispose();
         }
+
+        // A queue admission failure after stdout has been admitted must quiesce the worker whose
+        // reservation was accepted before construction unwind returns.  The stderr queue waits for the
+        // stdout wrapper to start, then rejects admission without queuing stderr; this is a deterministic
+        // partial-scheduling failure rather than a queue-and-throw approximation of the seam contract.
+        using var partialStdoutStarted = new ManualResetEventSlim();
+        using var partialStdoutFinished = new ManualResetEventSlim();
+        ProcessOwnershipConstructionResult? partialSchedulingFailure = null;
+        ContainedProcess.ManagedWorkerQueueForTests = (kind, action) => kind switch
+        {
+            ManagedResourceKind.CompletionMonitor => ThreadPool.QueueUserWorkItem(_ => action()),
+            ManagedResourceKind.StdoutDrain => ThreadPool.QueueUserWorkItem(_ =>
+            {
+                partialStdoutStarted.Set();
+                try { action(); }
+                finally { partialStdoutFinished.Set(); }
+            }),
+            ManagedResourceKind.StderrDrain =>
+                partialStdoutStarted.Wait(TimeSpan.FromSeconds(5))
+                    ? false
+                    : throw new TimeoutException("stdout worker did not start before stderr queue admission"),
+            _ => throw new InvalidOperationException($"unexpected managed worker kind: {kind}"),
+        };
+        try
+        {
+            partialSchedulingFailure = ContainedProcess.Start(NewOptions(["sleep", "5000"]));
+
+            Assert.False(partialSchedulingFailure.Succeeded);
+            Assert.Equal(ProcessOwnershipFailureClass.ProcessConstructionFailed, partialSchedulingFailure.FailureClass);
+            Assert.True(
+                partialStdoutFinished.IsSet,
+                "Construction unwind must await the successfully scheduled stdout worker before returning.");
+
+            ProcessOwnershipSnapshot partialSnapshot = GetTypedOwnershipSnapshot(partialSchedulingFailure);
+            ManagedResourceSnapshot[] drainSlots = partialSnapshot.ManagedResources
+                .Where(entry => entry.Kind is ManagedResourceKind.DrainCancellation
+                    or ManagedResourceKind.StdoutDrain
+                    or ManagedResourceKind.StderrDrain)
+                .ToArray();
+            Assert.Equal(3, drainSlots.Length);
+            Assert.DoesNotContain(drainSlots,
+                entry => (entry.State is ManagedResourceState.Active or ManagedResourceState.Retained)
+                    && !entry.HasLease);
+            if (partialSnapshot.NativeResources.Any(entry => entry.State == NativeResourceState.Owned))
+            {
+                Assert.NotNull(partialSchedulingFailure.CleanupOwner);
+            }
+            if (drainSlots.Any(entry => entry.State == ManagedResourceState.Released))
+            {
+                Assert.All(drainSlots, entry =>
+                {
+                    Assert.Equal(ManagedResourceState.Released, entry.State);
+                    Assert.False(entry.HasLease);
+                });
+            }
+
+            partialSchedulingFailure.CleanupOwner?.Dispose();
+        }
+        finally
+        {
+            ContainedProcess.ManagedWorkerQueueForTests = null;
+            ContainedProcess.ManagedWorkerStartObserverForTests = null;
+            ContainedProcess.ManagedResourceInstallObserverForTests = null;
+            partialSchedulingFailure?.Process?.Terminate();
+            partialSchedulingFailure?.Process?.Dispose();
+            partialSchedulingFailure?.CleanupOwner?.Dispose();
+        }
     }
 
     [Fact]
     public async Task DrainCompletionWaitsForTheActiveFamilyProofEpochBeforeClassification()
     {
-        var assembly = typeof(ContainedProcess).Assembly;
-        Type barrier = assembly.GetType("SeqDoc.AcceptanceTests.ProcessOwnershipLifecycleBarriers")
-            ?? throw new Xunit.Sdk.XunitException("Missing deterministic lifecycle barrier adapter.");
-        Assert.NotNull(barrier.GetMethod("WaitForDrainsCompleted"));
-        Assert.NotNull(barrier.GetMethod("WaitForFamilyProofPending"));
-        Assert.NotNull(barrier.GetMethod("ReleaseActiveProcessZero"));
-
-        var nativeCalls = new ProcessOwnershipNativeCalls();
-        var lifecycle = typeof(ProcessOwnershipNativeCalls).GetProperty("LifecycleBarriers",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
-        Assert.NotNull(lifecycle);
-        object barriers = Activator.CreateInstance(barrier)!;
-        lifecycle!.SetValue(nativeCalls, barriers);
+        var barriers = new ProcessOwnershipLifecycleBarriers();
+        var nativeCalls = new ProcessOwnershipNativeCalls { LifecycleBarriers = barriers };
         var result = ContainedProcess.Start(NewOptions(["echo", "barrier-out", "barrier-err"], nativeCalls: nativeCalls));
         Assert.True(result.Succeeded, result.Detail);
         using var process = result.Process!;
         Task<ProcessOwnershipWaitResult> waitTask = process.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
-        Assert.True((bool)barrier.GetMethod("WaitForDrainsCompleted")!.Invoke(
-            barriers, [TimeSpan.FromSeconds(5)])!);
-        Assert.True((bool)barrier.GetMethod("WaitForFamilyProofPending")!.Invoke(
-            barriers, [TimeSpan.FromSeconds(5)])!);
+        Assert.True(barriers.WaitForDrainsCompleted(TimeSpan.FromSeconds(5)));
+        Assert.True(barriers.WaitForFamilyProofPending(TimeSpan.FromSeconds(5)));
         Assert.False(waitTask.IsCompleted);
         Assert.Equal(ProcessOwnershipFailureClass.None, process.FailureClass);
         Assert.False(process.TerminateJobObjectWasCalled);
-        barrier.GetMethod("ReleaseActiveProcessZero")!.Invoke(barriers, null);
+        barriers.ReleaseActiveProcessZero();
         var wait = await waitTask;
         Assert.Equal(ProcessOwnershipFailureClass.None, wait.FailureClass);
         Assert.False(process.TerminateJobObjectWasCalled);
+        AssertManagedSlotsAcquired(process.OwnershipSnapshot, GetRequiredLifecycleReceipts(process));
 
-        Type receipt = assembly.GetType("SeqDoc.AcceptanceTests.LifecycleOperationReceipt")
-            ?? throw new Xunit.Sdk.XunitException("Missing typed lifecycle operation receipt.");
-        Assert.NotNull(receipt.GetProperty("Kind"));
-        Assert.NotNull(receipt.GetProperty("OperationId"));
-        Assert.NotNull(receipt.GetProperty("Epoch"));
-        Assert.NotNull(receipt.GetProperty("Accepted"));
-        Assert.NotNull(receipt.GetProperty("Stale"));
+        LifecycleOperationReceipt receiptShape = new LifecycleOperationReceipt();
+        Assert.NotNull(receiptShape.Kind);
+        Assert.Equal(0, receiptShape.OperationId);
+        Assert.Equal(0, receiptShape.Epoch);
     }
 
     [Fact]
     public async Task LifecycleEpochsRejectStaleCompletionsAndJoinOneRetryableTerminalOperation()
     {
-        var assembly = typeof(ContainedProcess).Assembly;
-        Type coordinator = assembly.GetType("SeqDoc.AcceptanceTests.ProcessOwnershipLifecycleCoordinator")
-            ?? throw new Xunit.Sdk.XunitException("Missing single lifecycle coordinator.");
-        Assert.NotNull(coordinator.GetMethod("BeginEpoch"));
-        Assert.NotNull(coordinator.GetMethod("AcceptCompletion"));
-        Assert.NotNull(coordinator.GetMethod("JoinTerminalOperation"));
-        Assert.NotNull(coordinator.GetMethod("RetryTerminalOperation"));
-        Assert.NotNull(coordinator.GetProperty("OperationReceipts"));
-        Assert.NotNull(coordinator.GetProperty("ImmutableEvidence"));
-
         // Exact internal protocol exercised below: BeginFamilyProofEpoch() and
         // JoinTerminalOperation() return immutable receipts; completion consumes (operationId,
         // nativeSuccess, familyProven); RetryTerminalOperation() starts no second native attempt
         // after success and instead returns/joins a newer family-proof receipt.
-        object instance = Activator.CreateInstance(coordinator)!;
-        var begin = coordinator.GetMethod("BeginFamilyProofEpoch")!;
-        var completeFamily = coordinator.GetMethod("CompleteFamilyProofEpoch")!;
-        var join = coordinator.GetMethod("JoinTerminalOperation")!;
-        var retry = coordinator.GetMethod("RetryTerminalOperation")!;
-        object familyN = begin.Invoke(instance, null)!;
-        object familyN1 = begin.Invoke(instance, null)!;
-        object stale = completeFamily.Invoke(instance,
-            [ToInt64(GetRequiredProperty(familyN, "OperationId")), false, true])!;
-        Assert.False((bool)GetRequiredProperty(stale, "Accepted"));
-        Assert.True((bool)GetRequiredProperty(stale, "Stale"));
-        object accepted = completeFamily.Invoke(instance,
-            [ToInt64(GetRequiredProperty(familyN1, "OperationId")), true, true])!;
-        Assert.True((bool)GetRequiredProperty(accepted, "Accepted"));
+        var instance = new ProcessOwnershipLifecycleCoordinator();
+        LifecycleOperationReceipt familyN = instance.BeginFamilyProofEpoch();
+        LifecycleOperationReceipt familyN1 = instance.BeginFamilyProofEpoch();
+        LifecycleOperationReceipt stale = instance.CompleteFamilyProofEpoch(familyN.OperationId, false, true);
+        Assert.False(stale.Accepted);
+        Assert.True(stale.Stale);
+        ManagedResourceSnapshot familySlot = Assert.Single(instance.ManagedResources,
+            entry => entry.Kind == ManagedResourceKind.FamilyProof);
+        Assert.Equal(familyN1.OperationId, familySlot.OperationId);
+        Assert.Equal(ManagedResourceState.Active, familySlot.State);
+        LifecycleOperationReceipt accepted = instance.CompleteFamilyProofEpoch(familyN1.OperationId, true, true);
+        Assert.True(accepted.Accepted);
 
-        object waitEpoch = coordinator.GetMethod("BeginEpoch")!.Invoke(instance, ["Wait"])!;
-        object drainEpoch = coordinator.GetMethod("BeginEpoch")!.Invoke(instance, ["Drain"])!;
-        object disposeEpoch = coordinator.GetMethod("BeginEpoch")!.Invoke(instance, ["Dispose"])!;
-        object staleWait = coordinator.GetMethod("AcceptCompletion")!.Invoke(instance,
-            [ToInt64(GetRequiredProperty(waitEpoch, "OperationId")), true])!;
-        Assert.True((bool)GetRequiredProperty(staleWait, "Stale"));
-        Assert.False((bool)GetRequiredProperty(staleWait, "Accepted"));
-        object currentDispose = coordinator.GetMethod("AcceptCompletion")!.Invoke(instance,
-            [ToInt64(GetRequiredProperty(disposeEpoch, "OperationId")), true])!;
-        Assert.True((bool)GetRequiredProperty(currentDispose, "Accepted"));
-        Assert.True(ToInt64(GetRequiredProperty(drainEpoch, "OperationId"))
-            < ToInt64(GetRequiredProperty(disposeEpoch, "OperationId")));
+        LifecycleOperationReceipt terminalA = instance.JoinTerminalOperation();
+        LifecycleOperationReceipt terminalB = instance.JoinTerminalOperation();
+        Assert.Equal(terminalA.OperationId, terminalB.OperationId);
+        LifecycleOperationReceipt failed = instance.CompleteTerminalOperation(terminalA.OperationId, false);
+        Assert.True(failed.Accepted);
+        LifecycleOperationReceipt retryReceipt = instance.RetryTerminalOperation();
+        Assert.True(retryReceipt.OperationId > terminalA.OperationId);
+        LifecycleOperationReceipt success = instance.CompleteTerminalOperation(retryReceipt.OperationId, true);
+        Assert.True(success.Accepted);
+        LifecycleOperationReceipt proofRetry = instance.RetryTerminalOperation();
+        Assert.NotEqual(retryReceipt.OperationId, proofRetry.OperationId);
+        Assert.Equal(instance.OperationReceipts.Select(item => item.OperationId),
+            instance.OperationReceipts.Select(item => item.OperationId).OrderBy(id => id));
+        Assert.NotSame(instance.ImmutableEvidence, instance.ImmutableEvidence);
 
-        object terminalA = join.Invoke(instance, null)!;
-        object terminalB = join.Invoke(instance, null)!;
-        Assert.Equal(GetRequiredProperty(terminalA, "OperationId"), GetRequiredProperty(terminalB, "OperationId"));
-        object failed = coordinator.GetMethod("CompleteTerminalOperation")!.Invoke(instance,
-            [ToInt64(GetRequiredProperty(terminalA, "OperationId")), false])!;
-        Assert.True((bool)GetRequiredProperty(failed, "Accepted"));
-        object retryReceipt = retry.Invoke(instance, null)!;
-        Assert.True(ToInt64(GetRequiredProperty(retryReceipt, "OperationId"))
-            > ToInt64(GetRequiredProperty(terminalA, "OperationId")));
-        object success = coordinator.GetMethod("CompleteTerminalOperation")!.Invoke(instance,
-            [ToInt64(GetRequiredProperty(retryReceipt, "OperationId")), true])!;
-        Assert.True((bool)GetRequiredProperty(success, "Accepted"));
-        object proofRetry = retry.Invoke(instance, null)!;
-        Assert.NotEqual(GetRequiredProperty(retryReceipt, "OperationId"), GetRequiredProperty(proofRetry, "OperationId"));
-        var receipts = ((System.Collections.IEnumerable)GetRequiredProperty(instance, "OperationReceipts"))
-            .Cast<object>().ToArray();
-        Assert.Equal(receipts.Select(receipt => ToInt64(GetRequiredProperty(receipt, "OperationId"))),
-            receipts.Select(receipt => ToInt64(GetRequiredProperty(receipt, "OperationId"))).OrderBy(id => id));
-        Assert.NotSame(GetRequiredProperty(instance, "ImmutableEvidence"), GetRequiredProperty(instance, "ImmutableEvidence"));
+        // A completion monitor owns the actual CTS/task lease.  Disposal is not legal while that
+        // lease is live: the first disposal epoch must retain ownership, then a newer epoch may
+        // complete only after the monitor's exact epoch is quiesced.
+        var monitorCoordinator = new ProcessOwnershipLifecycleCoordinator();
+        using var monitorCts = new CancellationTokenSource();
+        var monitorTask = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        LifecycleOperationReceipt monitorEpoch = monitorCoordinator.BeginCompletionMonitorEpoch(
+            monitorCts, monitorTask.Task);
+        ManagedResourceSnapshot monitorSlot = Assert.Single(monitorCoordinator.ManagedResources,
+            entry => entry.Kind == ManagedResourceKind.CompletionMonitor);
+        Assert.Equal(ManagedResourceState.Active, monitorSlot.State);
+        Assert.True(monitorSlot.HasLease);
+
+        bool initialRetry = true;
+        Task initialDisposal = monitorCoordinator.GetOrStartDispose(id =>
+        {
+            monitorCoordinator.CompleteDispose(retained: false, operationId: id);
+            return Task.CompletedTask;
+        }, out initialRetry);
+        Assert.False(initialRetry);
+        await initialDisposal;
+        Assert.Equal(LifecycleState.FamilyResourcesRetained, monitorCoordinator.State);
+        ManagedResourceSnapshot retainedDisposal = Assert.Single(monitorCoordinator.ManagedResources,
+            entry => entry.Kind == ManagedResourceKind.Disposal);
+        Assert.Equal(ManagedResourceState.Retained, retainedDisposal.State);
+        Assert.True(retainedDisposal.HasLease);
+        Assert.False(string.IsNullOrWhiteSpace(retainedDisposal.Evidence));
+        long retainedDisposalSequence = retainedDisposal.AcquisitionSequence;
+
+        monitorTask.SetResult();
+        LifecycleOperationReceipt monitorCompletion = monitorCoordinator.CompleteCompletionMonitorEpoch(monitorEpoch.OperationId);
+        Assert.True(monitorCompletion.Accepted);
+        Assert.Equal(ManagedResourceState.Quiescent, Assert.Single(monitorCoordinator.ManagedResources,
+            entry => entry.Kind == ManagedResourceKind.CompletionMonitor).State);
+
+        bool retry = false;
+        Task disposalRetry = monitorCoordinator.GetOrStartDispose(id =>
+        {
+            monitorCoordinator.CompleteDispose(retained: false, operationId: id);
+            return Task.CompletedTask;
+        }, out retry);
+        Assert.True(retry);
+        await disposalRetry;
+        Assert.Equal(LifecycleState.Disposed, monitorCoordinator.State);
+        ManagedResourceSnapshot finalDisposal = Assert.Single(monitorCoordinator.ManagedResources,
+            entry => entry.Kind == ManagedResourceKind.Disposal);
+        Assert.True(finalDisposal.OperationId > retainedDisposal.OperationId);
+        Assert.True(finalDisposal.OperationId > 0);
+        Assert.Equal(retainedDisposalSequence, finalDisposal.AcquisitionSequence);
+        Assert.True(finalDisposal.State is ManagedResourceState.Released or ManagedResourceState.Quiescent);
+        Assert.False(finalDisposal.HasLease);
+        Assert.DoesNotContain(monitorCoordinator.ManagedResources,
+            entry => entry.Kind == ManagedResourceKind.CompletionMonitor
+                && (entry.State is ManagedResourceState.Active or ManagedResourceState.Retained));
 
         // F6: the coordinator must be the production ContainedProcess authority, not merely a directly
         // instantiated protocol fixture.  A clean child must publish an accepted family-proof receipt.
@@ -2383,20 +2649,19 @@ public sealed class ProcessOwnershipTests
             ProcessOwnershipWaitResult cleanWait = await cleanProcess.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
             Assert.Equal(ProcessOwnershipFailureClass.None, cleanWait.FailureClass);
             cleanProcess.Dispose();
-            object cleanReceipts = GetRequiredLifecycleReceipts(cleanProcess);
-            object[] productionReceipts = ((System.Collections.IEnumerable)cleanReceipts).Cast<object>().ToArray();
+            IReadOnlyList<LifecycleOperationReceipt> productionReceipts = GetRequiredLifecycleReceipts(cleanProcess);
             string[] requiredKinds = ["Wait", "Drain", "Dispose", "FamilyProof"];
             foreach (string kind in requiredKinds)
             {
-                object receipt = Assert.Single(productionReceipts, item =>
-                    GetRequiredProperty(item, "Kind").ToString() == kind);
-                Assert.True((bool)GetRequiredProperty(receipt, "Accepted"));
-                Assert.True(ToInt64(GetRequiredProperty(receipt, "OperationId")) > 0);
+                LifecycleOperationReceipt receipt = Assert.Single(productionReceipts, item => item.Kind == kind);
+                Assert.True(receipt.Accepted);
+                Assert.True(receipt.OperationId > 0);
             }
             long[] productionIds = productionReceipts
-                .Select(item => ToInt64(GetRequiredProperty(item, "OperationId")))
+                .Select(item => item.OperationId)
                 .ToArray();
             Assert.Equal(productionIds.Distinct().OrderBy(id => id), productionIds);
+            AssertManagedSlotsAcquired(cleanProcess.OwnershipSnapshot, productionReceipts);
         }
 
         // The real terminal path must serialize concurrent callers, permit a retry after a failed native
@@ -2432,14 +2697,16 @@ public sealed class ProcessOwnershipTests
                 TimeSpan.FromSeconds(5)), "The second caller did not join the in-flight terminal operation.");
             releaseFirstTerminal.SetResult();
             await Task.WhenAll(first, joined);
-            object afterFailedTerminal = GetRequiredLifecycleReceipts(retryProcess);
+            IReadOnlyList<LifecycleOperationReceipt> afterFailedTerminal = GetRequiredLifecycleReceipts(retryProcess);
             long[] firstIds = LifecycleIds(afterFailedTerminal, "Terminal");
             Assert.True(firstIds.Length >= 2);
             Assert.Equal(firstIds[0], firstIds[1]);
+            AssertManagedSnapshotContract(retryProcess.OwnershipSnapshot);
 
             Assert.True(retryProcess.Terminate());
             long[] afterRetryIds = LifecycleIds(GetRequiredLifecycleReceipts(retryProcess), "Terminal");
             Assert.Contains(afterRetryIds, id => id > firstIds[0]);
+            AssertManagedSlotsAcquired(retryProcess.OwnershipSnapshot, GetRequiredLifecycleReceipts(retryProcess));
         }
 
         var proofBarriers = new ProcessOwnershipLifecycleBarriers();
@@ -2479,16 +2746,6 @@ public sealed class ProcessOwnershipTests
     [Fact]
     public async Task FailedReleaseRetainsNativeValueAndImmutableOrderedRetryEvidence()
     {
-        var assembly = typeof(ContainedProcess).Assembly;
-        Type snapshot = assembly.GetType("SeqDoc.AcceptanceTests.NativeResourceSnapshot")
-            ?? throw new Xunit.Sdk.XunitException("Failed release has no typed resource snapshot.");
-        Assert.NotNull(snapshot.GetProperty("Value"));
-        Assert.NotNull(snapshot.GetProperty("State"));
-        Assert.NotNull(snapshot.GetProperty("Attempt"));
-        Assert.NotNull(snapshot.GetProperty("Error"));
-        Assert.NotNull(snapshot.GetProperty("ReleaseOrder"));
-        Assert.NotNull(snapshot.GetProperty("IsImmutable"));
-
         var nativeCalls = new ProcessOwnershipNativeCalls();
         var close = FindInstanceTestSeam("CloseHandle", typeof(Func<nint, NativeCallResult>));
         Assert.NotNull(close);
@@ -2515,26 +2772,32 @@ public sealed class ProcessOwnershipTests
             Assert.Contains(result.Process.TeardownFailures,
                 evidence => evidence.Contains("8401", StringComparison.Ordinal));
             Assert.True(result.Process.HasRetainedFamilyResourcesForTests || result.Process.FailureClass == ProcessOwnershipFailureClass.TeardownDegraded);
-            object firstSnapshot = GetTypedOwnershipSnapshot(result.Process);
-            var firstEntries = ((System.Collections.IEnumerable)GetRequiredProperty(firstSnapshot, "NativeResources"))
-                .Cast<object>().ToArray();
-            Assert.Contains(firstEntries, entry => GetRequiredProperty(entry, "State").ToString() == "Owned"
-                && ConvertToNativeInt(GetRequiredProperty(entry, "Value")) == failedHandle
-                && Convert.ToInt32(GetRequiredProperty(entry, "Attempts"), CultureInfo.InvariantCulture) == 1
-                && GetRequiredProperty(entry, "Evidence").ToString()!.Contains("8401", StringComparison.Ordinal));
+            NativeResourceSnapshot[] firstEntries = result.Process.OwnershipSnapshot.NativeResources.ToArray();
+            AssertManagedSnapshotContract(result.Process.OwnershipSnapshot);
+            ManagedResourceSnapshot retainedDisposal = Assert.Single(result.Process.OwnershipSnapshot.ManagedResources,
+                entry => entry.Kind == ManagedResourceKind.Disposal && entry.State == ManagedResourceState.Retained);
+            string retainedEvidence = retainedDisposal.Evidence;
+            long retainedEpoch = retainedDisposal.OperationId;
+            Assert.Contains(firstEntries, entry => entry.State == NativeResourceState.Owned
+                && entry.Value == failedHandle
+                && entry.Attempts == 1
+                && entry.Evidence.Contains("8401", StringComparison.Ordinal));
             var immutableFirst = firstEntries.Select(entry =>
-                (GetRequiredProperty(entry, "Kind").ToString(), GetRequiredProperty(entry, "State").ToString(),
-                    ConvertToNativeInt(GetRequiredProperty(entry, "Value")))).ToArray();
+                (entry.Kind, entry.State, entry.Value)).ToArray();
             result.Process.Dispose();
-            object secondSnapshot = GetTypedOwnershipSnapshot(result.Process);
-            var secondEntries = ((System.Collections.IEnumerable)GetRequiredProperty(secondSnapshot, "NativeResources"))
-                .Cast<object>().ToArray();
-            Assert.DoesNotContain(secondEntries, entry => GetRequiredProperty(entry, "State").ToString() == "Owned");
+            NativeResourceSnapshot[] secondEntries = result.Process.OwnershipSnapshot.NativeResources.ToArray();
+            Assert.DoesNotContain(secondEntries, entry => entry.State == NativeResourceState.Owned);
             Assert.Equal(immutableFirst, firstEntries.Select(entry =>
-                (GetRequiredProperty(entry, "Kind").ToString(), GetRequiredProperty(entry, "State").ToString(),
-                    ConvertToNativeInt(GetRequiredProperty(entry, "Value")))));
+                (entry.Kind, entry.State, entry.Value)));
             Assert.Equal(firstEntries.Length, secondEntries.Length);
             Assert.True(result.Process.TeardownOrderForTests.Count > 0);
+            AssertManagedSlotsQuiescentOrReleased(result.Process.OwnershipSnapshot);
+            ManagedResourceSnapshot releasedDisposal = Assert.Single(result.Process.OwnershipSnapshot.ManagedResources,
+                entry => entry.Kind == ManagedResourceKind.Disposal);
+            Assert.Equal(ManagedResourceState.Retained, retainedDisposal.State);
+            Assert.Equal(retainedEpoch, retainedDisposal.OperationId);
+            Assert.True(releasedDisposal.OperationId > retainedEpoch);
+            Assert.Contains(retainedEvidence, releasedDisposal.Evidence, StringComparison.Ordinal);
         }
         finally
         {
@@ -2544,6 +2807,7 @@ public sealed class ProcessOwnershipTests
 
         // F8: the internal ledger is strict about identity.  Duplicate acquisition and a failed release
         // against an already released slot must not synthesize or mutate ownership.
+        var assembly = typeof(ContainedProcess).Assembly;
         Type ledgerType = assembly.GetType("SeqDoc.AcceptanceTests.NativeOwnershipLedger")
             ?? throw new Xunit.Sdk.XunitException("Missing typed native ownership ledger.");
         object ledger = Activator.CreateInstance(ledgerType)!;
@@ -2818,50 +3082,111 @@ public sealed class ProcessOwnershipTests
         }
     }
 
-    private static object GetTypedOwnershipSnapshot(object owner)
-    {
-        foreach (string name in new[] { "OwnershipSnapshot", "ResourceSnapshot", "ConstructionSnapshot" })
-        {
-            PropertyInfo? property = owner.GetType().GetProperty(name,
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            if (property?.GetValue(owner) is object snapshot)
-            {
-                return snapshot;
-            }
-        }
+    private static ProcessOwnershipSnapshot GetTypedOwnershipSnapshot(ProcessOwnershipConstructionResult result) =>
+        result.OwnershipSnapshot
+        ?? throw new Xunit.Sdk.XunitException("Construction result has no typed ownership snapshot.");
 
-        throw new Xunit.Sdk.XunitException("No typed ownership snapshot is observable.");
+    private static ProcessOwnershipSnapshot GetTypedOwnershipSnapshot(ContainedProcess owner) => owner.OwnershipSnapshot;
+
+    private static IReadOnlyList<LifecycleOperationReceipt> GetRequiredLifecycleReceipts(ContainedProcess process) =>
+        process.LifecycleOperationReceiptsForTests;
+
+    private static void AssertManagedSnapshotContract(ProcessOwnershipSnapshot snapshot)
+    {
+        IReadOnlyList<ManagedResourceSnapshot> entries = snapshot.ManagedResources;
+        ManagedResourceKind[] expectedKinds =
+        [
+            ManagedResourceKind.CompletionMonitor, ManagedResourceKind.DrainCancellation,
+            ManagedResourceKind.StdoutDrain, ManagedResourceKind.StderrDrain,
+            ManagedResourceKind.ProcessWait, ManagedResourceKind.TerminalOperation,
+            ManagedResourceKind.FamilyProof, ManagedResourceKind.Disposal,
+        ];
+        Assert.Equal(expectedKinds, entries.Select(entry => entry.Kind));
+        Assert.Equal(expectedKinds.Length, entries.Select(entry => entry.Kind).Distinct().Count());
+        long[] acquiredSequences = entries.Where(entry => entry.State != ManagedResourceState.Unacquired)
+            .Select(entry => entry.AcquisitionSequence).ToArray();
+        Assert.All(acquiredSequences, sequence => Assert.True(sequence > 0));
+        Assert.Equal(acquiredSequences.Length, acquiredSequences.Distinct().Count());
+        Assert.All(entries, entry =>
+        {
+            Assert.True(entry.AcquisitionSequence >= 0);
+            Assert.True(entry.Attempts >= 0);
+            Assert.NotNull(entry.Evidence);
+            if (entry.State is ManagedResourceState.Active or ManagedResourceState.Retained)
+            {
+                Assert.True(entry.HasLease);
+            }
+            else if (entry.State is ManagedResourceState.Unacquired or ManagedResourceState.Released)
+            {
+                Assert.False(entry.HasLease);
+            }
+            if (entry.State == ManagedResourceState.Unacquired)
+            {
+                Assert.Equal(0, entry.AcquisitionSequence);
+                Assert.Equal(0, entry.OperationId);
+            }
+            else
+            {
+                Assert.True(entry.OperationId > 0);
+            }
+        });
     }
 
-    private static object GetRequiredLifecycleReceipts(object process)
+    private static void AssertManagedSlotsAcquired(ProcessOwnershipSnapshot snapshot,
+        IReadOnlyList<LifecycleOperationReceipt> receipts)
     {
-        foreach (string name in new[] { "LifecycleOperationReceiptsForTests", "LifecycleSnapshotForTests" })
+        AssertManagedSnapshotContract(snapshot);
+        ManagedResourceSnapshot monitor = Assert.Single(snapshot.ManagedResources,
+            entry => entry.Kind == ManagedResourceKind.CompletionMonitor);
+        Assert.NotEqual(ManagedResourceState.Unacquired, monitor.State);
+        Assert.True(monitor.OperationId > 0);
+        foreach (ManagedResourceKind kind in new[] { ManagedResourceKind.DrainCancellation,
+            ManagedResourceKind.StdoutDrain, ManagedResourceKind.StderrDrain })
         {
-            PropertyInfo? property = process.GetType().GetProperty(name,
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            if (property?.GetValue(process) is object snapshot)
-            {
-                if (name == "LifecycleSnapshotForTests")
-                {
-                    PropertyInfo? receipts = snapshot.GetType().GetProperty("OperationReceipts",
-                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                    if (receipts?.GetValue(snapshot) is object nested)
-                    {
-                        return nested;
-                    }
-                }
-
-                return snapshot;
-            }
+            ManagedResourceSnapshot entry = Assert.Single(snapshot.ManagedResources, item => item.Kind == kind);
+            Assert.NotEqual(ManagedResourceState.Unacquired, entry.State);
+            Assert.Equal(ReceiptId(receipts, "Drain"), entry.OperationId);
         }
 
-        throw new Xunit.Sdk.XunitException("Production ContainedProcess does not expose typed lifecycle receipts.");
+        foreach ((ManagedResourceKind kind, string receiptKind) in new[]
+        {
+            (ManagedResourceKind.ProcessWait, "Wait"),
+            (ManagedResourceKind.TerminalOperation, "Terminal"),
+            (ManagedResourceKind.FamilyProof, "FamilyProof"),
+            (ManagedResourceKind.Disposal, "Dispose"),
+        })
+        {
+            LifecycleOperationReceipt? receipt = receipts.LastOrDefault(item => item.Kind == receiptKind);
+            ManagedResourceSnapshot entry = Assert.Single(snapshot.ManagedResources, item => item.Kind == kind);
+            if (receipt is null)
+            {
+                Assert.Equal(ManagedResourceState.Unacquired, entry.State);
+                Assert.Equal(0, entry.OperationId);
+                continue;
+            }
+
+            Assert.NotEqual(ManagedResourceState.Unacquired, entry.State);
+            Assert.True(entry.OperationId > 0);
+            Assert.Equal(receipt.OperationId, entry.OperationId);
+        }
     }
 
-    private static long[] LifecycleIds(object receipts, string kind) =>
-        ((System.Collections.IEnumerable)receipts).Cast<object>()
-            .Where(receipt => GetRequiredProperty(receipt, "Kind").ToString() == kind)
-            .Select(receipt => ToInt64(GetRequiredProperty(receipt, "OperationId")))
+    private static void AssertManagedSlotsQuiescentOrReleased(ProcessOwnershipSnapshot snapshot)
+    {
+        AssertManagedSnapshotContract(snapshot);
+        Assert.DoesNotContain(snapshot.ManagedResources, entry =>
+            entry.State is ManagedResourceState.Active or ManagedResourceState.Retained);
+        Assert.All(snapshot.ManagedResources, entry =>
+            Assert.True(entry.State is ManagedResourceState.Unacquired or ManagedResourceState.Quiescent or ManagedResourceState.Released));
+    }
+
+    private static long ReceiptId(IReadOnlyList<LifecycleOperationReceipt> receipts, string kind) =>
+        Assert.Single(receipts, receipt => receipt.Kind == kind).OperationId;
+
+    private static long[] LifecycleIds(IReadOnlyList<LifecycleOperationReceipt> receipts, string kind) =>
+        receipts
+            .Where(receipt => receipt.Kind == kind)
+            .Select(receipt => receipt.OperationId)
             .ToArray();
 
     private static string[] SnapshotProjection(object snapshot) =>

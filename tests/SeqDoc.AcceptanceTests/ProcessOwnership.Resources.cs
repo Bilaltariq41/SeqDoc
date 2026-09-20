@@ -13,6 +13,64 @@ internal enum NativeResourceKind
 internal enum NativeResourceState { Owned, Released }
 internal enum NativeReleasePrerequisiteState { None, Uninitialized, Ready, Completed }
 
+internal enum ManagedResourceKind
+{
+    CompletionMonitor, DrainCancellation, StdoutDrain, StderrDrain,
+    ProcessWait, TerminalOperation, FamilyProof, Disposal,
+}
+
+internal enum ManagedResourceState { Unacquired, Active, Quiescent, Retained, Released }
+
+internal abstract class ManagedResourceLease : IDisposable
+{
+    private int _disposed;
+    public abstract object Value { get; }
+    public void Dispose() { if (Interlocked.Exchange(ref _disposed, 1) == 0) DisposeCore(); }
+    protected abstract void DisposeCore();
+}
+internal sealed class CompletionMonitorLease : ManagedResourceLease
+{
+    internal CompletionMonitorLease(CancellationTokenSource cts, Task task) { Cts = cts; Task = task; }
+    internal CancellationTokenSource Cts { get; }
+    internal Task Task { get; }
+    public override object Value => Task;
+    protected override void DisposeCore() => Cts.Dispose();
+}
+internal sealed class DrainCancellationLease : ManagedResourceLease
+{
+    internal DrainCancellationLease(CancellationTokenSource cts) => Cts = cts;
+    internal CancellationTokenSource Cts { get; }
+    public override object Value => Cts;
+    protected override void DisposeCore() => Cts.Dispose();
+}
+internal sealed class DrainTaskLease : ManagedResourceLease
+{
+    internal DrainTaskLease(Task task) => Task = task;
+    internal Task Task { get; }
+    public override object Value => Task;
+    protected override void DisposeCore() { }
+}
+internal sealed class ManagedTaskLease : ManagedResourceLease
+{
+    internal ManagedTaskLease(Task task) => Task = task;
+    internal Task Task { get; }
+    public override object Value => Task;
+    protected override void DisposeCore() { }
+}
+
+internal sealed class ManagedResourceSnapshot
+{
+    public ManagedResourceKind Kind { get; init; }
+    public long OperationId { get; init; }
+    public long AcquisitionSequence { get; init; }
+    public ManagedResourceState State { get; init; }
+    public int Attempts { get; init; }
+    public string Evidence { get; init; } = string.Empty;
+    public string? Error { get; init; }
+    public bool HasLease { get; init; }
+    public bool IsImmutable => true;
+}
+
 internal sealed class NativeResourceSnapshot
 {
     public NativeResourceKind Kind { get; init; }
@@ -31,7 +89,7 @@ internal sealed class NativeResourceSnapshot
 internal sealed class ProcessOwnershipSnapshot
 {
     public IReadOnlyList<NativeResourceSnapshot> NativeResources { get; init; } = Array.Empty<NativeResourceSnapshot>();
-    public IReadOnlyList<string> ManagedResources { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<ManagedResourceSnapshot> ManagedResources { get; init; } = Array.Empty<ManagedResourceSnapshot>();
     public bool Immutable => true;
     public bool IsImmutable => true;
 }
@@ -55,6 +113,20 @@ internal sealed class NativeOwnershipLedger
     private readonly object _gate = new();
     private long _nextSequence;
     private int _nextReleaseOrder;
+    private sealed class ManagedSlot
+    {
+        public ManagedResourceKind Kind;
+        public long OperationId;
+        public long AcquisitionSequence;
+        public ManagedResourceState State;
+        public int Attempts;
+        public string Evidence = string.Empty;
+        public string? Error;
+        public ManagedResourceLease? Lease;
+    }
+    private readonly ManagedSlot[] _managed = Enum.GetValues<ManagedResourceKind>()
+        .Select(kind => new ManagedSlot { Kind = kind }).ToArray();
+    private long _nextManagedSequence;
 
     internal void Acquire(NativeResourceKind kind, nint value, string evidence)
     {
@@ -157,10 +229,135 @@ internal sealed class NativeOwnershipLedger
             return new ProcessOwnershipSnapshot
             {
                 NativeResources = Array.AsReadOnly(resources),
-                ManagedResources = Array.AsReadOnly(Array.Empty<string>()),
+                ManagedResources = ManagedSnapshotLocked(),
             };
         }
     }
+
+    internal IReadOnlyList<ManagedResourceSnapshot> ManagedSnapshot()
+    {
+        lock (_gate) return ManagedSnapshotLocked();
+    }
+
+    private System.Collections.ObjectModel.ReadOnlyCollection<ManagedResourceSnapshot> ManagedSnapshotLocked() => _managed
+        .Select(slot => new ManagedResourceSnapshot
+        {
+            Kind = slot.Kind, OperationId = slot.OperationId,
+            AcquisitionSequence = slot.AcquisitionSequence, State = slot.State,
+            Attempts = slot.Attempts, Evidence = slot.Evidence, Error = slot.Error,
+            HasLease = slot.Lease is not null && slot.State is not (ManagedResourceState.Unacquired or ManagedResourceState.Released),
+        }).ToArray().AsReadOnly();
+
+    internal void BeginManaged(ManagedResourceKind kind, long operationId, ManagedResourceLease lease, string evidence)
+    {
+        lock (_gate)
+        {
+            ManagedSlot slot = _managed[(int)kind];
+            if (slot.State == ManagedResourceState.Active && slot.OperationId == operationId) return;
+            // Task-only reservations are replaceable after a failed epoch. Disposable leases are not:
+            // replacing one before its explicit quiescent release would make its CTS unreachable.
+            if (slot.Lease is CompletionMonitorLease or DrainCancellationLease)
+            {
+                throw new InvalidOperationException($"Managed lease {kind} must be quiescent and released before replacement.");
+            }
+            slot.Lease = lease;
+            slot.OperationId = operationId;
+            if (slot.AcquisitionSequence == 0) slot.AcquisitionSequence = ++_nextManagedSequence;
+            slot.State = ManagedResourceState.Active;
+            slot.Attempts++;
+            slot.Evidence = Append(slot.Evidence, evidence);
+            slot.Error = null;
+        }
+    }
+
+    internal void BeginManagedBatch(long operationId, string evidence,
+        params (ManagedResourceKind Kind, ManagedResourceLease Lease)[] entries)
+    {
+        lock (_gate)
+        {
+            foreach ((ManagedResourceKind kind, ManagedResourceLease lease) in entries)
+            {
+                ManagedSlot slot = _managed[(int)kind];
+                if ((slot.State == ManagedResourceState.Active && slot.OperationId == operationId)
+                    || slot.Lease is CompletionMonitorLease or DrainCancellationLease)
+                {
+                    throw new InvalidOperationException($"Managed lease {kind} cannot be installed for this epoch.");
+                }
+            }
+
+            foreach ((ManagedResourceKind kind, ManagedResourceLease lease) in entries)
+            {
+                ManagedSlot slot = _managed[(int)kind];
+                slot.Lease = lease;
+                slot.OperationId = operationId;
+                if (slot.AcquisitionSequence == 0) slot.AcquisitionSequence = ++_nextManagedSequence;
+                slot.State = ManagedResourceState.Active;
+                slot.Attempts++;
+                slot.Evidence = Append(slot.Evidence, evidence);
+                slot.Error = null;
+            }
+        }
+    }
+
+    internal IReadOnlyList<IDisposable> RollbackManagedBatch(long operationId, params ManagedResourceKind[] kinds)
+    {
+        lock (_gate)
+        {
+            var released = new List<IDisposable>();
+            foreach (ManagedResourceKind kind in kinds)
+            {
+                ManagedSlot slot = _managed[(int)kind];
+                if (slot.OperationId != operationId || slot.State != ManagedResourceState.Active || slot.Lease is null)
+                {
+                    continue;
+                }
+
+                released.Add(slot.Lease);
+                slot.Lease = null;
+                slot.State = ManagedResourceState.Released;
+                slot.Attempts++;
+                slot.Evidence = Append(slot.Evidence, "Managed reservation rolled back");
+            }
+            return released.AsReadOnly();
+        }
+    }
+
+    internal T? CurrentManagedLease<T>(ManagedResourceKind kind) where T : ManagedResourceLease
+    { lock (_gate) return _managed[(int)kind].Lease as T; }
+
+    internal bool HasManagedBlocker(ManagedResourceKind except)
+    { lock (_gate) return _managed.Any(slot => slot.Kind != except && slot.Lease is not null && slot.State is ManagedResourceState.Active or ManagedResourceState.Retained); }
+
+    internal IReadOnlyList<IDisposable> ReleaseQuiescentManaged()
+    {
+        lock (_gate)
+        {
+            var released = new List<IDisposable>();
+            foreach (ManagedSlot slot in _managed.Where(slot => slot.State == ManagedResourceState.Quiescent && slot.Lease is not null))
+            {
+                released.Add(slot.Lease!);
+                slot.Lease = null;
+                slot.State = ManagedResourceState.Released;
+                slot.Evidence = Append(slot.Evidence, "Managed lease released");
+            }
+            return released.AsReadOnly();
+        }
+    }
+
+    internal bool CompleteManaged(ManagedResourceKind kind, long operationId, ManagedResourceState state, string evidence)
+    {
+        lock (_gate)
+        {
+            ManagedSlot slot = _managed[(int)kind];
+            if (slot.State == ManagedResourceState.Unacquired || slot.OperationId != operationId) return false;
+            slot.State = state;
+            slot.Attempts++;
+            slot.Evidence = Append(slot.Evidence, evidence);
+            return true;
+        }
+    }
+
+    private static string Append(string current, string next) => string.IsNullOrEmpty(current) ? next : current + "; " + next;
 
     private static NativeResourceSnapshot Copy(Slot slot) => new()
     {

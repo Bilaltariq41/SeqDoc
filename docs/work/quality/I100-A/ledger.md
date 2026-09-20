@@ -622,3 +622,77 @@ with zero skipped; `git diff --check` passed. All five findings are Fixed pendin
 New independent complete-candidate review verdict: PASS, no findings. F1, F2, F3, F4, and F5 are all independently
 confirmed Fixed. The candidate remains at ReviewRequired for Ahmad; the final gate has not run and remains prohibited
 until Ahmad approves.
+
+Ahmad then performed the required human latest-head review at `d52df4e` and returned BLOCK. Accepted findings: High,
+implement all eight frozen managed slots with typed ownership, epoch, quiescence, retention/retry, and immutable snapshot
+evidence; Medium, replace redesign reflection/fallback probes with direct typed evidence; Low, use or remove the native
+close adapter and replace the machine-local recovery path with an artifact identifier and digest. The authorization
+question is resolved under canonical T2/T3 policy. I100-A moved to ResolvingFindings; final gate and GH-107 remain
+withheld.
+
+Managed-authority repair evidence: existing grouped tests were converted to direct typed access and compile-red on the
+missing eight-slot contract without increasing the 76-test total. Production then added typed managed snapshots and
+coordinator-mediated transitions, routed native close through the existing adapter, and neutralized the machine-local
+recovery record. Focused SDK 10.0.302 verification passed 76/76 with zero skipped and `git diff --check` passed. An
+independent review is required before publishing a new head or requesting Ahmad's next review.
+
+Independent review found two High managed-authority defects. F1: typed managed entries mirror metadata but do not own or
+reach the actual task/CTS leases, leaving raw fields authoritative. F2: startup can strand synthetic Active entries and
+Disposed has no structural Active/Retained-slot rejection. Medium direct evidence, Low adapter routing, and Low neutral
+artifact evidence are Fixed. The checkpoint returned to ResolvingFindings for lease ownership and legality repair.
+
+Existing tests then established red evidence for real lease presence, atomic startup rollback, stable disposal-slot
+identity, and Disposed blocking on an active monitor. Production now stores exact task/CTS leases in the typed ledger,
+uses ledger leases for cleanup, rolls back unpublished workers, releases/disposes outside locks, and serializes disposal
+through final state publication. A one-test completed-task observability regression was fixed without restoring raw-field
+authority. Focused verification passed 76/76; F1/F2 are Fixed pending independent review.
+
+Independent rereview found one remaining High: drain and completion-monitor `Task.Run` delegates are scheduled before
+lease publication, so they begin by waiting on a publication barrier while not yet owned by a typed slot. Concrete lease
+ownership, rollback, Disposed legality, stable retries, direct evidence, adapter routing, and neutral recovery evidence
+were accepted. The two repair rounds are exhausted; I100-A returns to Blocked with no final gate or publication.
+
+The owner separately authorized the one remaining High repair: reservation-task leases must be installed before any
+drain/monitor worker is scheduled, and real worker completion must bridge into the exact registered reservation. No new
+tests are permitted; focused verification and independent rereview remain mandatory before publication.
+
+Reservation-first repair evidence: existing tests now block each install observer for 500 ms and prove no corresponding
+worker delegate has begun, then prove all workers begin after slot installation and preserve acquisition identity.
+Production binds non-running reservations to managed leases before `Task.Run`, bridges success/fault/cancellation, and
+completes epochs from reservation tasks. Focused verification passed 76/76; the High is Fixed pending independent review.
+
+Independent rereview found one High partial-scheduling path: a first drain worker may be scheduled before the second
+scheduler throws, but current rollback detaches leases without awaiting that worker. Normal ordering and all Ahmad
+findings were accepted. One final repair round may add deterministic scheduler-failure coverage and quiesce every
+successfully scheduled worker before rollback; remaining High returns the checkpoint to Blocked.
+
+The final repair added a typed scheduler seam and deterministic partial-scheduling regression. Production retains each
+successfully returned worker task, cancels and quiesces it before rollback, and retains ledger ownership when bounded
+quiescence cannot be established. Focused SDK 10.0.302 verification passed 76/76; independent rereview remains required.
+
+Final independent rereview found one High: normal successful startup discards the scheduler-returned worker Tasks after
+storing only reservation Tasks in typed leases. Partial-failure rollback is fixed, but actual scheduled-task ownership is
+not durable on the success path. The second repair round is exhausted and the checkpoint returns to Blocked.
+
+The owner authorized replacing scheduler-returned Tasks with direct queue admission so the preinstalled typed reservation
+is the only Task representing each worker. The existing partial-scheduling regression will become a partial-queue
+admission regression; no test-count increase is allowed. Focused and independent verification remain required.
+
+Direct-queue repair evidence: worker callbacks are admitted through a bool-returning queue with no returned worker Task;
+the preinstalled typed reservation is the sole task. The partial-admission regression proves admitted stdout settles
+before rollback when stderr is rejected. Faulted/canceled reservations are observed and treated as quiescent; only a
+timeout retains ownership. Focused verification passed 76/76; independent rereview remains required.
+
+Independent rereview accepted all ownership and Ahmad findings as Fixed, with one Medium coverage gap: no deterministic
+CompletionMonitor queue-rejection scenario. Repair is test-only within the existing grouped claim; total remains 76.
+
+The grouped construction test now deterministically rejects CompletionMonitor queue admission and verifies non-start,
+typed rollback, and cleanup reachability. Focused verification passed 76/76; F9 is Fixed pending independent review.
+
+Review finding F9 throw-after-queue is Rejected pending independent confirmation. The internal queue seam's exact
+contract is atomic bool admission or pre-admission throw; production uses `ThreadPool.QueueUserWorkItem` and consumes its
+bool directly. Queue-then-throw is outside the accepted producer contract. No candidate change or focused rerun occurred.
+
+Independent review verdict: PASS, no findings. F9 Rejected is accepted; all Ahmad and prior independent findings are
+Fixed. Focused evidence remains 76/76. Publication and Ahmad rereview await explicit commit/push authority; no final gate
+has run.

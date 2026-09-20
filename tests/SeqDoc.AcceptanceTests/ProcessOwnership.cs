@@ -351,7 +351,8 @@ internal static class ProcessOwnershipEncoding
 /// </summary>
 public sealed partial class ContainedProcess : IDisposable
 {
-    private readonly ProcessOwnershipLifecycleCoordinator _lifecycle = new();
+    private readonly NativeOwnershipLedger _ownershipLedger = new();
+    private readonly ProcessOwnershipLifecycleCoordinator _lifecycle;
     private readonly List<string> _teardownFailures = new();
     private readonly List<string> _teardownOrderForTests = new();
 
@@ -383,9 +384,9 @@ public sealed partial class ContainedProcess : IDisposable
     private bool _teardownSummaryRecorded;
     private readonly object _resourceGate = new();
     private readonly object _completionMonitorGate = new();
+    private bool _completionMonitorStarting;
     private readonly object _teardownEvidenceGate = new();
     private readonly ProcessOwnershipNativeCalls _nativeCalls;
-    private readonly NativeOwnershipLedger _ownershipLedger = new();
     private int _peekFailureRecorded;
 
     // GH106-R2-F2: production default is 10s; only a test seam may shrink it (never reachable from a
@@ -397,6 +398,7 @@ public sealed partial class ContainedProcess : IDisposable
     private ContainedProcess(ProcessOwnershipNativeCalls? nativeCalls)
     {
         _nativeCalls = nativeCalls ?? new ProcessOwnershipNativeCalls();
+        _lifecycle = new ProcessOwnershipLifecycleCoordinator(_ownershipLedger);
     }
 
     internal ProcessOwnershipSnapshot OwnershipSnapshot => _ownershipLedger.Snapshot();
@@ -411,6 +413,9 @@ public sealed partial class ContainedProcess : IDisposable
     /// construction failure (which never returns a <see cref="ProcessOwnershipConstructionResult.Process"/>).
     /// </summary>
     internal static Action<ContainedProcess>? PostDrainsStartHookForTests;
+    internal static Action<ManagedResourceKind>? ManagedResourceInstallObserverForTests;
+    internal static Action<ManagedResourceKind>? ManagedWorkerStartObserverForTests;
+    internal static Func<ManagedResourceKind, Action, bool>? ManagedWorkerQueueForTests;
 
     /// <summary>
     /// GH106-R2-F11 test-only seam: invoked with a resource label immediately before each partial-
@@ -478,7 +483,7 @@ public sealed partial class ContainedProcess : IDisposable
         // posted its zero message before the test could cancel the monitor.
         _completionObservationStoppedForTests = true;
         lock (_resourceGate) { _activeProcessZeroObserved = false; }
-        _completionMonitorCts?.Cancel();
+        _lifecycle.CurrentManagedLease<CompletionMonitorLease>(ManagedResourceKind.CompletionMonitor)?.Cts.Cancel();
     }
 
     internal Task? CompletionMonitorTaskForTests => _completionMonitor;
@@ -873,7 +878,8 @@ public sealed partial class ContainedProcess : IDisposable
                 ReleaseOwned(resource.Kind, ResourceLabel(resource.Kind), failures);
             }
             bool retained = HasOwnedTrackedResource();
-            _lifecycle.CompleteDispose(retained);
+            DisposeManagedLeases(_lifecycle.CompleteDispose(retained));
+            ClearManagedMirrorsIfDisposed();
             return !retained;
         }
 
@@ -921,9 +927,15 @@ public sealed partial class ContainedProcess : IDisposable
         {
             failures.Add("ACTIVE_PROCESS_ZERO was not observed within the construction cleanup bound.");
         }
-        bool monitorComplete = WaitConstructionTaskResult(_completionMonitor, "completion monitor", failures);
-        bool stdoutComplete = WaitConstructionTaskResult(_stdOutDrain, "stdout drain", failures);
-        bool stderrComplete = WaitConstructionTaskResult(_stdErrDrain, "stderr drain", failures);
+        bool monitorComplete = WaitConstructionTaskResult(
+            _lifecycle.CurrentManagedLease<CompletionMonitorLease>(ManagedResourceKind.CompletionMonitor)?.Task,
+            "completion monitor", failures);
+        bool stdoutComplete = WaitConstructionTaskResult(
+            _lifecycle.CurrentManagedLease<DrainTaskLease>(ManagedResourceKind.StdoutDrain)?.Task,
+            "stdout drain", failures);
+        bool stderrComplete = WaitConstructionTaskResult(
+            _lifecycle.CurrentManagedLease<DrainTaskLease>(ManagedResourceKind.StderrDrain)?.Task,
+            "stderr drain", failures);
         bool managedComplete = monitorComplete && stdoutComplete && stderrComplete;
         if (!familyProven || !managedComplete || !jobTermination.Succeeded)
         {
@@ -933,18 +945,16 @@ public sealed partial class ContainedProcess : IDisposable
             return false;
         }
 
-        _completionMonitorCts?.Cancel();
-        _completionMonitorCts?.Dispose();
-        _completionMonitorCts = null;
-        _drainCts?.Dispose();
-        _drainCts = null;
+        _lifecycle.CurrentManagedLease<CompletionMonitorLease>(ManagedResourceKind.CompletionMonitor)?.Cts.Cancel();
+        _lifecycle.CurrentManagedLease<DrainCancellationLease>(ManagedResourceKind.DrainCancellation)?.Cts.Cancel();
 
         foreach (NativeResourceSnapshot resource in _ownershipLedger.ReverseOwned())
         {
             ReleaseOwned(resource.Kind, ResourceLabel(resource.Kind), failures);
         }
         bool resourcesRetained = HasOwnedTrackedResource();
-        _lifecycle.CompleteDispose(resourcesRetained);
+        DisposeManagedLeases(_lifecycle.CompleteDispose(resourcesRetained));
+        ClearManagedMirrorsIfDisposed();
         return !resourcesRetained;
     }
 
@@ -985,6 +995,38 @@ public sealed partial class ContainedProcess : IDisposable
             failures.Add($"{label} failed: {ex.InnerException?.Message ?? ex.Message}");
             return false;
         }
+    }
+
+    private bool WaitManagedReservationQuiesced(Task? task)
+    {
+        if (task is null)
+        {
+            return true;
+        }
+
+        try
+        {
+            if (!task.Wait(_constructionCleanupBound))
+            {
+                return false;
+            }
+        }
+        catch (AggregateException)
+        {
+            // Continue to observe the exact reservation failure below.
+        }
+
+        try
+        {
+            task.GetAwaiter().GetResult();
+        }
+        catch (Exception)
+        {
+            // A completed faulted or cancelled reservation proves that its callback is no longer live.
+            // GetResult observes the exact reservation failure before quiescence is accepted.
+        }
+
+        return true;
     }
 
     public Task<ProcessOwnershipWaitResult> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken)
@@ -1074,7 +1116,9 @@ public sealed partial class ContainedProcess : IDisposable
             // Give the job's completion port a bounded chance to report ACTIVE_PROCESS_ZERO (every
             // process in the job, including descendants, has exited) before declaring the wait complete.
             Task familyProof = EnsureFamilyProofAsync(cancellationToken: CancellationToken.None);
-            Task drainCompletion = Task.WhenAll(DrainOrTruncate(_stdOutDrain), DrainOrTruncate(_stdErrDrain));
+            Task drainCompletion = Task.WhenAll(
+                DrainOrTruncate(_lifecycle.CurrentManagedLease<DrainTaskLease>(ManagedResourceKind.StdoutDrain)?.Task as Task<(string Text, bool Truncated)>),
+                DrainOrTruncate(_lifecycle.CurrentManagedLease<DrainTaskLease>(ManagedResourceKind.StderrDrain)?.Task as Task<(string Text, bool Truncated)>));
             Task waitDeadline = Task.Delay(Timeout.InfiniteTimeSpan, linked.Token);
             Task raceWinner = await Task.WhenAny(familyProof, drainCompletion, waitDeadline).ConfigureAwait(false);
             bool deadlineForcedFamilyTermination = raceWinner == waitDeadline
@@ -1115,8 +1159,10 @@ public sealed partial class ContainedProcess : IDisposable
         // write end — which is what actually unblocks the in-flight blocked Read() (via EOF or the
         // existing IOException catch in DrainPipe). No change to DrainPipe itself is required: once
         // unblocked, its existing EOF/IOException handling completes it and marks truncation.
-        var stdOutDrainTask = DrainOrTruncate(_stdOutDrain);
-        var stdErrDrainTask = DrainOrTruncate(_stdErrDrain);
+        var stdOutDrainTask = DrainOrTruncate(
+            _lifecycle.CurrentManagedLease<DrainTaskLease>(ManagedResourceKind.StdoutDrain)?.Task as Task<(string Text, bool Truncated)>);
+        var stdErrDrainTask = DrainOrTruncate(
+            _lifecycle.CurrentManagedLease<DrainTaskLease>(ManagedResourceKind.StderrDrain)?.Task as Task<(string Text, bool Truncated)>);
         var drainsTask = Task.WhenAll(stdOutDrainTask, stdErrDrainTask);
         var deadlineTask = Task.Delay(_drainTimeout, linked.Token);
         var drainRaceWinner = await Task.WhenAny(drainsTask, deadlineTask).ConfigureAwait(false);
@@ -1128,7 +1174,7 @@ public sealed partial class ContainedProcess : IDisposable
             {
                 // A failed terminal operation cannot leave a synchronous read live indefinitely. On
                 // success, leave drains running to consume buffered bytes and observe EOF.
-                _drainCts?.Cancel();
+                _lifecycle.CurrentManagedLease<DrainCancellationLease>(ManagedResourceKind.DrainCancellation)?.Cts.Cancel();
             }
         }
         else
@@ -1194,7 +1240,8 @@ public sealed partial class ContainedProcess : IDisposable
             {
                 ReleaseOwned(resource.Kind, ResourceLabel(resource.Kind));
             }
-            _lifecycle.CompleteDispose(HasOwnedTrackedResource(), disposeOperationId);
+            DisposeManagedLeases(_lifecycle.CompleteDispose(HasOwnedTrackedResource(), disposeOperationId));
+            ClearManagedMirrorsIfDisposed();
             return;
         }
 
@@ -1203,14 +1250,28 @@ public sealed partial class ContainedProcess : IDisposable
             await EnsureTerminalAsync().ConfigureAwait(false);
         }
         bool familyProven = await EnsureFamilyProofAsync().ConfigureAwait(false);
-        _drainCts?.Cancel();
-        bool drainsComplete = await AwaitTaskBounded(_stdOutDrain, _constructionCleanupBound).ConfigureAwait(false)
-            & await AwaitTaskBounded(_stdErrDrain, _constructionCleanupBound).ConfigureAwait(false);
+        _lifecycle.CurrentManagedLease<DrainCancellationLease>(ManagedResourceKind.DrainCancellation)?.Cts.Cancel();
+        bool drainsComplete = await AwaitTaskBounded(
+                _lifecycle.CurrentManagedLease<DrainTaskLease>(ManagedResourceKind.StdoutDrain)?.Task,
+                _constructionCleanupBound).ConfigureAwait(false)
+            & await AwaitTaskBounded(
+                _lifecycle.CurrentManagedLease<DrainTaskLease>(ManagedResourceKind.StderrDrain)?.Task,
+                _constructionCleanupBound).ConfigureAwait(false);
+        if (drainsComplete && _drainOperationId != 0)
+        {
+            _lifecycle.CompleteDrainEpoch(_drainOperationId);
+        }
         if (familyProven)
         {
-            _completionMonitorCts?.Cancel();
+            _lifecycle.CurrentManagedLease<CompletionMonitorLease>(ManagedResourceKind.CompletionMonitor)?.Cts.Cancel();
         }
-        bool monitorComplete = await AwaitTaskBounded(_completionMonitor, _constructionCleanupBound).ConfigureAwait(false);
+        bool monitorComplete = await AwaitTaskBounded(
+            _lifecycle.CurrentManagedLease<CompletionMonitorLease>(ManagedResourceKind.CompletionMonitor)?.Task,
+            _constructionCleanupBound).ConfigureAwait(false);
+        if (monitorComplete)
+        {
+            _lifecycle.CompleteLatestCompletionMonitor();
+        }
         if (!drainsComplete || !monitorComplete)
         {
             bool recordLifecycleFailure;
@@ -1285,18 +1346,6 @@ public sealed partial class ContainedProcess : IDisposable
                     "ACTIVE_PROCESS_ZERO was not proven; retained process handle, completion port handle, and job handle.");
             }
         }
-        if (familyProven && monitorComplete)
-        {
-            CancellationTokenSource? completionMonitorCts = _completionMonitorCts;
-            _completionMonitorCts = null;
-            completionMonitorCts?.Dispose();
-        }
-        if (drainsComplete)
-        {
-            CancellationTokenSource? drainCts = _drainCts;
-            _drainCts = null;
-            drainCts?.Dispose();
-        }
         if (nativeHandlesSafe)
         {
             CloseTracked(ref _processHandle, NativeResourceKind.ProcessHandle, "process handle");
@@ -1334,7 +1383,10 @@ public sealed partial class ContainedProcess : IDisposable
                     $"{teardownFailures.Length} teardown step(s) failed: {string.Join("; ", teardownFailures)}");
             }
         }
-        _lifecycle.CompleteDispose(!nativeHandlesSafe || HasOwnedTrackedResource(), disposeOperationId);
+        IReadOnlyList<IDisposable> releasedLeases = _lifecycle.CompleteDispose(
+            !nativeHandlesSafe || HasOwnedTrackedResource(), disposeOperationId);
+        DisposeManagedLeases(releasedLeases);
+        ClearManagedMirrorsIfDisposed();
     }
 
     private Task<bool> EnsureTerminalAsync()
@@ -1357,7 +1409,8 @@ public sealed partial class ContainedProcess : IDisposable
         await Task.Yield();
         _lifecycle.SetStateIfNot(LifecycleState.TerminalInProgress, LifecycleState.DisposalInProgress);
 
-        if (_ownershipLedger.CurrentOwned(NativeResourceKind.JobHandle) is not null && _completionMonitor is null)
+        if (_ownershipLedger.CurrentOwned(NativeResourceKind.JobHandle) is not null
+            && _lifecycle.CurrentManagedLease<CompletionMonitorLease>(ManagedResourceKind.CompletionMonitor) is null)
         {
             try
             {
@@ -1446,7 +1499,7 @@ public sealed partial class ContainedProcess : IDisposable
         {
             // Once ACTIVE_PROCESS_ZERO is proven, no later completion notification is needed.
             // On failure, retain the monitor so a later retained-state retry can still observe it.
-            _completionMonitorCts?.Cancel();
+            _lifecycle.CurrentManagedLease<CompletionMonitorLease>(ManagedResourceKind.CompletionMonitor)?.Cts.Cancel();
         }
         return proven;
     }
@@ -1472,6 +1525,28 @@ public sealed partial class ContainedProcess : IDisposable
     }
 
     private bool HasOwnedTrackedResource() => _ownershipLedger.HasOwned;
+
+    private static void DisposeManagedLeases(IReadOnlyList<IDisposable> leases)
+    {
+        foreach (IDisposable lease in leases)
+        {
+            lease.Dispose();
+        }
+    }
+
+    private void ClearManagedMirrorsIfDisposed()
+    {
+        if (!_lifecycle.IsState(LifecycleState.Disposed))
+        {
+            return;
+        }
+
+        lock (_completionMonitorGate)
+        {
+            _completionMonitorCts = null;
+            _drainCts = null;
+        }
+    }
 
     private static NativeCallResult InvokeTerminateProcess(ProcessOwnershipOptions options, nint handle)
     {
@@ -1529,10 +1604,7 @@ public sealed partial class ContainedProcess : IDisposable
             }
             else
             {
-                result = _nativeCalls.CloseHandle?.Invoke(owned.Value)
-                    ?? (NativeMethods.CloseHandle(owned.Value)
-                        ? NativeCallResult.Success()
-                        : NativeCallResult.Failure(Marshal.GetLastWin32Error()));
+                result = ProcessOwnershipNativeAdapter.Close(_nativeCalls, owned.Value);
             }
         }
         catch (Exception ex)
@@ -1605,18 +1677,99 @@ public sealed partial class ContainedProcess : IDisposable
     private void StartDrains(TimeSpan timeout)
     {
         _drainTimeout = timeout;
-        long drainOperationId = _lifecycle.BeginDrainEpoch().OperationId;
-        _drainOperationId = drainOperationId;
         CancellationTokenSource drainCts = new();
-        _drainCts = drainCts;
+        var stdoutReservation = new TaskCompletionSource<(string Text, bool Truncated)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stderrReservation = new TaskCompletionSource<(string Text, bool Truncated)>(TaskCreationOptions.RunContinuationsAsynchronously);
         nint stdout = _ownershipLedger.CurrentOwned(NativeResourceKind.StdoutParentRead)?.Value ?? nint.Zero;
         nint stderr = _ownershipLedger.CurrentOwned(NativeResourceKind.StderrParentRead)?.Value ?? nint.Zero;
         CancellationToken token = drainCts.Token;
-        _stdOutDrain = Task.Run(() => DrainPipe(stdout, timeout, false, token));
-        _stdErrDrain = Task.Run(() => DrainPipe(stderr, timeout, true, token));
-        _ = Task.WhenAll(_stdOutDrain, _stdErrDrain).ContinueWith(
-            _ => _lifecycle.CompleteDrainEpoch(drainOperationId),
-            CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        long operationId = 0;
+        bool stdoutAdmitted = false;
+        bool stderrAdmitted = false;
+        try
+        {
+            ManagedResourceInstallObserverForTests?.Invoke(ManagedResourceKind.DrainCancellation);
+            ManagedResourceInstallObserverForTests?.Invoke(ManagedResourceKind.StdoutDrain);
+            ManagedResourceInstallObserverForTests?.Invoke(ManagedResourceKind.StderrDrain);
+            operationId = _lifecycle.BeginDrainEpoch(drainCts, stdoutReservation.Task, stderrReservation.Task).OperationId;
+            _drainOperationId = operationId;
+            _drainCts = drainCts;
+            _stdOutDrain = stdoutReservation.Task;
+            _stdErrDrain = stderrReservation.Task;
+
+            stdoutAdmitted = QueueManagedWorker(ManagedResourceKind.StdoutDrain,
+                () => RunDrainWorker(stdout, timeout, false, ManagedResourceKind.StdoutDrain, stdoutReservation, token));
+            if (!stdoutAdmitted)
+            {
+                throw new InvalidOperationException("stdout drain worker queue admission failed.");
+            }
+            stderrAdmitted = QueueManagedWorker(ManagedResourceKind.StderrDrain,
+                () => RunDrainWorker(stderr, timeout, true, ManagedResourceKind.StderrDrain, stderrReservation, token));
+            if (!stderrAdmitted)
+            {
+                throw new InvalidOperationException("stderr drain worker queue admission failed.");
+            }
+            _ = Task.WhenAll(stdoutReservation.Task, stderrReservation.Task).ContinueWith(
+                _ => _lifecycle.CompleteDrainEpoch(operationId),
+                CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        }
+        catch (Exception ex)
+        {
+            drainCts.Cancel();
+            if (!stdoutAdmitted)
+            {
+                stdoutReservation.TrySetCanceled(token);
+            }
+            if (!stderrAdmitted)
+            {
+                stderrReservation.TrySetCanceled(token);
+            }
+            bool stdoutQuiesced = !stdoutAdmitted
+                || WaitManagedReservationQuiesced(stdoutReservation.Task);
+            bool stderrQuiesced = !stderrAdmitted
+                || WaitManagedReservationQuiesced(stderrReservation.Task);
+            bool quiesced = stdoutQuiesced & stderrQuiesced;
+            if (quiesced)
+            {
+                DisposeManagedLeases(_lifecycle.RollbackDrainEpoch(operationId));
+                _drainCts = null;
+                _stdOutDrain = null;
+                _stdErrDrain = null;
+                drainCts.Dispose();
+            }
+            else
+            {
+                _lifecycle.RetainDrainEpoch(operationId,
+                    $"Drain scheduling failed after a worker was scheduled: {ex.Message}");
+            }
+            throw;
+        }
+    }
+
+    private static bool QueueManagedWorker(ManagedResourceKind kind, Action action)
+    {
+        Func<ManagedResourceKind, Action, bool>? seam = ManagedWorkerQueueForTests;
+        return seam is not null
+            ? seam(kind, action)
+            : ThreadPool.QueueUserWorkItem(_ => action());
+    }
+
+    private void RunDrainWorker(nint handle, TimeSpan timeout, bool standardError,
+        ManagedResourceKind kind, TaskCompletionSource<(string Text, bool Truncated)> reservation, CancellationToken token)
+    {
+        try
+        {
+            ManagedWorkerStartObserverForTests?.Invoke(kind);
+            reservation.TrySetResult(DrainPipe(handle, timeout, standardError, token));
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            reservation.TrySetCanceled(token);
+        }
+        catch (Exception ex)
+        {
+            reservation.TrySetException(ex);
+        }
     }
 
     private (string Text, bool Truncated) DrainPipe(
@@ -1827,54 +1980,110 @@ public sealed partial class ContainedProcess : IDisposable
 
     private void StartCompletionMonitor()
     {
+        CancellationTokenSource? attemptedCts = null;
+        TaskCompletionSource<bool>? reservation = null;
+        long monitorOperationId = 0;
+        bool workerAdmitted = false;
         lock (_completionMonitorGate)
         {
-            if (_completionMonitor is not null)
+            if (_completionMonitorStarting
+                || _lifecycle.CurrentManagedLease<CompletionMonitorLease>(ManagedResourceKind.CompletionMonitor) is not null)
             {
                 return;
             }
+            _completionMonitorStarting = true;
+            attemptedCts = new CancellationTokenSource();
+            reservation = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
 
-            CancellationTokenSource? attemptedCts = null;
-            try
+        try
+        {
+            CancellationToken token = attemptedCts!.Token;
+            nint port = _ownershipLedger.CurrentOwned(NativeResourceKind.CompletionPortHandle)?.Value ?? nint.Zero;
+            nint expectedKey = _ownershipLedger.CurrentOwned(NativeResourceKind.JobHandle)?.Value ?? nint.Zero;
+            ManagedResourceInstallObserverForTests?.Invoke(ManagedResourceKind.CompletionMonitor);
+            monitorOperationId = _lifecycle.BeginCompletionMonitorEpoch(attemptedCts, reservation.Task).OperationId;
+            lock (_completionMonitorGate)
             {
-                attemptedCts = new CancellationTokenSource();
-                var token = attemptedCts.Token;
-                nint port = _ownershipLedger.CurrentOwned(NativeResourceKind.CompletionPortHandle)?.Value ?? nint.Zero;
-                nint expectedKey = _ownershipLedger.CurrentOwned(NativeResourceKind.JobHandle)?.Value ?? nint.Zero;
-                Task monitor = Task.Run(() =>
-                {
-                    while (!token.IsCancellationRequested)
-                    {
-                        bool signalled = NativeMethods.GetQueuedCompletionStatus(
-                            port, out uint bytes, out nint key, out _, 100);
-                        if (!signalled)
-                        {
-                            continue;
-                        }
-
-                        if (key == expectedKey && bytes == NativeMethods.JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO)
-                        {
-                            if (_completionObservationStoppedForTests)
-                            {
-                                return;
-                            }
-                            _nativeCalls.LifecycleBarriers?.SignalFamilyProofPending();
-                            _nativeCalls.LifecycleBarriers?.WaitForRelease();
-                            lock (_resourceGate) { _activeProcessZeroObserved = true; }
-                            return;
-                        }
-                    }
-                }, CancellationToken.None);
                 _completionMonitorCts = attemptedCts;
-                _completionMonitor = monitor;
+                _completionMonitor = reservation.Task;
             }
-            catch
+            workerAdmitted = QueueManagedWorker(ManagedResourceKind.CompletionMonitor,
+                () => RunCompletionMonitorWorker(port, expectedKey, reservation, token));
+            if (!workerAdmitted)
             {
-                attemptedCts?.Dispose();
-                _completionMonitorCts = null;
-                _completionMonitor = null;
-                throw;
+                throw new InvalidOperationException("completion monitor worker queue admission failed.");
             }
+            _ = reservation.Task.ContinueWith(_ => _lifecycle.CompleteCompletionMonitorEpoch(monitorOperationId),
+                CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        }
+        catch
+        {
+            attemptedCts!.Cancel();
+            if (!workerAdmitted)
+            {
+                reservation!.TrySetCanceled(attemptedCts.Token);
+            }
+            bool quiesced = WaitManagedReservationQuiesced(reservation!.Task);
+            if (quiesced)
+            {
+                reservation!.TrySetCanceled(attemptedCts.Token);
+                DisposeManagedLeases(_lifecycle.RollbackCompletionMonitorEpoch(monitorOperationId));
+                attemptedCts.Dispose();
+            }
+            else
+            {
+                _lifecycle.RetainCompletionMonitorEpoch(monitorOperationId,
+                    "Completion monitor startup failed while its worker remained live.");
+            }
+            lock (_completionMonitorGate)
+            {
+                if (quiesced)
+                {
+                    _completionMonitorCts = null;
+                    _completionMonitor = null;
+                }
+                _completionMonitorStarting = false;
+            }
+            throw;
+        }
+        lock (_completionMonitorGate) { _completionMonitorStarting = false; }
+    }
+
+    private void RunCompletionMonitorWorker(nint port, nint expectedKey,
+        TaskCompletionSource<bool> reservation, CancellationToken token)
+    {
+        try
+        {
+            ManagedWorkerStartObserverForTests?.Invoke(ManagedResourceKind.CompletionMonitor);
+            while (!token.IsCancellationRequested)
+            {
+                bool signalled = NativeMethods.GetQueuedCompletionStatus(port, out uint bytes, out nint key, out _, 100);
+                if (!signalled)
+                {
+                    continue;
+                }
+                if (key == expectedKey && bytes == NativeMethods.JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO)
+                {
+                    if (_completionObservationStoppedForTests)
+                    {
+                        break;
+                    }
+                    _nativeCalls.LifecycleBarriers?.SignalFamilyProofPending();
+                    _nativeCalls.LifecycleBarriers?.WaitForRelease();
+                    lock (_resourceGate) { _activeProcessZeroObserved = true; }
+                    break;
+                }
+            }
+            reservation.TrySetResult(true);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            reservation.TrySetCanceled(token);
+        }
+        catch (Exception ex)
+        {
+            reservation.TrySetException(ex);
         }
     }
 

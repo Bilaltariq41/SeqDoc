@@ -20,6 +20,7 @@ internal sealed class LifecycleOperationReceipt
 
 internal sealed class ProcessOwnershipLifecycleCoordinator
 {
+    private readonly NativeOwnershipLedger _ledger;
     private readonly object _gate = new();
     private readonly FailureClassTracker _failures = new();
     private LifecycleState _state = LifecycleState.Running;
@@ -40,6 +41,12 @@ internal sealed class ProcessOwnershipLifecycleCoordinator
     private readonly List<LifecycleOperationReceipt> _receipts = new();
     private readonly Dictionary<string, long> _current = new(StringComparer.Ordinal);
 
+    public ProcessOwnershipLifecycleCoordinator() : this(new NativeOwnershipLedger()) { }
+    internal ProcessOwnershipLifecycleCoordinator(NativeOwnershipLedger ledger) => _ledger = ledger;
+    public IReadOnlyList<ManagedResourceSnapshot> ManagedResources => _ledger.ManagedSnapshot();
+    internal T? CurrentManagedLease<T>(ManagedResourceKind kind) where T : ManagedResourceLease
+        => _ledger.CurrentManagedLease<T>(kind);
+
     public IReadOnlyList<LifecycleOperationReceipt> OperationReceipts
     { get { lock (_gate) return _receipts.OrderBy(r => r.OperationId).ToArray(); } }
 
@@ -49,10 +56,107 @@ internal sealed class ProcessOwnershipLifecycleCoordinator
     public LifecycleOperationReceipt BeginEpoch(string kind = "Epoch") => Begin(kind);
     public LifecycleOperationReceipt BeginFamilyProofEpoch() => Begin("FamilyProof");
     public LifecycleOperationReceipt BeginDrainEpoch() => Begin("Drain");
+    internal LifecycleOperationReceipt BeginDrainEpoch(CancellationTokenSource cts, Task stdout, Task stderr)
+    {
+        lock (_gate)
+        {
+            long id = ++_next;
+            _current["Drain"] = id;
+            _currentEpoch = id;
+            _ledger.BeginManagedBatch(id, "Drain reservations published",
+                (ManagedResourceKind.DrainCancellation, new DrainCancellationLease(cts)),
+                (ManagedResourceKind.StdoutDrain, new DrainTaskLease(stdout)),
+                (ManagedResourceKind.StderrDrain, new DrainTaskLease(stderr)));
+            return Receipt("Drain", id, true, true);
+        }
+    }
+    public LifecycleOperationReceipt BeginCompletionMonitorEpoch() => Begin("CompletionMonitor");
+    internal LifecycleOperationReceipt BeginCompletionMonitorEpoch(CancellationTokenSource cts, Task task)
+        => Begin("CompletionMonitor", new CompletionMonitorLease(cts, task));
+
+    internal IReadOnlyList<IDisposable> RollbackDrainEpoch(long operationId)
+    {
+        lock (_gate)
+        {
+            if (!IsCurrent("Drain", operationId)) return Array.Empty<IDisposable>();
+            _current.Remove("Drain");
+            return _ledger.RollbackManagedBatch(operationId,
+                ManagedResourceKind.DrainCancellation, ManagedResourceKind.StdoutDrain, ManagedResourceKind.StderrDrain);
+        }
+    }
+
+    internal void RetainDrainEpoch(long operationId, string evidence)
+    {
+        lock (_gate)
+        {
+            if (!IsCurrent("Drain", operationId)) return;
+            foreach (ManagedResourceKind kind in new[]
+            {
+                ManagedResourceKind.DrainCancellation,
+                ManagedResourceKind.StdoutDrain,
+                ManagedResourceKind.StderrDrain,
+            })
+            {
+                _ledger.CompleteManaged(kind, operationId, ManagedResourceState.Retained, evidence);
+            }
+        }
+    }
+
+    internal IReadOnlyList<IDisposable> RollbackCompletionMonitorEpoch(long operationId)
+    {
+        lock (_gate)
+        {
+            if (!IsCurrent("CompletionMonitor", operationId)) return Array.Empty<IDisposable>();
+            _current.Remove("CompletionMonitor");
+            return _ledger.RollbackManagedBatch(operationId, ManagedResourceKind.CompletionMonitor);
+        }
+    }
+
+    internal void RetainCompletionMonitorEpoch(long operationId, string evidence)
+    {
+        lock (_gate)
+        {
+            if (!IsCurrent("CompletionMonitor", operationId)) return;
+            _ledger.CompleteManaged(ManagedResourceKind.CompletionMonitor, operationId,
+                ManagedResourceState.Retained, evidence);
+        }
+    }
+
+    public LifecycleOperationReceipt CompleteCompletionMonitorEpoch(long operationId, bool retained = false)
+    {
+        lock (_gate)
+        {
+            bool current = IsCurrent("CompletionMonitor", operationId);
+            if (current) _ledger.CompleteManaged(ManagedResourceKind.CompletionMonitor, operationId,
+                retained ? ManagedResourceState.Retained : ManagedResourceState.Quiescent,
+                retained ? "Completion monitor retained" : "Completion monitor completed");
+            return NewReceipt("CompletionMonitorCompletion", operationId, current, current);
+        }
+    }
+
+    public void CompleteLatestCompletionMonitor(bool retained = false)
+    {
+        lock (_gate)
+        {
+            if (_current.TryGetValue("CompletionMonitor", out long id))
+                _ledger.CompleteManaged(ManagedResourceKind.CompletionMonitor, id,
+                    retained ? ManagedResourceState.Retained : ManagedResourceState.Quiescent,
+                    retained ? "Completion monitor retained" : "Completion monitor completed");
+        }
+    }
 
     public LifecycleOperationReceipt CompleteDrainEpoch(long operationId)
     {
-        lock (_gate) return NewReceipt("DrainCompletion", operationId, IsCurrent("Drain", operationId), true);
+        lock (_gate)
+        {
+            bool current = IsCurrent("Drain", operationId);
+            if (current)
+            {
+                foreach (ManagedResourceKind kind in new[] { ManagedResourceKind.DrainCancellation, ManagedResourceKind.StdoutDrain, ManagedResourceKind.StderrDrain })
+                    _ledger.CompleteManaged(kind, operationId, ManagedResourceState.Quiescent, "Drain completed");
+            }
+            return NewReceipt("DrainCompletion", operationId, current, true);
+        }
     }
 
     public LifecycleOperationReceipt AcceptCompletion(long operationId, bool accepted = true)
@@ -88,12 +192,15 @@ internal sealed class ProcessOwnershipLifecycleCoordinator
     { lock (_gate) { if (_state != excluded) _state = state; } }
     public bool IsDisposedOrDisposing => State is LifecycleState.DisposalInProgress or LifecycleState.Disposed;
     public bool IsTerminalActive { get { lock (_gate) return _terminalTask is not null; } }
-    public Task<ProcessOwnershipWaitResult>? WaitTask { get { lock (_gate) return _waitTask; } }
+    public Task<ProcessOwnershipWaitResult>? WaitTask =>
+        _ledger.CurrentManagedLease<ManagedTaskLease>(ManagedResourceKind.ProcessWait)?.Task
+            as Task<ProcessOwnershipWaitResult>;
     public bool NativeAlreadySucceeded { get { lock (_gate) return _nativeSucceeded; } }
 
     public Task<ProcessOwnershipWaitResult> GetOrStartWait(Func<Task<ProcessOwnershipWaitResult>> factory)
     {
-        TaskCompletionSource<ProcessOwnershipWaitResult>? reservation = null;
+        TaskCompletionSource<ProcessOwnershipWaitResult> reservation =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         long id;
         lock (_gate)
         {
@@ -109,14 +216,14 @@ internal sealed class ProcessOwnershipLifecycleCoordinator
                     return _waitTask;
                 }
             }
-            reservation = new(TaskCreationOptions.RunContinuationsAsynchronously);
             _waitTask = reservation.Task;
             id = ++_next;
             _current["Wait"] = id;
             _currentEpoch = id;
+            _ledger.BeginManaged(ManagedResourceKind.ProcessWait, id, new ManagedTaskLease(reservation.Task), "Wait started");
             Receipt("Wait", id, true, true);
         }
-            _ = CompleteWaitReservation(reservation, id, factory);
+        _ = CompleteWaitReservation(reservation, id, factory);
         return reservation.Task;
     }
 
@@ -131,13 +238,20 @@ internal sealed class ProcessOwnershipLifecycleCoordinator
                 retry = false;
                 return Task.CompletedTask;
             }
+            // Keep the reservation published through out-of-lock lease disposal and final state
+            // publication. Joiners must not create a retry epoch while that wrapper is still settling.
+            if (_disposeTask is not null)
+            {
+                retry = false;
+                return _disposeTask;
+            }
             retry = _state == LifecycleState.FamilyResourcesRetained;
-            if (_disposeTask is not null && !(retry && _disposeTask.IsCompleted)) return _disposeTask;
-            reservation = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            _disposeTask = reservation.Task;
             id = ++_next;
             _current["Dispose"] = id;
             _currentEpoch = id;
+            reservation = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            _ledger.BeginManaged(ManagedResourceKind.Disposal, id, new ManagedTaskLease(reservation.Task), "Disposal started");
+            _disposeTask = reservation.Task;
             Receipt("Dispose", id, true, true);
             _state = LifecycleState.DisposalInProgress;
             if (retry) _familyTask = null;
@@ -148,22 +262,74 @@ internal sealed class ProcessOwnershipLifecycleCoordinator
 
     private async Task CompleteWaitReservation(TaskCompletionSource<ProcessOwnershipWaitResult> slot, long id, Func<Task<ProcessOwnershipWaitResult>> factory)
     {
-        try { ProcessOwnershipWaitResult result = await factory().ConfigureAwait(false); AcceptCompletionForKind("Wait", id); slot.SetResult(result); }
+        try { ProcessOwnershipWaitResult result = await factory().ConfigureAwait(false); AcceptCompletionForKind("Wait", id); _ledger.CompleteManaged(ManagedResourceKind.ProcessWait, id, ManagedResourceState.Quiescent, "Wait completed"); slot.SetResult(result); }
         catch (Exception ex)
         {
             AcceptCompletionForKind("Wait", id, false);
+            _ledger.CompleteManaged(ManagedResourceKind.ProcessWait, id, ManagedResourceState.Quiescent, "Wait faulted");
             lock (_gate) { if (ReferenceEquals(_waitTask, slot.Task)) _waitTask = null; }
             slot.SetException(ex);
         }
     }
     private async Task CompleteDisposeReservation(TaskCompletionSource<bool> slot, long id, Func<long, Task> factory)
     {
-        try { await factory(id).ConfigureAwait(false); AcceptCompletionForKind("Dispose", id); slot.SetResult(true); }
-        catch (Exception ex) { AcceptCompletionForKind("Dispose", id, false); slot.SetException(ex); }
+        try
+        {
+            await factory(id).ConfigureAwait(false);
+            AcceptCompletionForKind("Dispose", id);
+            slot.SetResult(true);
+        }
+        catch (Exception ex)
+        {
+            AcceptCompletionForKind("Dispose", id, false);
+            _ledger.CompleteManaged(ManagedResourceKind.Disposal, id, ManagedResourceState.Retained, "Disposal faulted");
+            lock (_gate)
+            {
+                if (IsCurrent("Dispose", id)) _state = LifecycleState.FamilyResourcesRetained;
+            }
+            slot.SetException(ex);
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                if (ReferenceEquals(_disposeTask, slot.Task)) _disposeTask = null;
+            }
+        }
     }
 
-    public void CompleteDispose(bool retained, long? operationId = null)
-    { lock (_gate) { if (operationId is null || IsCurrent("Dispose", operationId.Value)) { _state = retained ? LifecycleState.FamilyResourcesRetained : LifecycleState.Disposed; _disposeTask = null; } } }
+    public IReadOnlyList<IDisposable> CompleteDispose(bool retained, long? operationId = null)
+    {
+        IReadOnlyList<IDisposable> leases;
+        long id;
+        lock (_gate)
+        {
+            if (operationId is not null && !IsCurrent("Dispose", operationId.Value)) return Array.Empty<IDisposable>();
+            id = operationId ?? (_current.TryGetValue("Dispose", out long existing) ? existing : BeginLocked("Dispose").OperationId);
+            bool blocked = retained || _ledger.HasManagedBlocker(ManagedResourceKind.Disposal);
+            _ledger.CompleteManaged(ManagedResourceKind.Disposal, id,
+                blocked ? ManagedResourceState.Retained : ManagedResourceState.Quiescent,
+                blocked ? "Cleanup retained" : "Disposal quiescent");
+            if (blocked)
+            {
+                _state = LifecycleState.FamilyResourcesRetained;
+                return Array.Empty<IDisposable>();
+            }
+            leases = _ledger.ReleaseQuiescentManaged();
+        }
+
+        // CTS/task lease disposal is outside both coordinator and ledger locks. Publish Disposed only
+        // after every detached managed lease has finished its disposal.
+        foreach (IDisposable lease in leases)
+        {
+            lease.Dispose();
+        }
+        lock (_gate)
+        {
+            if (IsCurrent("Dispose", id)) _state = LifecycleState.Disposed;
+        }
+        return Array.Empty<IDisposable>();
+    }
 
     public (Task<TerminalAttemptResult> Task, long OperationId) GetOrStartTerminal(
         Func<long, bool, Task<TerminalAttemptResult>> factory)
@@ -188,6 +354,7 @@ internal sealed class ProcessOwnershipLifecycleCoordinator
             _current["Terminal"] = id;
             _currentEpoch = id;
             reservation = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            _ledger.BeginManaged(ManagedResourceKind.TerminalOperation, id, new ManagedTaskLease(reservation.Task), "Terminal started");
             _terminalTask = reservation.Task;
             _terminalCompleted = false;
             Receipt("Terminal", id, true, true);
@@ -215,6 +382,7 @@ internal sealed class ProcessOwnershipLifecycleCoordinator
             {
                 _terminalCompleted = true;
                 _terminalSucceeded = false;
+                _ledger.CompleteManaged(ManagedResourceKind.TerminalOperation, id, ManagedResourceState.Retained, "Terminal faulted");
             }
         }
     }
@@ -227,6 +395,9 @@ internal sealed class ProcessOwnershipLifecycleCoordinator
             _nativeSucceeded |= result.NativeSucceeded;
             _terminalSucceeded = result.OverallSucceeded;
             _terminalCompleted = true;
+            _ledger.CompleteManaged(ManagedResourceKind.TerminalOperation, id,
+                result.OverallSucceeded ? ManagedResourceState.Quiescent : ManagedResourceState.Retained,
+                result.OverallSucceeded ? "Terminal completed" : "Terminal failed");
         }
     }
 
@@ -250,6 +421,7 @@ internal sealed class ProcessOwnershipLifecycleCoordinator
             _current["FamilyProof"] = id;
             _currentEpoch = id;
             reservation = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            _ledger.BeginManaged(ManagedResourceKind.FamilyProof, id, new ManagedTaskLease(reservation.Task), "Family proof started");
             _familyTask = reservation.Task;
             Receipt("FamilyProof", id, true, true);
         }
@@ -266,6 +438,7 @@ internal sealed class ProcessOwnershipLifecycleCoordinator
         {
             if (id != _familyId || !IsCurrent("FamilyProof", id)) return false;
             if (proven) _familyProven = true;
+            _ledger.CompleteManaged(ManagedResourceKind.FamilyProof, id, proven ? ManagedResourceState.Quiescent : ManagedResourceState.Retained, proven ? "Family proof established" : "Family proof unproven");
             return true;
         }
     }
@@ -276,6 +449,7 @@ internal sealed class ProcessOwnershipLifecycleCoordinator
         {
             bool current = IsCurrent("FamilyProof", operationId) && operationId == _family;
             if (current && familyProven) _familyProven = true;
+            if (current) _ledger.CompleteManaged(ManagedResourceKind.FamilyProof, operationId, familyProven ? ManagedResourceState.Quiescent : ManagedResourceState.Retained, familyProven ? "Family proof established" : "Family proof unproven");
             return NewReceipt("FamilyProofCompletion", operationId, current, current && nativeSuccess && familyProven);
         }
     }
@@ -290,6 +464,7 @@ internal sealed class ProcessOwnershipLifecycleCoordinator
                 _terminalCompleted = false;
                 _current["Terminal"] = _terminal;
                 _currentEpoch = _terminal;
+                _ledger.BeginManaged(ManagedResourceKind.TerminalOperation, _terminal, new ManagedTaskLease(Task.CompletedTask), "Terminal joined");
             }
             // A join is evidence of reuse, not another accepted start receipt.
             return Receipt("Terminal", _terminal, true, false);
@@ -302,6 +477,7 @@ internal sealed class ProcessOwnershipLifecycleCoordinator
         {
             bool current = IsCurrent("Terminal", operationId) && operationId == _terminal;
             if (current) { _terminalSucceeded = succeeded; _terminalCompleted = true; }
+            if (current) _ledger.CompleteManaged(ManagedResourceKind.TerminalOperation, operationId, succeeded ? ManagedResourceState.Quiescent : ManagedResourceState.Retained, succeeded ? "Terminal completed" : "Terminal failed");
             return Receipt("Terminal", operationId, current, current);
         }
     }
@@ -315,18 +491,25 @@ internal sealed class ProcessOwnershipLifecycleCoordinator
             _terminalCompleted = false;
             _current["Terminal"] = _terminal;
             _currentEpoch = _terminal;
+            _ledger.BeginManaged(ManagedResourceKind.TerminalOperation, _terminal, new ManagedTaskLease(Task.CompletedTask), "Terminal retry started");
             return Receipt("Terminal", _terminal, true, true);
         }
     }
 
-    private LifecycleOperationReceipt Begin(string kind)
-    { lock (_gate) return BeginLocked(kind); }
-    private LifecycleOperationReceipt BeginLocked(string kind)
+    private LifecycleOperationReceipt Begin(string kind) => Begin(kind, new ManagedTaskLease(Task.CompletedTask));
+    private LifecycleOperationReceipt Begin(string kind, ManagedResourceLease lease)
+    { lock (_gate) return BeginLocked(kind, lease); }
+    private LifecycleOperationReceipt BeginLocked(string kind) => BeginLocked(kind, new ManagedTaskLease(Task.CompletedTask));
+    private LifecycleOperationReceipt BeginLocked(string kind, ManagedResourceLease lease)
     {
         long id = ++_next;
         _current[kind] = id;
         _currentEpoch = id;
         if (kind == "FamilyProof") _family = id;
+        if (kind == "FamilyProof") _ledger.BeginManaged(ManagedResourceKind.FamilyProof, id, lease, "Family proof started");
+        else if (kind == "Drain")
+            foreach (ManagedResourceKind managed in new[] { ManagedResourceKind.DrainCancellation, ManagedResourceKind.StdoutDrain, ManagedResourceKind.StderrDrain }) _ledger.BeginManaged(managed, id, managed == ManagedResourceKind.DrainCancellation ? new DrainCancellationLease(new CancellationTokenSource()) : new DrainTaskLease(Task.CompletedTask), "Drain started");
+        else if (kind == "CompletionMonitor") _ledger.BeginManaged(ManagedResourceKind.CompletionMonitor, id, lease, "Completion monitor started");
         return Receipt(kind, id, true, true);
     }
     private bool IsCurrent(string kind, long id) => _current.TryGetValue(kind, out long current) && current == id;
