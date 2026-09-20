@@ -370,3 +370,14 @@ reserved reviewer.
 - Focused repair verification: `python -B -m unittest tests.governance.test_work_state` — **35/35 passed**.
 - Canonical validation, projection check, and `git diff --check` were run after the green focused lane and passed. No
   human approval, final gate, merge, or GitHub mutation is claimed; lifecycle remains `ReviewRequired`.
+
+## Canonical closeout receipt
+
+- PR #110 merged at `2026-09-20T19:43:52Z`: head `b0d6c1f46c0637132f5e1b5f6614e8ee80a9f5e4`, merge
+  `ffc8fe5f3d95603150734f02bd8ba9ef2ba6721b`, attribution `AhmadKrarha`.
+- Owner bypass receipt: https://github.com/Bilaltariq41/SeqDoc/pull/110#issuecomment-5752194679. The owner authored
+  the final repairs after reviewer exhaustion; no false peer approval is claimed.
+- Evidence: 50 work items valid, execution projection current, 35/35 governance tests passed, diff checks passed,
+  required CI validate passed at https://github.com/Bilaltariq41/SeqDoc/actions/runs/35533200089/job/106137482275, and
+  the final independent adversarial rereview was CLEAN after F1-F6.
+- This is an immutable owner-bypass closeout receipt; the bypass is not a normal fallback for peer review.

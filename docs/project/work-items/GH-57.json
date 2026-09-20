@@ -3,89 +3,15 @@
   "branch": "feature/issue-57-transactional-project-operations",
   "checkpointId": "G57-TPO",
   "checkpointPath": "docs/work/governance/G57-TPO",
-  "claims": [
-    {
-      "kind": "exclusive",
-      "value": "execution"
-    },
-    {
-      "kind": "exclusive",
-      "value": "github-projection"
-    },
-    {
-      "kind": "exclusive",
-      "value": "registry"
-    },
-    {
-      "kind": "governance-tool",
-      "value": "tools/governance/work_state.py"
-    },
-    {
-      "kind": "path",
-      "value": ".github/workflows/work-state.yml"
-    },
-    {
-      "kind": "path",
-      "value": "agents.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/delegated-contribution-workflow.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/execution.json"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/issue-readiness.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/project-operations.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/work-items/gh-57.json"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/work-state.schema.json"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/workflow.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/readme.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/work/governance/g57-tpo/checkpoint.md"
-    },
-    {
-      "kind": "path",
-      "value": "docs/work/governance/g57-tpo/ledger.md"
-    },
-    {
-      "kind": "path",
-      "value": "tests/governance/test_work_state.py"
-    },
-    {
-      "kind": "path",
-      "value": "tools/governance/work_state.py"
-    }
-  ],
+  "claims": [],
   "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
   "dependencies": [],
-  "executionId": "GH-57:G57-TPO",
-  "expectedGithubState": "OPEN",
+  "expectedGithubState": "CLOSED",
   "id": "GH-57",
   "kind": "github-issue",
-  "lifecycle": "ReviewRequired",
-  "lifecycleLabel": "review-required",
-  "nextAction": "Qhatahet independently verified the technical fixes at 0f9fdb8 but withheld formal approval over the now-reconciled #13 and false owner-direction records; owner closeout audit/bypass decision is pending. Do not claim gate, merge, or approval.",
+  "lifecycle": "Closed",
+  "lifecycleLabel": null,
+  "nextAction": "Closed; no action.",
   "number": 57,
   "owner": "ahmad",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
@@ -93,16 +19,15 @@
     "reason": "Current collaboration policy supersedes historical repair limits and takeover authorization; continue worker-owned F13 repair.",
     "startHead": "4ff513d4237a4be634716c59eaa2114b4bcb3e95"
   },
-  "review": {
-    "author": "AhmadKrarha",
-    "epoch": "5",
+  "closeout": {
     "executionId": "GH-57:G57-TPO",
-    "findings": [
-      "Fixed: Qhatahet independently verified the technical fixes at 0f9fdb8 but withheld formal approval over the now-reconciled #13 and false owner-direction records; owner closeout audit/bypass decision is pending"
-    ],
-    "peer": "Qhatahet",
     "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/110",
-    "requestHead": "e9cb7b50807539f524542553b92ec74c5b081e9d"
+    "head": "b0d6c1f46c0637132f5e1b5f6614e8ee80a9f5e4",
+    "mergeSha": "ffc8fe5f3d95603150734f02bd8ba9ef2ba6721b",
+    "focused": "50 work items valid; execution projection current; 35/35 governance tests passed; git diff --check passed.",
+    "final": "Required CI validate passed: https://github.com/Bilaltariq41/SeqDoc/actions/runs/35533200089/job/106137482275; independent adversarial rereview CLEAN after F1-F6.",
+    "attribution": "AhmadKrarha",
+    "findings": ["resolved"]
   },
   "reviewEpoch": "5",
   "reviewFindings": [
@@ -110,10 +35,9 @@
   ],
   "reviewPeer": "Qhatahet",
   "schemaVersion": 1,
-  "selectedForExecution": true,
+  "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/57",
-  "statusReason": "Qhatahet independently verified the technical fixes at 0f9fdb8 but withheld formal approval over the now-reconciled #13 and false owner-direction records; owner closeout audit/bypass decision is pending. Do not claim gate, merge, or approval.",
+  "statusReason": "Merged PR #110 at ffc8fe5f3d95603150734f02bd8ba9ef2ba6721b; owner-bypass receipt https://github.com/Bilaltariq41/SeqDoc/pull/110#issuecomment-5752194679; independent adversarial rereview CLEAN after F1-F6; 35/35 governance tests passed; required CI validate passed. Closed; no action.",
   "title": "[Governance] Transactional project operations and repository-native handoff",
-  "track": "governance",
-  "worktreeId": "feature-issue-57-transactional-ops"
+  "track": "governance"
 }
