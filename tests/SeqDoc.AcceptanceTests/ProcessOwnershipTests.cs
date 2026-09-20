@@ -6,6 +6,12 @@ using Xunit;
 
 namespace SeqDoc.AcceptanceTests;
 
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class ProcessOwnershipGroup
+{
+    public const string Name = "Process ownership global-state tests";
+}
+
 /// <summary>
 /// GH-106 / I100-A acceptance for <c>ProcessOwnership.cs</c>. Every claim here targets the real Win32
 /// producer (<see cref="ContainedProcess"/>/<see cref="NativeMethods"/>) driving the deterministic
@@ -14,6 +20,7 @@ namespace SeqDoc.AcceptanceTests;
 /// checkpoint's "Soft test budget" (~10-12 grouped claims); see the numbered group comment above each
 /// test for the exact budget item it proves.
 /// </summary>
+[Collection(ProcessOwnershipGroup.Name)]
 public sealed class ProcessOwnershipTests
 {
     private static readonly string StubExecutablePath = ResolveStubExecutablePath();
@@ -76,20 +83,46 @@ public sealed class ProcessOwnershipTests
         Assert.Equal("expected-value", wait.StdOut.Text);
 
         // An ambient variable set only in THIS test process (never added to the explicit child
-        // environment) must not silently leak through to the child.
-        System.Environment.SetEnvironmentVariable("SEQDOC_I100A_AMBIENT_ONLY", "must-not-leak");
+        // environment) must not silently leak through to the child. Exercise both possible prior
+        // states, and restore the host's actual state even if one child assertion fails.
+        const string ambientName = "SEQDOC_I100A_AMBIENT_ONLY";
+        string? originalAmbient = System.Environment.GetEnvironmentVariable(ambientName);
         try
         {
-            var options2 = NewOptions(["print-env", "SEQDOC_I100A_AMBIENT_ONLY"]);
-            var result2 = ContainedProcess.Start(options2);
-            Assert.True(result2.Succeeded, result2.Detail);
-            using var process2 = result2.Process!;
-            var wait2 = await process2.WaitAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
-            Assert.Equal("<unset>", wait2.StdOut.Text);
+            foreach (string? priorAmbient in new[] { (string?)null, "pre-existing-sentinel" })
+            {
+                System.Environment.SetEnvironmentVariable(ambientName, priorAmbient);
+                Assert.Equal(priorAmbient, System.Environment.GetEnvironmentVariable(ambientName));
+                System.Environment.SetEnvironmentVariable(ambientName, "must-not-leak");
+                try
+                {
+                    var options2 = NewOptions(["print-env", ambientName]);
+                    var result2 = ContainedProcess.Start(options2);
+                    ContainedProcess? process2 = result2.Process;
+                    try
+                    {
+                        Assert.True(result2.Succeeded, result2.Detail);
+                        Assert.NotNull(process2);
+                        var wait2 = await process2!.WaitAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+                        Assert.Equal("<unset>", wait2.StdOut.Text);
+                    }
+                    finally
+                    {
+                        process2?.Dispose();
+                    }
+                }
+                finally
+                {
+                    System.Environment.SetEnvironmentVariable(ambientName, priorAmbient);
+                }
+
+                Assert.Equal(priorAmbient, System.Environment.GetEnvironmentVariable(ambientName));
+            }
         }
         finally
         {
-            System.Environment.SetEnvironmentVariable("SEQDOC_I100A_AMBIENT_ONLY", null);
+            System.Environment.SetEnvironmentVariable(ambientName, originalAmbient);
+            Assert.Equal(originalAmbient, System.Environment.GetEnvironmentVariable(ambientName));
         }
     }
 
@@ -508,9 +541,16 @@ public sealed class ProcessOwnershipTests
         var result = ContainedProcess.Start(NewOptions(["sleep", "5000"]));
         Assert.True(result.Succeeded, result.Detail);
         var process = result.Process!;
-        // F1: a faulted first reservation must not poison a later valid wait on this live process.
-        Task<ProcessOwnershipWaitResult> invalidWait = process.WaitAsync(TimeSpan.FromMilliseconds(-2), CancellationToken.None);
-        await Assert.ThrowsAnyAsync<ArgumentOutOfRangeException>(async () => await invalidWait);
+        // F1: every invalid reservation faults only itself and must not poison a later valid wait.
+        foreach (TimeSpan invalidTimeout in new[]
+        {
+            TimeSpan.FromMilliseconds(uint.MaxValue),
+            TimeSpan.Zero, Timeout.InfiniteTimeSpan, TimeSpan.FromMilliseconds(-2),
+        })
+        {
+            Task<ProcessOwnershipWaitResult> invalidWait = process.WaitAsync(invalidTimeout, CancellationToken.None);
+            await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () => await invalidWait);
+        }
         Task<ProcessOwnershipWaitResult> waitTask = process.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
 
         process.Dispose();
@@ -888,7 +928,23 @@ public sealed class ProcessOwnershipTests
             Assert.False(wait.Cancelled);
             Assert.Contains("1234", wait.Detail, StringComparison.Ordinal);
         }
-        finally { }
+        finally { process.Dispose(); }
+
+        var exitCodeFailure = ContainedProcess.Start(NewOptions(["echo", "get-exit-code"], nativeCalls:
+            new ProcessOwnershipNativeCalls
+            {
+                GetExitCodeProcess = _ => NativeCallResult<uint>.Failure(2468),
+            }));
+        Assert.True(exitCodeFailure.Succeeded, exitCodeFailure.Detail);
+        using var exitCodeProcess = exitCodeFailure.Process!;
+        var exitCodeWait = await exitCodeProcess.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+        Assert.Equal(ProcessOwnershipFailureClass.ProcessFailed, exitCodeWait.FailureClass);
+        Assert.False(exitCodeWait.TimedOut);
+        Assert.False(exitCodeWait.Cancelled);
+        Assert.Contains("GetExitCodeProcess", exitCodeWait.Detail, StringComparison.Ordinal);
+        Assert.Contains("2468", exitCodeWait.Detail, StringComparison.Ordinal);
+        exitCodeProcess.Dispose();
+        Assert.Empty(exitCodeProcess.TeardownFailuresForTests);
     }
 
     [Fact]
@@ -2114,6 +2170,21 @@ public sealed class ProcessOwnershipTests
     [Fact]
     public async Task ConstructionFaultsExposeOneTypedReachableLedgerForEveryAcquiredNativeSlot()
     {
+        foreach (TimeSpan invalidDrainTimeout in new[]
+        {
+            TimeSpan.FromMilliseconds(uint.MaxValue),
+            TimeSpan.Zero, Timeout.InfiniteTimeSpan, TimeSpan.FromMilliseconds(-2),
+        })
+        {
+            var invalid = ContainedProcess.Start(NewOptions(
+                ["echo", "invalid-drain-timeout"], drainTimeout: invalidDrainTimeout));
+            Assert.False(invalid.Succeeded);
+            Assert.Equal(ProcessOwnershipFailureClass.ProcessConstructionFailed, invalid.FailureClass);
+            Assert.Null(invalid.Process);
+            Assert.Null(invalid.CleanupOwner);
+            Assert.Null(invalid.OwnershipSnapshot);
+        }
+
         NativeResourceKind[] inventory = Enum.GetValues<NativeResourceKind>();
         Assert.Equal(15, inventory.Length);
         foreach (NativeResourceKind expected in new[]
@@ -2270,18 +2341,40 @@ public sealed class ProcessOwnershipTests
         using var completionStarted = new ManualResetEventSlim();
         using var stdoutStarted = new ManualResetEventSlim();
         using var stderrStarted = new ManualResetEventSlim();
+        using var completionAdmitted = new ManualResetEventSlim();
+        using var stdoutAdmitted = new ManualResetEventSlim();
+        using var stderrAdmitted = new ManualResetEventSlim();
         ContainedProcess? normalProcess = null;
+        ContainedProcess.ManagedWorkerQueueAdmissionObserverForTests = (kind, snapshot) =>
+        {
+            ManagedResourceSnapshot entry = Assert.Single(snapshot.ManagedResources,
+                item => item.Kind == kind);
+            Assert.Equal(ManagedResourceState.Active, entry.State);
+            Assert.True(entry.HasLease);
+            Assert.True(entry.OperationId > 0);
+            Assert.True(entry.AcquisitionSequence > 0);
+            (kind switch
+            {
+                ManagedResourceKind.CompletionMonitor => completionAdmitted,
+                ManagedResourceKind.StdoutDrain => stdoutAdmitted,
+                ManagedResourceKind.StderrDrain => stderrAdmitted,
+                _ => throw new Xunit.Sdk.XunitException($"Unexpected queue admission kind {kind}.")
+            }).Set();
+        };
         var workerObserver = new Action<ManagedResourceKind>(kind =>
         {
             switch (kind)
             {
                 case ManagedResourceKind.CompletionMonitor:
+                    Assert.True(completionAdmitted.IsSet);
                     completionStarted.Set();
                     break;
                 case ManagedResourceKind.StdoutDrain:
+                    Assert.True(stdoutAdmitted.IsSet);
                     stdoutStarted.Set();
                     break;
                 case ManagedResourceKind.StderrDrain:
+                    Assert.True(stderrAdmitted.IsSet);
                     stderrStarted.Set();
                     break;
             }
@@ -2349,6 +2442,7 @@ public sealed class ProcessOwnershipTests
         }
         finally
         {
+            ContainedProcess.ManagedWorkerQueueAdmissionObserverForTests = null;
             ContainedProcess.ManagedWorkerStartObserverForTests = null;
             ContainedProcess.ManagedResourceInstallObserverForTests = null;
             if (normalProcess is not null)
@@ -2400,6 +2494,7 @@ public sealed class ProcessOwnershipTests
         finally
         {
             ContainedProcess.ManagedWorkerQueueForTests = null;
+            ContainedProcess.ManagedWorkerQueueAdmissionObserverForTests = null;
             ContainedProcess.ManagedWorkerStartObserverForTests = null;
             monitorAdmissionFailure?.Process?.Terminate();
             monitorAdmissionFailure?.Process?.Dispose();
@@ -2516,6 +2611,7 @@ public sealed class ProcessOwnershipTests
         finally
         {
             ContainedProcess.ManagedWorkerQueueForTests = null;
+            ContainedProcess.ManagedWorkerQueueAdmissionObserverForTests = null;
             ContainedProcess.ManagedWorkerStartObserverForTests = null;
             ContainedProcess.ManagedResourceInstallObserverForTests = null;
             partialSchedulingFailure?.Process?.Terminate();
@@ -2807,31 +2903,27 @@ public sealed class ProcessOwnershipTests
 
         // F8: the internal ledger is strict about identity.  Duplicate acquisition and a failed release
         // against an already released slot must not synthesize or mutate ownership.
-        var assembly = typeof(ContainedProcess).Assembly;
-        Type ledgerType = assembly.GetType("SeqDoc.AcceptanceTests.NativeOwnershipLedger")
-            ?? throw new Xunit.Sdk.XunitException("Missing typed native ownership ledger.");
-        object ledger = Activator.CreateInstance(ledgerType)!;
-        Type resourceKind = assembly.GetType("SeqDoc.AcceptanceTests.NativeResourceKind")!;
-        object kind = Enum.Parse(resourceKind, "JobHandle");
-        MethodInfo acquire = ledgerType.GetMethod("Acquire", BindingFlags.Instance | BindingFlags.NonPublic)!;
-        MethodInfo release = ledgerType.GetMethod("AttemptRelease", BindingFlags.Instance | BindingFlags.NonPublic)!;
-        MethodInfo snapshotMethod = ledgerType.GetMethod("Snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var ledger = new NativeOwnershipLedger();
         nint value = (nint)0x1234;
-        acquire.Invoke(ledger, [kind, value, "test acquire"]);
-        object beforeDuplicate = snapshotMethod.Invoke(ledger, null)!;
-        TargetInvocationException duplicate = Assert.Throws<TargetInvocationException>(() =>
-            acquire.Invoke(ledger, [kind, value, "duplicate acquire"]));
-        Assert.IsType<InvalidOperationException>(duplicate.InnerException);
-        object afterDuplicate = snapshotMethod.Invoke(ledger, null)!;
-        Assert.Equal(SnapshotProjection(beforeDuplicate), SnapshotProjection(afterDuplicate));
+        ledger.Acquire(NativeResourceKind.JobHandle, value, "test acquire");
+        ProcessOwnershipSnapshot beforeDuplicate = ledger.Snapshot();
+        Assert.Throws<InvalidOperationException>(() =>
+            ledger.Acquire(NativeResourceKind.JobHandle, value, "duplicate acquire"));
+        ProcessOwnershipSnapshot afterDuplicate = ledger.Snapshot();
+        Assert.Equal(beforeDuplicate.NativeResources.Select(entry =>
+            (entry.Kind, entry.State, entry.Value, entry.Attempts, entry.Evidence, entry.Error)),
+            afterDuplicate.NativeResources.Select(entry =>
+            (entry.Kind, entry.State, entry.Value, entry.Attempts, entry.Evidence, entry.Error)));
 
-        release.Invoke(ledger, [kind, true, 0, "test release", value]);
-        object released = snapshotMethod.Invoke(ledger, null)!;
-        TargetInvocationException stale = Assert.Throws<TargetInvocationException>(() =>
-            release.Invoke(ledger, [kind, false, 8603, "stale failed release", value]));
-        Assert.IsType<InvalidOperationException>(stale.InnerException);
-        object afterStale = snapshotMethod.Invoke(ledger, null)!;
-        Assert.Equal(SnapshotProjection(released), SnapshotProjection(afterStale));
+        ledger.AttemptRelease(NativeResourceKind.JobHandle, true, 0, "test release", value);
+        ProcessOwnershipSnapshot released = ledger.Snapshot();
+        Assert.Throws<InvalidOperationException>(() =>
+            ledger.AttemptRelease(NativeResourceKind.JobHandle, false, 8603, "stale failed release", value));
+        ProcessOwnershipSnapshot afterStale = ledger.Snapshot();
+        Assert.Equal(released.NativeResources.Select(entry =>
+            (entry.Kind, entry.State, entry.Value, entry.Attempts, entry.Evidence, entry.Error)),
+            afterStale.NativeResources.Select(entry =>
+            (entry.Kind, entry.State, entry.Value, entry.Attempts, entry.Evidence, entry.Error)));
     }
 
     [Fact]
@@ -3187,14 +3279,6 @@ public sealed class ProcessOwnershipTests
         receipts
             .Where(receipt => receipt.Kind == kind)
             .Select(receipt => receipt.OperationId)
-            .ToArray();
-
-    private static string[] SnapshotProjection(object snapshot) =>
-        ((System.Collections.IEnumerable)GetRequiredProperty(snapshot, "NativeResources")).Cast<object>()
-            .Select(entry => string.Join("|",
-                GetRequiredProperty(entry, "Kind"), GetRequiredProperty(entry, "State"),
-                GetRequiredProperty(entry, "Value"), GetRequiredProperty(entry, "Attempts"),
-                GetRequiredProperty(entry, "Evidence"), GetRequiredProperty(entry, "Error") ?? ""))
             .ToArray();
 
     private static object GetRequiredProperty(object owner, string name) =>

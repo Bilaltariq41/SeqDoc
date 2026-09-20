@@ -882,6 +882,39 @@ Medium, and Low findings and all accepted independent findings are Fixed. Focuse
 SDK 10.0.302. The candidate remains ReviewRequired; explicit commit/push authorization is required before publishing the
 eight-file diff and requesting Ahmad's latest-head review. The final gate remains unrun and prohibited.
 
+### Bilal one-time review reservation and preparatory findings
+
+Bilal accepted one complete latest-head independent human review after technical repair, current-main integration, and
+the governance-only handoff correction. His preparatory inspection of `6de3f74` found: High, infinite/non-positive wait
+or drain bounds violate finite cleanup; Medium, the ambient-environment test does not restore prior process state;
+Medium, strict native-ledger proof still uses reflection/string lookup; Medium, reservation ordering is asserted before
+installation rather than at actual queue admission; and a residual evidence gap, `GetExitCodeProcess` failure omits the
+captured Win32 error. Repair these without weakening the 76 existing tests, run the focused lane and complete-candidate
+independent review, then stop before commit/current-main integration/governance handoff/final gate. Bilal's review-only
+findings do not make him a candidate contributor or consume his reserved independence.
+
+The Test Writer retained all 76 tests and added red evidence inside existing groups for finite positive wait/drain
+bounds, exact ambient-state restoration with nonparallel isolation, direct typed ledger strictness, lease publication at
+the actual queue-admission boundary, and exact `GetExitCodeProcess` error evidence. Production now validates deadlines
+before native acquisition/use, invokes the queue observer after typed lease installation and immediately before queueing,
+and captures the native exit-code error at the call boundary. Focused SDK 10.0.302 verification passed 76/76 with zero
+skipped; `git diff --check` passed. Bilal's preparatory findings are Fixed pending independent review.
+
+Independent review accepted the direct typed ledger, queue-admission, and exact exit-code evidence findings Fixed. Two
+Medium proof gaps remain: the finite-bound tests omit the first rejected value above the supported maximum
+(`uint.MaxValue` milliseconds), and ambient restoration is not asserted after cleanup for both absent and pre-existing
+host values. Strengthen those two existing groups without increasing the 76-test count; production behavior is unchanged.
+
+The two existing groups now prove the first rejected timeout above the supported maximum for wait and drain, valid wait
+retry after all rejected reservations, deterministic absent and pre-existing ambient states, per-state restoration, and
+final restoration of the host's original value. The initial Test Writer command exceeded its 120-second tool allowance
+without a test result; the same focused command under isolated SDK 10.0.302 completed in 1 minute 16 seconds with 76/76
+passing and zero skipped. `git diff --check` passed. Both independent-review proof gaps are Fixed pending rereview.
+
+Independent rereview passed with no findings. It accepted I100-A-F1 and I100-A-F2 Fixed, accepted all five Bilal
+preparatory findings Fixed, preserved all 76 prior claims, and accepted the exact technical scope. Stop before commit,
+current-main integration, governance-only handoff correction, Bilal request, or final gate.
+
 ### Owner platform-floor amendment
 
 Abood selected the evidence-backed repair: require Windows 10 / Windows Server 2016 x64 or newer and use

@@ -10,14 +10,14 @@
   "kind": "github-issue",
   "lifecycle": "ReviewRequired",
   "lifecycleLabel": "review-required",
-  "nextAction": "Independent review accepted the F9 rejection and returned PASS with no findings. Obtain explicit commit/push authorization, then publish the eight-file candidate and request Ahmad's latest-head review. Do not rerun focused tests or final gate.",
+  "nextAction": "Run independent rereview of the complete Bilal preparatory repair candidate, then stop before commit, current-main integration, governance-only handoff, Bilal request, or final gate.",
   "number": 106,
   "owner": "abood",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/109",
   "schemaVersion": 1,
   "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/106",
-  "statusReason": "Focused verification passed 76/76 under SDK 10.0.302. Independent review accepted F9 as Rejected under the atomic queue-admission seam contract and returned PASS with no other findings. All Ahmad findings are Fixed; publication awaits explicit commit/push authorization.",
+  "statusReason": "Independent-review proof gaps are repaired in the two existing groups. Isolated SDK 10.0.302 focused verification passed 76/76 with zero skipped in 1m16s and git diff --check passed.",
   "title": "[Testing] Prove Windows contained-process ownership primitive",
   "track": "quality"
 }

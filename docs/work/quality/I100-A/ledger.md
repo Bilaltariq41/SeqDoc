@@ -696,3 +696,30 @@ bool directly. Queue-then-throw is outside the accepted producer contract. No ca
 Independent review verdict: PASS, no findings. F9 Rejected is accepted; all Ahmad and prior independent findings are
 Fixed. Focused evidence remains 76/76. Publication and Ahmad rereview await explicit commit/push authority; no final gate
 has run.
+
+Bilal reserved one latest-head independent human review and performed a preparatory inspection at `6de3f74`. Accepted
+findings: finite positive wait/drain admission; exact restoration and nonparallel isolation for ambient environment
+mutation; direct typed strict-ledger proof; lease-publication assertion at the actual queue-admission boundary for drain
+and monitor workers; and exact Win32 error evidence for `GetExitCodeProcess` failure. Technical repairs precede focused
+verification, self/independent review, current-main integration, and a separate governance-only handoff commit. No final
+gate is authorized.
+
+Bilal preparatory repair evidence: existing tests now cover zero/infinite/negative wait and drain bounds, exact ambient
+environment restoration and collection isolation, direct typed strict-ledger operations, actual queue-admission lease
+publication for monitor/stdout/stderr, and injected `GetExitCodeProcess` error 2468. Production implements the exact
+finite-bound, queue-boundary, and native-error contracts. Focused verification passed 76/76; findings are Fixed pending
+independent review.
+
+Independent review returned two Medium proof gaps only: add the rejected `uint.MaxValue`-millisecond wait/drain boundary
+and assert exact ambient restoration for deterministic absent and pre-existing states. All other Bilal preparatory
+findings are Fixed. No production repair is required.
+
+The two existing groups were strengthened with the `uint.MaxValue`-millisecond rejected boundary and exact restoration
+assertions for absent, pre-existing, and original host environment states. The Test Writer's first focused process hit
+its 120-second harness allowance before emitting a result; an Orchestrator timeout-recovery rerun of the same command
+under isolated SDK 10.0.302 passed 76/76 in 1 minute 16 seconds with zero skipped. `git diff --check` passed. The two
+Medium review findings are Fixed pending independent rereview.
+
+Independent rereview verdict: PASS, no findings. I100-A-F1/F2 and all five Bilal preparatory findings are Fixed; all 76
+prior claims and the exact two-file technical scope remain accepted. The candidate is still uncommitted and must stop
+before current-main integration, governance-only handoff correction, Bilal request, or final gate.

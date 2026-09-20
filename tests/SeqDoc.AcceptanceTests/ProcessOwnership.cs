@@ -99,6 +99,7 @@ internal sealed class ProcessOwnershipNativeCalls
 {
     internal Func<nint, uint, NativeCallResult>? TerminateJobObject { get; init; }
     internal Func<nint, int, NativeWaitResult>? WaitForSingleObject { get; init; }
+    internal Func<nint, NativeCallResult<uint>>? GetExitCodeProcess { get; init; }
     internal Func<nint, NativeCallResult<uint>>? ResumeThread { get; init; }
     internal Func<nint, uint, NativeCallResult>? TerminateProcess { get; init; }
     internal Func<nint, NativeCallResult<uint>>? PeekNamedPipe { get; init; }
@@ -351,6 +352,8 @@ internal static class ProcessOwnershipEncoding
 /// </summary>
 public sealed partial class ContainedProcess : IDisposable
 {
+    private const long MaxDeadlineMilliseconds = uint.MaxValue - 1L;
+
     private readonly NativeOwnershipLedger _ownershipLedger = new();
     private readonly ProcessOwnershipLifecycleCoordinator _lifecycle;
     private readonly List<string> _teardownFailures = new();
@@ -416,6 +419,7 @@ public sealed partial class ContainedProcess : IDisposable
     internal static Action<ManagedResourceKind>? ManagedResourceInstallObserverForTests;
     internal static Action<ManagedResourceKind>? ManagedWorkerStartObserverForTests;
     internal static Func<ManagedResourceKind, Action, bool>? ManagedWorkerQueueForTests;
+    internal static Action<ManagedResourceKind, ProcessOwnershipSnapshot>? ManagedWorkerQueueAdmissionObserverForTests;
 
     /// <summary>
     /// GH106-R2-F11 test-only seam: invoked with a resource label immediately before each partial-
@@ -506,6 +510,12 @@ public sealed partial class ContainedProcess : IDisposable
     {
         ArgumentNullException.ThrowIfNull(options);
 
+        if (!TryValidateFinitePositiveDeadline(options.DrainTimeout, nameof(ProcessOwnershipOptions.DrainTimeout),
+                out string? drainTimeoutError))
+        {
+            return ProcessOwnershipConstructionResult.Failure(drainTimeoutError!);
+        }
+
         if (!ProcessOwnershipPlatform.IsSupported())
         {
             return ProcessOwnershipConstructionResult.Failure(
@@ -588,6 +598,19 @@ public sealed partial class ContainedProcess : IDisposable
         }
 
         return null;
+    }
+
+    private static bool TryValidateFinitePositiveDeadline(TimeSpan value, string parameterName, out string? error)
+    {
+        if (value <= TimeSpan.Zero || value > TimeSpan.FromMilliseconds(MaxDeadlineMilliseconds))
+        {
+            error = $"{parameterName} must be finite and greater than zero, and no greater than "
+                + $"{MaxDeadlineMilliseconds} milliseconds.";
+            return false;
+        }
+
+        error = null;
+        return true;
     }
 
     private static ProcessOwnershipConstructionResult StartCore(
@@ -1034,9 +1057,9 @@ public sealed partial class ContainedProcess : IDisposable
 
     private async Task<ProcessOwnershipWaitResult> WaitCoreAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
-        if (timeout < TimeSpan.Zero && timeout != Timeout.InfiniteTimeSpan)
+        if (!TryValidateFinitePositiveDeadline(timeout, nameof(timeout), out string? timeoutError))
         {
-            throw new ArgumentOutOfRangeException(nameof(timeout));
+            throw new ArgumentOutOfRangeException(nameof(timeout), timeout, timeoutError);
         }
         using var timeoutCts = new CancellationTokenSource(timeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token, cancellationToken);
@@ -1099,17 +1122,28 @@ public sealed partial class ContainedProcess : IDisposable
         else
         {
             nint processHandle = _ownershipLedger.CurrentOwned(NativeResourceKind.ProcessHandle)?.Value ?? nint.Zero;
-            if (processHandle == nint.Zero || !NativeMethods.GetExitCodeProcess(processHandle, out uint code))
+            if (processHandle == nint.Zero)
             {
-                _lifecycle.Record(ProcessOwnershipFailureClass.ProcessFailed, "GetExitCodeProcess failed.");
+                _lifecycle.Record(ProcessOwnershipFailureClass.ProcessFailed,
+                    "GetExitCodeProcess unavailable: the process handle is not owned.");
             }
             else
             {
-                exitCode = unchecked((int)code);
-                if (code != 0)
+                NativeCallResult<uint> exitCodeResult = InvokeGetExitCodeProcess(processHandle);
+                if (!exitCodeResult.Succeeded)
                 {
-                    _lifecycle.Record(
-                        ProcessOwnershipFailureClass.ProcessFailed, $"Child exited with code {code}.");
+                    _lifecycle.Record(ProcessOwnershipFailureClass.ProcessFailed,
+                        $"GetExitCodeProcess failed with Win32 error {exitCodeResult.Win32Error}.");
+                }
+                else
+                {
+                    uint code = exitCodeResult.Value;
+                    exitCode = unchecked((int)code);
+                    if (code != 0)
+                    {
+                        _lifecycle.Record(
+                            ProcessOwnershipFailureClass.ProcessFailed, $"Child exited with code {code}.");
+                    }
                 }
             }
 
@@ -1746,9 +1780,10 @@ public sealed partial class ContainedProcess : IDisposable
         }
     }
 
-    private static bool QueueManagedWorker(ManagedResourceKind kind, Action action)
+    private bool QueueManagedWorker(ManagedResourceKind kind, Action action)
     {
         Func<ManagedResourceKind, Action, bool>? seam = ManagedWorkerQueueForTests;
+        ManagedWorkerQueueAdmissionObserverForTests?.Invoke(kind, _ownershipLedger.Snapshot());
         return seam is not null
             ? seam(kind, action)
             : ThreadPool.QueueUserWorkItem(_ => action());
@@ -1924,6 +1959,22 @@ public sealed partial class ContainedProcess : IDisposable
 
         uint result = NativeMethods.WaitForSingleObject(handle, timeoutMs);
         return new NativeWaitResult(result, result == NativeMethods.WAIT_FAILED ? Marshal.GetLastWin32Error() : 0);
+    }
+
+    private NativeCallResult<uint> InvokeGetExitCodeProcess(nint handle)
+    {
+        if (_nativeCalls.GetExitCodeProcess is not null)
+        {
+            return _nativeCalls.GetExitCodeProcess(handle);
+        }
+
+        if (NativeMethods.GetExitCodeProcess(handle, out uint code))
+        {
+            return NativeCallResult<uint>.Success(code);
+        }
+
+        int error = Marshal.GetLastWin32Error();
+        return NativeCallResult<uint>.Failure(error);
     }
 
     /// <summary>GH106-R2-F4 seam indirection: real production calls always go through this.</summary>
