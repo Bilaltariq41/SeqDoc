@@ -111,27 +111,16 @@ workflow without private state.
 Stop for a real external dependency, an active conflicting path or exclusive-resource lease, or an owner-only T4
 operation. Do not weaken transaction, recovery, deterministic-output, or review-identity tests to finish the issue.
 
-Takeover amendment: an owner-authorized maintainer takeover may resume only the blocked checkpoint once. `resume`
-requires explicit nonempty `current_head`, `start_head`, and `next_action`; both heads must be lowercase 40-character
-SHAs equal to the actual observed clean checkout HEAD. It restores one selected execution with normalized claims,
-preserving the frozen baseline, attribution, branch, checkpoint, and PR. It records a deterministic authorization
-receipt, reason, and start head; the supplied reason and next action become `statusReason` and `nextAction`. It rejects
-selected or conflicting executions and atomically updates the capsule and registry.
-This does not authorize automatic repair, GitHub writes, lifecycle changes outside the operation, or the final gate.
-State remains `Blocked` until the explicitly authorized resume operation is invoked after publication.
-
-Two-peer takeover amendment: the authorized route is exactly two authenticated peer Issue-comment receipts, repeated as
-`--peer-authorization-receipt`, plus `--authorization-head`; it is mutually exclusive with the owner route. The
-comments must be human same-repository/same-issue OWNER, MEMBER, or COLLABORATOR comments with exact normalized markers,
-distinct IDs and case-insensitively distinct logins. Authenticated PR metadata must prove neither peer authored the item
-PR, and the authorization head must be a lowercase SHA authenticated as a local ancestor of the observed start head.
-The exact approvals are issue comments `5713964023` (Abood-essa) and `5714397001` (Qhatahet). This amendment authorizes
-implementation only; state remains `Blocked` and no resume, review, or final gate is claimed.
+Current-policy repair boundary: `resume` is an ordinary worker operation. It accepts only a clean, current `Blocked`
+record with closed dependencies, a present capsule, no selected execution, and normalized non-overlapping claims. It
+observes no GitHub data, moves directly to `ResolvingFindings`, records `resume:{reason,startHead}`, and removes any
+legacy `takeover` object. Authentication receipts, peer ancestry, fixed repair limits, and maintainer takeover are not
+requirements. This is the worker-owned T2/T3 continuation; the checkpoint remains `Blocked` until the Orchestrator
+invokes the repaired resume after a clean commit.
 
 ## Review finding repair boundary
 
-F1 through F4 require authenticated owner-comment receipts, revalidated closeout
-receipts, authenticated attribution, strict slur-pagination, and human reviewer
-identity. The existing takeover record predates that receipt and remains only
-temporary validation-compatible evidence; it must be replaced by an authenticated
-`Blocked` -> resume cycle before rereview or the final gate.
+The current policy uses case-insensitive GitHub login identity for handoff, review matching, self-review rejection,
+and attribution while persisting exact authenticated spellings. The phase-A schema accepts the existing legacy
+`takeover` object only on this `Blocked` record for migration; resume and closeout never create, use, revalidate, or
+preserve it. Phase B deletes that schema allowance after live migration.

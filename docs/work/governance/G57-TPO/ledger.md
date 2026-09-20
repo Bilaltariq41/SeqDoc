@@ -150,4 +150,24 @@ gate is claimed.
 - F12 adds realistic `GH-57`/`G57-TPO`/`GH-57:G57-TPO`, Issue #57/PR #110 successful two-peer closeout
   revalidation, plus edited/deleted receipt complete byte-snapshot rejection coverage.
 - No production code changed. Focused verification: **28 passed, 1 platform skip**.
+
+## Current-policy reconciliation (phase A)
+
+- The owner/two-peer takeover protocol, fixed repair-limit requirement, and closeout takeover revalidation are
+  **superseded policy**. The current authority is `docs/project/collaboration-model.md`, lines 57-64; the historical
+  receipts and observations above remain evidence only.
+- Worker-owned T2/T3 continuation removes takeover authorization parsing and CLI arguments. Resume is transactional,
+  GitHub-free, dependency-aware, claim-conflict-aware, and records only deterministic `resume` evidence. It consumes
+  legacy takeover metadata rather than preserving it.
+- Phase A retains a narrow validation/schema allowance for the existing `Blocked` legacy record so live GH-57 state can
+  validate. Phase B deletes that allowance after migration. No lifecycle invocation, resume, final gate, or GitHub write
+  is claimed by this repair.
 - This is a repair disposition only; no independent rereview or final gate is claimed.
+
+## F13 identity repair disposition
+
+- F13: **Fixed** — review metadata now binds `reviewPeer` to `review.peer` case-insensitively, while `reviewEpoch` and
+  `reviewFindings` remain exact mirrors; review author/peer distinctness and closeout caller-peer matching use GitHub
+  login casefolding without broadening non-login IDs. Authenticated attribution continues to persist the exact observed
+  spelling.
+- This is a repair disposition only; no rereview, lifecycle invocation, resume, or final gate is claimed.

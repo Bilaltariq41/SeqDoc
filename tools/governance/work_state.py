@@ -126,7 +126,7 @@ def metadata_errors(item):
     if (epoch is not None and (not isinstance(epoch, str) or not ID.fullmatch(epoch))) or (peer is not None and (not isinstance(peer, str) or not ID.fullmatch(peer))):
         errors.append("invalid review metadata")
     review_states = {"ReviewRequired", "ResolvingFindings", "Verifying", "Closed"}
-    if lifecycle in review_states and lifecycle != "Closed" and item.get("executionId") is not None and not (lifecycle == "ResolvingFindings" and item.get("takeover")) and (not epoch or not peer or not isinstance(findings, list)):
+    if lifecycle in review_states and lifecycle != "Closed" and item.get("executionId") is not None and not item.get("resume") and (not epoch or not peer or not isinstance(findings, list)):
         errors.append("review metadata missing")
     closeout = item.get("closeout")
     if closeout is not None:
@@ -148,36 +148,53 @@ def metadata_errors(item):
         elif not (isinstance(review["executionId"], str) and ID.fullmatch(review["executionId"]) and
                   isinstance(review["pr"], str) and PR_URL.match(review["pr"]) and SHA.fullmatch(review["requestHead"]) and
                   all(isinstance(review[key], str) and ID.fullmatch(review[key]) for key in ("author", "peer")) and EPOCH.fullmatch(review["epoch"]) and
-                  review["author"] != review["peer"] and review["findings"] == sorted(set(review["findings"])) and
+                  review["author"].casefold() != review["peer"].casefold() and review["findings"] == sorted(set(review["findings"])) and
                   all(valid_finding(value) for value in review["findings"])):
-            errors.append("invalid review record")
+             errors.append("invalid review record")
+        if isinstance(review, dict):
+            if not isinstance(review.get("peer"), str) or not isinstance(peer, str) or peer.casefold() != review["peer"].casefold():
+                errors.append("review peer metadata mismatch")
+            if not isinstance(review.get("epoch"), str) or epoch != review.get("epoch"):
+                errors.append("review epoch metadata mismatch")
+            if not isinstance(review.get("findings"), list) or findings != review.get("findings"):
+                errors.append("review findings metadata mismatch")
     takeover = item.get("takeover")
-    # The three-field shape is readable for migration only.  Mutating operations
-    # require the authenticated shape below.
+    # Phase A accepts only the existing three-field record on a Blocked item.
+    # Resume consumes it; no current operation creates or authorizes it.
     legacy_takeover = {"authorizationReceipt", "reason", "startHead"}
     owner_takeover = {"mode", "authorizationReceipt", "authorizationDigest", "authorizedBy", "reason", "startHead"}
     peer_takeover = {"mode", "authorizationHead", "authorizationReceipts", "reason", "startHead"}
     if takeover is not None:
         shape = set(takeover) if isinstance(takeover, dict) else set()
-        valid_shape = shape in (legacy_takeover, owner_takeover, peer_takeover)
         legacy_allowed = shape == legacy_takeover and lifecycle == "Blocked" and not item.get("executionId")
-        owner_values = (shape == owner_takeover and takeover.get("mode") == "owner" and
-                        all(isinstance(takeover.get(key), str) and takeover[key].strip() for key in ("authorizationReceipt", "authorizedBy", "reason")) and
-                        re.fullmatch(r"[0-9a-f]{64}", takeover.get("authorizationDigest", "")))
-        receipts = takeover.get("authorizationReceipts") if shape == peer_takeover else None
-        peer_values = (shape == peer_takeover and takeover.get("mode") == "two-peer" and
-                       SHA.fullmatch(takeover.get("authorizationHead", "")) and
-                       isinstance(receipts, list) and len(receipts) == 2 and
-                        all(isinstance(r, dict) and set(r) == {"url", "authorizationDigest", "authorizedBy"} and
-                            ISSUE_COMMENT_URL.fullmatch(r.get("url", "")) and re.fullmatch(r"[0-9a-f]{64}", r.get("authorizationDigest", "")) and
-                           isinstance(r.get("authorizedBy"), str) and r["authorizedBy"].strip() for r in receipts) and
-                       receipts[0]["url"] != receipts[1]["url"] and
-                       receipts[0]["authorizedBy"].casefold() != receipts[1]["authorizedBy"].casefold())
-        valid_values = ((legacy_allowed or owner_values or peer_values) and isinstance(takeover, dict) and
-                        all(isinstance(takeover.get(key), str) and takeover[key].strip() for key in ("reason",)) and
+        owner_allowed = shape == owner_takeover and lifecycle == "Blocked" and not item.get("executionId") and takeover.get("mode") == "owner"
+        peer_allowed = shape == peer_takeover and lifecycle == "Blocked" and not item.get("executionId") and takeover.get("mode") == "two-peer"
+        valid_shape = legacy_allowed or owner_allowed or peer_allowed
+        valid_values = (valid_shape and isinstance(takeover, dict) and
+                        isinstance(takeover.get("authorizationReceipt"), str) and takeover["authorizationReceipt"].strip() and
+                        isinstance(takeover.get("reason"), str) and takeover["reason"].strip() and
                         SHA.fullmatch(takeover.get("startHead", "")))
+        if owner_allowed:
+            valid_values = (isinstance(takeover.get("authorizationReceipt"), str) and takeover["authorizationReceipt"].strip() and
+                            isinstance(takeover.get("authorizedBy"), str) and takeover["authorizedBy"].strip() and
+                            re.fullmatch(r"[0-9a-f]{64}", takeover.get("authorizationDigest", "")) and
+                            isinstance(takeover.get("reason"), str) and takeover["reason"].strip() and SHA.fullmatch(takeover.get("startHead", "")))
+        if peer_allowed:
+            receipts = takeover.get("authorizationReceipts")
+            valid_values = (SHA.fullmatch(takeover.get("authorizationHead", "")) and isinstance(receipts, list) and len(receipts) == 2 and
+                            all(isinstance(r, dict) and set(r) == {"url", "authorizationDigest", "authorizedBy"} and
+                                ISSUE_COMMENT_URL.fullmatch(r.get("url", "")) and re.fullmatch(r"[0-9a-f]{64}", r.get("authorizationDigest", "")) and
+                                isinstance(r.get("authorizedBy"), str) and r["authorizedBy"].strip() for r in receipts) and
+                            receipts[0]["url"] != receipts[1]["url"] and
+                            receipts[0]["authorizedBy"].casefold() != receipts[1]["authorizedBy"].casefold() and
+                            isinstance(takeover.get("reason"), str) and takeover["reason"].strip() and SHA.fullmatch(takeover.get("startHead", "")))
         if not valid_values:
             errors.append("invalid takeover record")
+    resume_record = item.get("resume")
+    if resume_record is not None and (not isinstance(resume_record, dict) or set(resume_record) != {"reason", "startHead"} or
+                                      not isinstance(resume_record.get("reason"), str) or not resume_record["reason"].strip() or
+                                      not SHA.fullmatch(resume_record.get("startHead", ""))):
+        errors.append("invalid resume record")
     return errors
 
 
@@ -633,102 +650,6 @@ def authenticated_pr(repository, pr):
     return value
 
 
-def takeover_marker(item, execution_id, baseline, start_head):
-    return ("SEQDOC OWNER AUTHORIZATION v1\n"
-            f"Item: {item['id']}\nCheckpoint: {item['checkpointId']}\nExecution: {execution_id}\n"
-            f"Baseline: {baseline}\nStart head: {start_head}\nOperation: bounded maintainer takeover\n")
-
-
-def normalize_authorization_body(body, canonical):
-    if not isinstance(body, str):
-        raise ValueError("authorization marker mismatch")
-    normalized = body.replace("\r\n", "\n").replace("\r", "\n")
-    if normalized.endswith("\n"):
-        normalized = normalized[:-1]
-        if normalized.endswith("\n"):
-            raise ValueError("authorization marker mismatch")
-    if normalized != (canonical[:-1] if canonical.endswith("\n") else canonical):
-        raise ValueError("authorization marker mismatch")
-    return canonical
-
-
-def repository_owner(repository):
-    parts = (repository or "").split("/")
-    if len(parts) != 2 or not all(parts) or any(not re.fullmatch(r"[^\s/]+", part) for part in parts):
-        raise ValueError("repository must be an owner/repo value")
-    return parts[0]
-
-
-def authenticated_takeover(repository, item, execution_id, baseline, start_head, receipt_url):
-    owner = repository_owner(repository)
-    match = ISSUE_COMMENT_URL.fullmatch(receipt_url or "")
-    if (not match or (match.group(1).casefold(), match.group(2).casefold()) != tuple(part.casefold() for part in repository.split("/")) or
-            (item.get("number") is not None and match.group(3) != str(item["number"]))):
-        raise ValueError("authorization receipt/repository or issue mismatch")
-    try:
-        result = subprocess.run(["gh", "api", f"repos/{repository}/issues/comments/{match.group(4)}"],
-                                capture_output=True, text=True, check=True)
-        value = json.loads(result.stdout)
-    except (OSError, subprocess.SubprocessError, TypeError, json.JSONDecodeError) as error:
-        raise ValueError(f"authenticated authorization receipt observation failed: {error}")
-    expected_issue_url = f"https://api.github.com/repos/{repository}/issues/{item['number']}" if item.get("number") is not None else value.get("issue_url")
-    if not isinstance(value, dict) or value.get("html_url") != receipt_url or value.get("issue_url") != expected_issue_url:
-        raise ValueError("malformed authenticated authorization receipt")
-    user = value.get("user")
-    if (not isinstance(user, dict) or not isinstance(user.get("login"), str) or
-            user["login"].casefold() != owner.casefold() or value.get("author_association") != "OWNER"):
-        raise ValueError("authorization receipt is not an owner comment")
-    body = value.get("body")
-    marker = takeover_marker(item, execution_id, baseline, start_head)
-    normalized = normalize_authorization_body(body, marker)
-    return user["login"], hashlib.sha256(normalized.encode()).hexdigest()
-
-
-def authenticated_peer_takeovers(repository, item, execution_id, baseline, start_head, receipts, authorization_head, root):
-    if not isinstance(receipts, list) or len(receipts) != 2 or len({str(x) for x in receipts}) != 2:
-        raise ValueError("exactly two distinct peer authorization receipts are required")
-    if not isinstance(authorization_head, str) or not SHA.fullmatch(authorization_head):
-        raise ValueError("authorization head must be a lowercase SHA")
-    canonical_repository_binding(item, repository)
-    observed = []
-    for receipt_url in receipts:
-        match = ISSUE_COMMENT_URL.fullmatch(receipt_url or "")
-        if (not match or (match.group(1).casefold(), match.group(2).casefold()) != tuple(part.casefold() for part in repository.split("/")) or
-                match.group(3) != str(item.get("number"))):
-            raise ValueError("peer authorization receipt/repository or issue mismatch")
-        try:
-            result = subprocess.run(["gh", "api", f"repos/{repository}/issues/comments/{match.group(4)}"], capture_output=True, text=True, check=True)
-            value = json.loads(result.stdout)
-        except (OSError, subprocess.SubprocessError, TypeError, json.JSONDecodeError) as error:
-            raise ValueError(f"authenticated peer authorization receipt observation failed: {error}")
-        expected_issue_url = f"https://api.github.com/repos/{repository}/issues/{item['number']}"
-        user = value.get("user") if isinstance(value, dict) else None
-        if (not isinstance(value, dict) or value.get("html_url") != receipt_url or value.get("issue_url") != expected_issue_url or
-                not isinstance(user, dict) or user.get("type") != "User" or not isinstance(user.get("login"), str) or not user["login"].strip() or
-                value.get("author_association") not in {"OWNER", "MEMBER", "COLLABORATOR"}):
-            raise ValueError("malformed authenticated peer authorization receipt")
-        marker = (f"SEQDOC PEER TAKEOVER DECISION v1\nItem: {item['id']}\nCheckpoint: {item['checkpointId']}\nExecution: {execution_id}\n"
-                  f"Baseline: {baseline}\nBlocked head: {authorization_head}\nPeer: {user['login']}\nDecision: authorize bounded maintainer takeover\n")
-        normalized = normalize_authorization_body(value.get("body"), marker)
-        observed.append({"url": receipt_url, "authorizationDigest": hashlib.sha256(normalized.encode()).hexdigest(), "authorizedBy": user["login"]})
-    if len({r["authorizedBy"].casefold() for r in observed}) != 2:
-        raise ValueError("peer authorization identities must be distinct")
-    try:
-        pr = authenticated_pr(repository, item.get("pr"))
-    except ValueError:
-        raise
-    author = pr["author"]["login"]
-    if any(author.casefold() == r["authorizedBy"].casefold() for r in observed):
-        raise ValueError("PR author cannot authorize takeover")
-    try:
-        result = subprocess.run(["git", "merge-base", "--is-ancestor", authorization_head, start_head], cwd=root, check=False)
-    except (OSError, subprocess.SubprocessError) as error:
-        raise ValueError(f"git ancestry observation failed: {error}")
-    if getattr(result, "returncode", 1) != 0:
-        raise ValueError("authorization head is not an ancestor of start head")
-    return sorted(observed, key=lambda r: r["authorizedBy"].casefold())
-
-
 def authenticated_reviews(repository, number, peer, head):
     command = ["gh", "api", f"repos/{repository}/pulls/{number}/reviews", "--paginate", "--slurp"]
     try:
@@ -745,7 +666,7 @@ def authenticated_reviews(repository, number, peer, head):
         if (not isinstance(user, dict) or not isinstance(user.get("login"), str) or
                 user.get("type") != "User" or not isinstance(review["state"], str) or not isinstance(review["commit_id"], str)):
             raise ValueError("malformed authenticated review observation")
-        if user["login"] == peer and review["state"] == "APPROVED" and review["commit_id"] == head:
+        if user["login"].casefold() == peer.casefold() and review["state"] == "APPROVED" and review["commit_id"] == head:
             return
     raise ValueError("no exact-head peer approval")
 
@@ -869,14 +790,6 @@ def resume(root, args):
         errors.append("an execution is already selected")
     if not args.execution_id or not ID.fullmatch(args.execution_id) or not args.worktree_id or not ID.fullmatch(args.worktree_id) or "/" in args.worktree_id or "\\" in args.worktree_id:
         errors.append("invalid execution identity")
-    owner_route = isinstance(args.authorization_receipt, str) and bool(args.authorization_receipt.strip())
-    peer_route = args.peer_authorization_receipt is not None or args.authorization_head is not None
-    if owner_route and peer_route:
-        errors.append("owner and peer authorization routes are mutually exclusive")
-    if not owner_route and not peer_route:
-        errors.append("authorization receipt and reason are required")
-    if peer_route and (not isinstance(args.peer_authorization_receipt, list) or len(args.peer_authorization_receipt) != 2 or not args.authorization_head):
-        errors.append("exactly two peer receipts and authorization head are required")
     if not isinstance(args.reason, str) or not args.reason.strip():
         errors.append("reason is required")
     if (not isinstance(args.next_action, str) or not args.next_action.strip()):
@@ -885,11 +798,9 @@ def resume(root, args):
         errors.append("baseline identity mismatch")
     if item and (not item.get("checkpointId") or not item.get("checkpointPath") or not (root / item["checkpointPath"] / "checkpoint.md").is_file()):
         errors.append("checkpoint is missing")
-    if item and item.get("kind") == "github-issue":
-        try:
-            canonical_repository_binding(item, args.repository)
-        except ValueError as error:
-            errors.append(str(error))
+    if item and any(next((dependency for dependency in candidate if dependency.get("id") == dep), {}).get("lifecycle") != "Closed"
+                    for dep in item.get("dependencies", [])):
+        errors.append("dependency not closed")
     try:
         actual_head, actual_branch, clean = observe_git(root)
     except ValueError as error:
@@ -901,7 +812,7 @@ def resume(root, args):
         errors.append("observed HEAD differs from supplied expectation")
     if not SHA.fullmatch(actual_head):
         errors.append("malformed observed HEAD")
-    if args.current_branch is not None and (not isinstance(args.current_branch, str) or args.current_branch != actual_branch):
+    if not isinstance(args.current_branch, str) or not args.current_branch or args.current_branch != actual_branch:
         errors.append("observed branch differs from supplied expectation")
     if item and actual_branch != item.get("branch"):
         errors.append("branch identity mismatch")
@@ -927,27 +838,11 @@ def resume(root, args):
     if errors:
         print("\n".join(sorted(set(errors))), file=sys.stderr)
         return 1
-    try:
-        if peer_route:
-            peer_receipts = authenticated_peer_takeovers(args.repository, item, args.execution_id,
-                                                         args.expected_baseline, actual_head,
-                                                         args.peer_authorization_receipt, args.authorization_head, root)
-            takeover = {"mode": "two-peer", "authorizationHead": args.authorization_head,
-                        "authorizationReceipts": peer_receipts, "reason": args.reason, "startHead": actual_head}
-        else:
-            authorized_by, digest = authenticated_takeover(args.repository, item, args.execution_id,
-                                                           args.expected_baseline, actual_head,
-                                                           args.authorization_receipt)
-            takeover = {"mode": "owner", "authorizationReceipt": args.authorization_receipt,
-                        "authorizationDigest": digest, "authorizedBy": authorized_by,
-                        "reason": args.reason, "startHead": actual_head}
-    except ValueError as error:
-        print(str(error), file=sys.stderr)
-        return 1
     item.update(lifecycle="ResolvingFindings", lifecycleLabel="resolving-findings", executionId=args.execution_id,
                 worktreeId=args.worktree_id, selectedForExecution=True, claims=claims,
                 nextAction=args.next_action, statusReason=args.reason,
-                 takeover=takeover)
+                resume={"reason": args.reason, "startHead": actual_head})
+    item.pop("takeover", None)
     capsule_path = root / item["checkpointPath"] / "checkpoint.md"
     lines = capsule_path.read_text(encoding="utf-8").splitlines()
     state_index = next((i for i, line in enumerate(lines) if line.strip() == "## State"), None)
@@ -988,7 +883,7 @@ def handoff(root, args):
     author = observation["author"]["login"] if observation else None
     if observation and observation["author"].get("is_bot") is True:
         errors.append("bot author is not eligible for human peer review")
-    if not args.peer or (author and args.peer == author):
+    if not args.peer or (author and args.peer.casefold() == author.casefold()):
         errors.append("author-as-peer")
     prior_review = current.get("review") if current and current.get("lifecycle") == "ResolvingFindings" else None
     if not args.epoch or not EPOCH.fullmatch(args.epoch) or not author:
@@ -1001,7 +896,7 @@ def handoff(root, args):
         if not isinstance(prior_review, dict) or observation is None or observation["headRefOid"] == prior_review.get("requestHead"):
             errors.append("PR head did not advance")
         allow_peer_change = getattr(args, "allow_peer_change", False)
-        if not allow_peer_change and (not isinstance(prior_review, dict) or args.peer != prior_review.get("peer")):
+        if not allow_peer_change and (not isinstance(prior_review, dict) or args.peer.casefold() != prior_review.get("peer", "").casefold()):
             errors.append("review peer changed without explicit authorization")
     if errors:
         print("\n".join(sorted(set(errors))), file=sys.stderr)
@@ -1046,7 +941,7 @@ def closeout(root, args):
         errors.append("stored review evidence missing")
     if not args.pr or args.pr != review.get("pr"):
         errors.append("PR identity mismatch")
-    if not args.peer or args.peer != review.get("peer"):
+    if not args.peer or args.peer.casefold() != review.get("peer", "").casefold():
         errors.append("review peer mismatch")
     if not args.head or not SHA.match(args.head):
         errors.append("head identity mismatch")
@@ -1058,25 +953,6 @@ def closeout(root, args):
     observation = None
     if not errors:
         try:
-            takeover = current.get("takeover") if current else None
-            if takeover is not None:
-                if not isinstance(takeover, dict):
-                    raise ValueError("authenticated takeover receipt is required before closeout")
-                if takeover.get("mode") == "two-peer":
-                    refreshed = authenticated_peer_takeovers(args.repository, current, args.execution_id,
-                                                             current.get("baseline"), takeover.get("startHead"),
-                                                             [r.get("url") for r in takeover.get("authorizationReceipts", [])],
-                                                             takeover.get("authorizationHead"), root)
-                    if refreshed != takeover.get("authorizationReceipts"):
-                        raise ValueError("peer authorization receipt digest or identity mismatch")
-                elif takeover.get("mode") == "owner":
-                    authorized_by, digest = authenticated_takeover(args.repository, current, args.execution_id,
-                                                                   current.get("baseline"), takeover.get("startHead"),
-                                                                   takeover.get("authorizationReceipt"))
-                    if digest != takeover.get("authorizationDigest") or authorized_by != takeover.get("authorizedBy"):
-                        raise ValueError("authorization receipt digest or identity mismatch")
-                else:
-                    raise ValueError("authenticated takeover receipt is required before closeout")
             match = PR_URL.fullmatch(args.pr or "")
             if not match:
                 raise ValueError("malformed PR URL")
@@ -1089,7 +965,8 @@ def closeout(root, args):
                 raise ValueError("merge SHA mismatch")
             authenticated_reviews(args.repository, number, review.get("peer"), observation["headRefOid"])
             authenticated_author = observation["author"]["login"]
-            if authenticated_author != review.get("author") or args.attribution != authenticated_author:
+            if (authenticated_author.casefold() != review.get("author", "").casefold() or
+                    args.attribution.casefold() != authenticated_author.casefold()):
                 raise ValueError("closeout attribution does not match authenticated PR author")
         except ValueError as error:
             errors.append(str(error))
@@ -1408,9 +1285,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["validate", "project-execution", "check-github", "sync-github", "project", "transition", "prepare", "activate", "resume", "handoff", "closeout", "promote", "recover"])
     parser.add_argument("--root", type=Path, default=Path(".")); parser.add_argument("--check", action="store_true"); parser.add_argument("--dry-run", action="store_true"); parser.add_argument("--repository", default="Bilaltariq41/SeqDoc")
-    for option in ("id", "state", "reason", "authorization-receipt", "authorization-head", "start-head", "select-id", "checkpoint-id", "checkpoint-path", "next-action", "pr", "branch", "baseline", "contract-revision", "execution-id", "expected-baseline", "current-head", "current-branch", "worktree-id", "observed-head", "observed-author", "peer", "epoch", "findings", "focused-receipt", "final-receipt", "attribution", "merge-sha", "head"):
+    for option in ("id", "state", "reason", "start-head", "select-id", "checkpoint-id", "checkpoint-path", "next-action", "pr", "branch", "baseline", "contract-revision", "execution-id", "expected-baseline", "current-head", "current-branch", "worktree-id", "observed-head", "observed-author", "peer", "epoch", "findings", "focused-receipt", "final-receipt", "attribution", "merge-sha", "head"):
         parser.add_argument("--" + option)
-    parser.add_argument("--peer-authorization-receipt", action="append")
     parser.add_argument("--allow-peer-change", action="store_true")
     parser.add_argument("--select", action="store_true"); parser.add_argument("--clean", action="store_true"); parser.add_argument("--dirty", action="store_true"); parser.add_argument("--scaffold", action="store_true")
     parser.add_argument("--claim", action="append"); parser.add_argument("--fixture", action="append"); parser.add_argument("--governance-tool", dest="governance_tool", action="append"); parser.add_argument("--resource", action="append"); parser.add_argument("--finding", action="append")

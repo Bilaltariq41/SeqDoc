@@ -1,4 +1,4 @@
-import base64, contextlib, io, json, shutil, subprocess, tempfile, unittest
+﻿import base64, contextlib, io, json, shutil, subprocess, tempfile, unittest
 from pathlib import Path
 from unittest.mock import patch
 import tools.governance.work_state as ws
@@ -152,269 +152,63 @@ class WorkStateTests(unittest.TestCase):
 
     def test_transition_selected_to_blocked_without_recipient_leaves_idle(self):
         root = self.synthetic(second=True)
-        self.assertEqual(self.activate(root, execution_id="a", claim="src/a")[0], 0)
+        self.assertEqual(self.activate(root, item="A", execution_id="a", claim="src/a")[0], 0)
         self.assertEqual(self.activate(root, item="B", execution_id="b", claim="src/b")[0], 0)
         b = root / "docs/project/work-items/B.json"
-        active_b = json.loads(b.read_text(encoding="utf-8"))
-        active_b.update(reviewEpoch="1", reviewPeer="peer", reviewFindings=["Fixed: verification"],
-                        review={"executionId":"b", "pr":"https://github.com/o/r/pull/2", "requestHead":"a"*40,
-                                "author":"author", "peer":"peer", "epoch":"1", "findings":["Fixed: verification"]})
-        b.write_text(ws.dump(active_b), encoding="utf-8")
+        value = json.loads(b.read_text()); value.update(reviewEpoch="1", reviewPeer="peer", reviewFindings=["Fixed: check"], review={"executionId":"b","pr":"https://github.com/o/r/pull/2","requestHead":"a"*40,"author":"author","peer":"peer","epoch":"1","findings":["Fixed: check"]})
+        b.write_text(ws.dump(value))
         for state in ("Blocked", "Cancelled"):
-            action = type("A",(),{"id":"B","state":state,"reason":"blocked/cancelled governance test","select":False,
-                                   "dry_run":False,"check":False})()
+            action = type("A", (), {"id":"B", "state":state, "reason":"state transition", "select":False, "check":False, "dry_run":False})()
             self.assertEqual(ws.transition(root, action), 0)
-            selected = json.loads(b.read_text(encoding="utf-8"))
-            self.assertEqual(selected["lifecycle"], state)
-            self.assertFalse(selected["selectedForExecution"])
-            for field in ("executionId", "worktreeId", "claims", "review", "reviewEpoch", "reviewPeer", "reviewFindings"):
-                self.assertNotIn(field, selected, field)
-            survivor = json.loads((root / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
+            after = json.loads(b.read_text())
+            self.assertEqual(after["lifecycle"], state); self.assertFalse(after["selectedForExecution"])
+            for field in ("executionId", "worktreeId", "claims", "review", "reviewEpoch", "reviewPeer", "reviewFindings"): self.assertNotIn(field, after)
+            survivor = json.loads((root / "docs/project/work-items/A.json").read_text())
             self.assertEqual((survivor["executionId"], survivor["worktreeId"]), ("a", "worktree-a"))
-            self.assertEqual(ws.validate(root), 0)
+            self.assertIn("a", {x["executionId"] for x in json.loads((root / "docs/project/execution.json").read_text())["executions"]})
             if state == "Blocked":
-                b_value = json.loads(b.read_text(encoding="utf-8")); b_value["lifecycle"] = "Blocked"; b_value["lifecycleLabel"] = "blocked"
-                b.write_text(ws.dump(b_value), encoding="utf-8")
-        execution = json.loads((root / "docs/project/execution.json").read_text(encoding="utf-8"))
-        self.assertIn("a", {entry["executionId"] for entry in execution["executions"]})
-
-        def blocked_root():
-            candidate = self.synthetic(second=True)
-            item_path = candidate / "docs/project/work-items/A.json"
-            item = json.loads(item_path.read_text(encoding="utf-8"))
-            item.update(kind="github-issue", number=57, owner="assigned-collaborator", sourceUrl="https://github.com/repo-owner/r/issues/57",
-                        pr="https://github.com/repo-owner/r/pull/110",
-                        expectedGithubState="OPEN", lifecycle="Blocked", lifecycleLabel="blocked")
-            item["statusReason"] = "pending authorization"
-            item_path.write_text(ws.dump(item), encoding="utf-8")
-            capsule = candidate / "docs/work/checkpoints/A/checkpoint.md"
-            capsule.write_text(capsule.read_text(encoding="utf-8").replace("`NotStarted`", "`Blocked`"), encoding="utf-8")
-            self.assertEqual(ws.validate(candidate), 0)
-            return candidate, item
-
-        start_head = "1" * 40
-        receipt_url = "https://github.com/repo-owner/r/issues/57#issuecomment-123"
-        marker = ("SEQDOC OWNER AUTHORIZATION v1\nItem: A\nCheckpoint: A\nExecution: takeover-1\n"
-                  "Baseline: " + "a" * 40 + "\nStart head: " + start_head +
-                  "\nOperation: bounded maintainer takeover\n")
-        authorization = {"html_url":receipt_url, "issue_url":"https://api.github.com/repos/repo-owner/r/issues/57",
-                         "user":{"login":"Repo-Owner"}, "author_association":"OWNER", "body":marker.rstrip("\n")}
-        for source_url, pr_url, repository in (("https://github.com/repo-owner/r/issues/56", "https://github.com/repo-owner/r/pull/110", "repo-owner/r"),
-                                               ("https://github.com/repo-owner/r/issues/57", "https://github.com/other/r/pull/110", "repo-owner/r"),
-                                               ("https://github.com/other/r/issues/57", "https://github.com/other/r/pull/110", "repo-owner/r"),
-                                               ("https://github.com/repo-owner/r/issues/57", "https://github.com/repo-owner/r/pull/110", "other/r")):
-            bad_root, bad_original = blocked_root()
-            bad_path = bad_root / "docs/project/work-items/A.json"
-            bad_item = json.loads(bad_path.read_text(encoding="utf-8")); bad_item.update(sourceUrl=source_url, pr=pr_url)
-            bad_path.write_text(ws.dump(bad_item), encoding="utf-8")
-            before = {p:p.read_bytes() for p in bad_root.rglob("*") if p.is_file()}
-            with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)), \
-                 patch("subprocess.run", return_value=type("R",(),{"stdout":json.dumps(authorization)})()):
-                self.assertNotEqual(self.operation(bad_root, "resume", id="A", execution_id="takeover-1", worktree_id="resume-a",
-                                                   expected_baseline=bad_original["baseline"], current_head=start_head,
-                                                   current_branch="feature/a", clean=True, start_head=start_head, claim="repair.py",
-                                                   authorization_receipt=receipt_url, repository=repository,
-                                                   reason="resume", next_action="verify")[0], 0)
-            self.assertEqual(before, {p:p.read_bytes() for p in before})
-        authorization_head = "07319b35ad2d7c1d2ee12f6c1438ad0e13e7afde"
-        peer_urls = ["https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5713964023",
-                     "https://github.com/Bilaltariq41/SeqDoc/issues/57#issuecomment-5714397001"]
-        peer_logins = ["Abood-essa", "Qhatahet"]
-        def peer_comment(url, login, association="COLLABORATOR", body=None, issue=57):
-            return {"html_url":url, "issue_url":"https://api.github.com/repos/Bilaltariq41/SeqDoc/issues/57",
-                    "user":{"login":login, "type":"User"}, "author_association":association,
-                    "body":body if body is not None else
-                    (f"SEQDOC PEER TAKEOVER DECISION v1\nItem: A\nCheckpoint: A\nExecution: takeover-1\n"
-                     f"Baseline: {'a'*40}\nBlocked head: {authorization_head}\nPeer: {login}\n"
-                     "Decision: authorize bounded maintainer takeover\n").rstrip("\n") if login == "Abood-essa" else
-                    (f"SEQDOC PEER TAKEOVER DECISION v1\nItem: A\nCheckpoint: A\nExecution: takeover-1\n"
-                     f"Baseline: {'a'*40}\nBlocked head: {authorization_head}\nPeer: {login}\n"
-                     "Decision: authorize bounded maintainer takeover\n")}
-        peer_pr = {"number":110, "url":"https://github.com/Bilaltariq41/SeqDoc/pull/110", "state":"OPEN", "isDraft":False,
-                   "author":{"login":"actual-pr-author", "id":"U_pr", "is_bot":False, "name":"PR Author"},
-                   "headRefOid":start_head, "mergeCommit":None, "reviewDecision":None}
-        def peer_run(command, *args, **kwargs):
-            text = " ".join(command)
-            if "issues/comments/5713964023" in text:
-                value = peer_comment(peer_urls[0], peer_logins[0])
-            elif "issues/comments/5714397001" in text:
-                value = peer_comment(peer_urls[1], peer_logins[1], "MEMBER")
-            else:
-                value = peer_pr
-            return type("R", (), {"stdout":json.dumps(value), "returncode":0})()
-        peer_root, peer_original = blocked_root()
-        peer_item_path = peer_root / "docs/project/work-items/A.json"
-        peer_item = json.loads(peer_item_path.read_text(encoding="utf-8"))
-        peer_item.update(sourceUrl="https://github.com/Bilaltariq41/SeqDoc/issues/57",
-                         pr="https://github.com/Bilaltariq41/SeqDoc/pull/110")
-        peer_item_path.write_text(ws.dump(peer_item), encoding="utf-8")
-        peer_values = {"id":"A", "execution_id":"takeover-1", "worktree_id":"resume-peer",
-                       "expected_baseline":peer_original["baseline"], "current_head":start_head,
-                       "current_branch":"feature/a", "clean":True, "start_head":start_head,
-                       "claim":"peer-repair.py", "repository":"Bilaltariq41/SeqDoc", "authorization_head":authorization_head,
-                       "peer_authorization_receipt":list(reversed(peer_urls)), "reason":"peer-authorized bounded takeover",
-                       "next_action":"rerun focused verification"}
-        with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)), \
-             patch("subprocess.run", side_effect=peer_run):
-            peer_code, peer_output = self.operation(peer_root, "resume", **peer_values)
-        self.assertEqual(peer_code, 0, peer_output)
-        peer_resumed = json.loads((peer_root / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
-        self.assertEqual(peer_resumed["takeover"]["mode"], "two-peer")
-        self.assertEqual(peer_resumed["takeover"]["authorizationHead"], authorization_head)
-        self.assertEqual([receipt["authorizedBy"] for receipt in peer_resumed["takeover"]["authorizationReceipts"]], sorted(peer_logins, key=str.casefold))
-        self.assertEqual(peer_resumed["takeover"]["startHead"], start_head)
-        abood_marker = peer_comment(peer_urls[0], peer_logins[0])["body"]
-        self.assertEqual(peer_resumed["takeover"]["authorizationReceipts"][0]["authorizationDigest"],
-                         __import__("hashlib").sha256((abood_marker + "\n").encode()).hexdigest())
-        crlf_authorization = dict(peer_comment(peer_urls[0], peer_logins[0]), body=abood_marker.replace("\n", "\r\n"))
-        crlf_run = lambda command, *args, **kwargs: type("R", (), {"stdout":json.dumps(
-            crlf_authorization if "5713964023" in " ".join(command) else
-            (peer_comment(peer_urls[1], peer_logins[1], "MEMBER") if "5714397001" in " ".join(command) else peer_pr)), "returncode":0})()
-        crlf_root, crlf_original = blocked_root()
-        crlf_item_path = crlf_root / "docs/project/work-items/A.json"
-        crlf_item = json.loads(crlf_item_path.read_text(encoding="utf-8")); crlf_item.update(
-            sourceUrl="https://github.com/Bilaltariq41/SeqDoc/issues/57", pr="https://github.com/Bilaltariq41/SeqDoc/pull/110")
-        crlf_item_path.write_text(ws.dump(crlf_item), encoding="utf-8")
-        with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)), \
-             patch("subprocess.run", side_effect=crlf_run):
-            self.assertEqual(self.operation(crlf_root, "resume", **peer_values)[0], 0)
-        for bad_body in (abood_marker + "\n", abood_marker + " ", abood_marker.replace("Item: A", "Item: B")):
-            bad_root, bad_original = blocked_root()
-            bad_item_path = bad_root / "docs/project/work-items/A.json"
-            bad_item = json.loads(bad_item_path.read_text(encoding="utf-8")); bad_item.update(
-                sourceUrl="https://github.com/Bilaltariq41/SeqDoc/issues/57", pr="https://github.com/Bilaltariq41/SeqDoc/pull/110")
-            bad_item_path.write_text(ws.dump(bad_item), encoding="utf-8")
-            def bad_run(command, *args, **kwargs):
-                text = " ".join(command)
-                value = peer_comment(peer_urls[0], peer_logins[0], body=bad_body) if "5713964023" in text else peer_comment(peer_urls[1], peer_logins[1], "MEMBER")
-                return type("R", (), {"stdout":json.dumps(value), "returncode":0})()
-            before = {p:p.read_bytes() for p in bad_root.rglob("*") if p.is_file()}
-            with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)), \
-                 patch("subprocess.run", side_effect=bad_run):
-                self.assertNotEqual(self.operation(bad_root, "resume", **peer_values)[0], 0)
-            self.assertEqual(before, {p:p.read_bytes() for p in before})
-        for receipts in ([peer_urls[0]], peer_urls + [peer_urls[0]], [peer_urls[0], peer_urls[0]]):
-            invalid_root, invalid_original = blocked_root()
-            invalid_values = dict(peer_values, peer_authorization_receipt=receipts)
-            before = {p:p.read_bytes() for p in invalid_root.rglob("*") if p.is_file()}
-            with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)), \
-                 patch("subprocess.run", side_effect=peer_run):
-                self.assertNotEqual(self.operation(invalid_root, "resume", **invalid_values)[0], 0)
-            self.assertEqual(before, {p:p.read_bytes() for p in before})
-        candidate, original = blocked_root()
-        with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)) as observed, \
-             patch("subprocess.run", return_value=type("R",(),{"stdout":json.dumps(authorization)})()):
-            code, output = self.operation(candidate, "resume", id="A", execution_id="takeover-1", worktree_id="resume-a",
-                                          expected_baseline=original["baseline"], current_head=start_head,
-                                          current_branch="feature/a", clean=True, start_head=start_head,
-                                           claim=["SRC\\Repair/../repair.py"], authorization_receipt=receipt_url,
-                                           reason="resume after bounded takeover", next_action="rerun focused verification",
-                                           repository="repo-owner/r")
-        self.assertEqual(code, 0, output)
-        observed.assert_called_once()
-        resumed = json.loads((candidate / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
-        for field in ("owner", "branch", "checkpointId", "checkpointPath", "pr", "baseline"):
-            self.assertEqual(resumed[field], original[field], field)
-        self.assertEqual((resumed["lifecycle"], resumed["executionId"], resumed["worktreeId"]),
-                         ("ResolvingFindings", "takeover-1", "resume-a"))
-        self.assertEqual(resumed["statusReason"], "resume after bounded takeover")
-        self.assertEqual(resumed["nextAction"], "rerun focused verification")
-        self.assertNotIn("pending authorization", json.dumps(resumed).lower())
-        self.assertTrue(resumed["selectedForExecution"])
-        self.assertEqual(resumed["claims"], [{"kind":"path", "value":"src/repair.py"}])
-        self.assertEqual(resumed["takeover"], {"mode":"owner", "authorizationReceipt":receipt_url,
-                                               "authorizationDigest":__import__("hashlib").sha256(marker.encode()).hexdigest(),
-                                               "authorizedBy":"Repo-Owner", "reason":"resume after bounded takeover", "startHead":start_head})
-        self.assertIn("`ResolvingFindings`", (candidate / "docs/work/checkpoints/A/checkpoint.md").read_text(encoding="utf-8"))
-        self.assertEqual(ws.validate(candidate), 0)
-        for login, association in (("assigned-collaborator", "COLLABORATOR"),
-                                   ("assigned-collaborator", "OWNER"), ("different-owner", "OWNER")):
-            candidate, original = blocked_root()
-            rejected_authorization = dict(authorization, user={"login":login}, author_association=association)
-            before = {p: p.read_bytes() for p in candidate.rglob("*") if p.is_file()}
-            with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)), \
-                 patch("subprocess.run", return_value=type("R",(),{"stdout":json.dumps(rejected_authorization)})()):
-                self.assertNotEqual(self.operation(candidate, "resume", id="A", execution_id="takeover-1", worktree_id="resume-a",
-                                                   expected_baseline=original["baseline"], current_head=start_head,
-                                                   current_branch="feature/a", clean=True, start_head=start_head,
-                                                   claim="repair.py", authorization_receipt=receipt_url, repository="repo-owner/r",
-                                                   reason="resume after bounded takeover", next_action="rerun focused verification")[0], 0)
-            self.assertEqual(before, {p: p.read_bytes() for p in before})
-        before = {p: p.read_bytes() for p in candidate.rglob("*") if p.is_file()}
-        with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)):
-            self.assertNotEqual(self.operation(candidate, "resume", id="A", execution_id="takeover-2", worktree_id="resume-b",
-                                                expected_baseline=original["baseline"], current_head=start_head,
-                                                current_branch="feature/a", clean=True, start_head=start_head,
-                                                claim="other.py", authorization_receipt="second", reason="second",
-                                                next_action="second")[0], 0)
-        self.assertEqual(before, {p: p.read_bytes() for p in before})
-        for options in ({"clean":False}, {"current_head":"2"*40}, {"current_head":"bad"},
-                        {"current_branch":"feature/other"}, {"authorization_receipt":""}, {"reason":""},
-                        {"next_action":""}, {"current_head":None}, {"start_head":None}, {"current_branch":None},
-                        {"start_head":"1"*39}, {"current_head":"1"*39}, {"start_head":"A"*40}, {"current_head":"A"*40}):
-            candidate, original = blocked_root()
-            values = {"id":"A", "execution_id":"takeover-1", "worktree_id":"resume-a", "expected_baseline":original["baseline"],
-                      "current_head":start_head, "current_branch":"feature/a", "clean":True, "start_head":start_head,
-                      "claim":"repair.py", "authorization_receipt":"owner-approved", "reason":"bounded resume",
-                      "next_action":"rerun focused verification"}
-            values.update(options)
-            before = {p: p.read_bytes() for p in candidate.rglob("*") if p.is_file()}
-            with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)):
-                self.assertNotEqual(self.operation(candidate, "resume", **values)[0], 0, options)
-            self.assertEqual(before, {p: p.read_bytes() for p in before})
-        for remove_directory in (False, True):
-            candidate, original = blocked_root()
-            capsule = candidate / "docs/work/checkpoints/A/checkpoint.md"
-            capsule.unlink()
-            if remove_directory:
-                shutil.rmtree(capsule.parent)
-            before = {p: p.read_bytes() for p in candidate.rglob("*") if p.is_file()}
-            values = {"id":"A", "execution_id":"takeover-1", "worktree_id":"resume-a", "expected_baseline":original["baseline"],
-                      "current_head":start_head, "current_branch":"feature/a", "clean":True, "start_head":start_head,
-                      "claim":"repair.py", "authorization_receipt":"owner-approved", "reason":"bounded resume",
-                      "next_action":"rerun focused verification"}
-            with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)):
-                self.assertNotEqual(self.operation(candidate, "resume", **values)[0], 0)
-            self.assertEqual(before, {p: p.read_bytes() for p in before})
-            self.assertFalse(capsule.exists())
-        candidate, original = blocked_root()
-        before = {p: p.read_bytes() for p in candidate.rglob("*") if p.is_file()}
-        replace = __import__("os").replace
-        replacements = [0]
-        def fail_after_one(source, destination):
-            replacements[0] += 1
-            if replacements[0] == 2:
-                raise OSError("resume rollback test")
-            return replace(source, destination)
-        with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)):
-            with patch("subprocess.run", return_value=type("R",(),{"stdout":json.dumps(authorization)})()):
-                with patch("os.replace", side_effect=fail_after_one):
-                    code, _ = self.operation(candidate, "resume", id="A", execution_id="takeover-1", worktree_id="resume-a",
-                                          expected_baseline=original["baseline"], current_head=start_head,
-                                          current_branch="feature/a", clean=True, start_head=start_head,
-                                          claim="repair.py", authorization_receipt=receipt_url,
-                                                     reason="bounded resume", next_action="rerun focused verification",
-                                                     repository="repo-owner/r")
-        self.assertNotEqual(code, 0)
-        self.assertGreaterEqual(replacements[0], 2)
-        self.assertEqual(before, {p: p.read_bytes() for p in before})
-        self.assertFalse(ws.runtime_journal(candidate).exists())
-        self.assertFalse(list(candidate.rglob(".work-state-*")))
-        candidate, original = blocked_root()
-        self.assertEqual(self.activate(candidate, item="B", execution_id="other", claim="occupied.py")[0], 0)
-        values = {"id":"A", "execution_id":"takeover-1", "worktree_id":"resume-a", "expected_baseline":original["baseline"],
-                  "current_head":start_head, "current_branch":"feature/a", "clean":True, "start_head":start_head,
-                  "claim":"occupied.py", "authorization_receipt":"owner-approved", "reason":"bounded resume",
-                  "next_action":"rerun focused verification"}
-        with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)):
-            self.assertNotEqual(self.operation(candidate, "resume", **values)[0], 0)
-        candidate, original = blocked_root()
-        values["claim"] = ["repair.py", "repair.py"]
-        before = {p: p.read_bytes() for p in candidate.rglob("*") if p.is_file()}
-        with patch("tools.governance.work_state.observe_git", return_value=(start_head, "feature/a", True)):
-            self.assertNotEqual(self.operation(candidate, "resume", **values)[0], 0)
-        self.assertEqual(before, {p: p.read_bytes() for p in before})
-
+                after["lifecycle"], after["lifecycleLabel"] = "Blocked", "blocked"; b.write_text(ws.dump(after))
+        root = self.synthetic(second=True, dependency=True)
+        dependency_path = root / "docs/project/work-items/B.json"; dependency_item = json.loads(dependency_path.read_text()); dependency_item["lifecycle"], dependency_item["lifecycleLabel"] = "Closed", None; dependency_path.write_text(ws.dump(dependency_item)); dependency_capsule = root / "docs/work/checkpoints/B/checkpoint.md"; dependency_capsule.write_text(dependency_capsule.read_text().replace("`Blocked`", "`Closed`").replace("`NotStarted`", "`Closed`"))
+        path = root / "docs/project/work-items/A.json"; item = json.loads(path.read_text()); item["lifecycle"], item["lifecycleLabel"] = "Blocked", "blocked"; item["statusReason"] = "blocked"; item["takeover"] = {"mode":"two-peer", "authorizationHead":"1"*40, "authorizationReceipts":[{"url":"https://github.com/o/r/issues/57#issuecomment-1", "authorizationDigest":"a"*64, "authorizedBy":"worker-one"}, {"url":"https://github.com/o/r/issues/57#issuecomment-2", "authorizationDigest":"b"*64, "authorizedBy":"worker-two"}], "reason":"resume later", "startHead":"1"*40}; path.write_text(ws.dump(item))
+        capsule = root / "docs/work/checkpoints/A/checkpoint.md"; capsule.write_text(capsule.read_text().replace("`NotStarted`", "`Blocked`")); self.assertEqual(ws.validate(root), 0)
+        head = "1" * 40
+        values = dict(id="A", execution_id="resume-a", worktree_id="resume-worktree", expected_baseline=item["baseline"], current_head=head, start_head=head, current_branch="feature/a", clean=True, claim=["src\\repair/../repair.py"], reason="resume worker", next_action="verify worker")
+        before = {p.relative_to(root).as_posix():p.read_bytes() for p in root.rglob("*") if p.is_file()}
+        with patch("tools.governance.work_state.observe_git", return_value=(head, "feature/a", True)), patch("subprocess.run") as run:
+            code, output = self.operation(root, "resume", **values)
+        self.assertEqual(code, 0, output); run.assert_not_called()
+        resumed = json.loads(path.read_text()); self.assertEqual(resumed["lifecycle"], "ResolvingFindings"); self.assertTrue(resumed["selectedForExecution"])
+        self.assertEqual(resumed["claims"], [{"kind":"path", "value":"src/repair.py"}]); self.assertEqual(resumed["resume"], {"reason":"resume worker", "startHead":head}); self.assertNotIn("takeover", resumed)
+        for field in ("baseline", "owner", "branch", "pr", "dependencies"): self.assertEqual(resumed[field], item[field])
+        self.assertNotEqual(before, {p.relative_to(root).as_posix():p.read_bytes() for p in root.rglob("*") if p.is_file()}); self.assertEqual(ws.validate(root), 0)
+        def reject(**changes):
+            candidate = self.synthetic(second=True, dependency=True); p = candidate / "docs/project/work-items/A.json"; old = json.loads(p.read_text()); old["lifecycle"], old["lifecycleLabel"] = "Blocked", "blocked"; p.write_text(ws.dump(old)); (candidate / "docs/work/checkpoints/A/checkpoint.md").write_text((candidate / "docs/work/checkpoints/A/checkpoint.md").read_text().replace("`NotStarted`", "`Blocked`"));
+            vals = dict(values, expected_baseline=old["baseline"]); vals.update(changes); snap = {q.relative_to(candidate).as_posix():q.read_bytes() for q in candidate.rglob("*") if q.is_file()}
+            with patch("tools.governance.work_state.observe_git", return_value=(head, "feature/a", True)), patch("subprocess.run") as run: self.assertNotEqual(self.operation(candidate, "resume", **vals)[0], 0); run.assert_not_called()
+            self.assertEqual(snap, {q.relative_to(candidate).as_posix():q.read_bytes() for q in candidate.rglob("*") if q.is_file()})
+        reject(lifecycle="Active")
+        retry = json.loads(path.read_text()); retry_before = {q.relative_to(root).as_posix():q.read_bytes() for q in root.rglob("*") if q.is_file()}
+        with patch("tools.governance.work_state.observe_git", return_value=(head, "feature/a", True)), patch("subprocess.run") as run: self.assertNotEqual(self.operation(root, "resume", **values)[0], 0); run.assert_not_called()
+        self.assertEqual(retry_before, {q.relative_to(root).as_posix():q.read_bytes() for q in root.rglob("*") if q.is_file()})
+        reject(expected_baseline="b"*40); reject(current_head="2"*40); reject(start_head="2"*40); reject(current_branch="feature/b"); reject(clean=False); reject(dirty=True); reject(reason=""); reject(next_action=""); reject(claim=[]); reject(claim=["x", "x"]); reject(claim="/absolute/path"); reject(claim="../outside.py")
+        dependency = self.synthetic(second=True); ap = dependency / "docs/project/work-items/A.json"; bp = dependency / "docs/project/work-items/B.json"; av = json.loads(ap.read_text()); bv = json.loads(bp.read_text()); av["lifecycle"], av["lifecycleLabel"], av["dependencies"] = "Blocked", "blocked", ["B"]; bv["lifecycle"], bv["lifecycleLabel"] = "Blocked", "blocked"; ap.write_text(ws.dump(av)); bp.write_text(ws.dump(bv)); (dependency / "docs/work/checkpoints/A/checkpoint.md").write_text((dependency / "docs/work/checkpoints/A/checkpoint.md").read_text().replace("`NotStarted`", "`Blocked`")); (dependency / "docs/work/checkpoints/B/checkpoint.md").write_text((dependency / "docs/work/checkpoints/B/checkpoint.md").read_text().replace("`NotStarted`", "`Blocked`")); snap = {q.relative_to(dependency).as_posix():q.read_bytes() for q in dependency.rglob("*") if q.is_file()}
+        with patch("tools.governance.work_state.observe_git", return_value=(head, "feature/a", True)), patch("subprocess.run") as run: self.assertNotEqual(self.operation(dependency, "resume", **dict(values, expected_baseline=av["baseline"]))[0], 0); run.assert_not_called()
+        self.assertEqual(snap, {q.relative_to(dependency).as_posix():q.read_bytes() for q in dependency.rglob("*") if q.is_file()})
+        missing = self.synthetic(second=True, dependency=True); p = missing / "docs/project/work-items/A.json"; old = json.loads(p.read_text()); old["lifecycle"]="Blocked"; old["lifecycleLabel"]="blocked"; p.write_text(ws.dump(old)); (missing / "docs/work/checkpoints/A/checkpoint.md").unlink()
+        with patch("tools.governance.work_state.observe_git", return_value=(head, "feature/a", True)), patch("subprocess.run") as run: self.assertNotEqual(self.operation(missing, "resume", **dict(values, expected_baseline=old["baseline"]))[0], 0); run.assert_not_called()
+        occupied = self.synthetic(second=True); self.assertEqual(self.activate(occupied, item="B", execution_id="other", claim="src/repair.py")[0], 0); p = occupied / "docs/project/work-items/A.json"; old = json.loads(p.read_text()); old["lifecycle"]="Blocked"; old["lifecycleLabel"]="blocked"; p.write_text(ws.dump(old)); (occupied / "docs/work/checkpoints/A/checkpoint.md").write_text((occupied / "docs/work/checkpoints/A/checkpoint.md").read_text().replace("`NotStarted`", "`Blocked`"));
+        with patch("tools.governance.work_state.observe_git", return_value=(head, "feature/a", True)): self.assertNotEqual(self.operation(occupied, "resume", **dict(values, expected_baseline=old["baseline"]))[0], 0)
+        for flag in ("--authorization-receipt", "--peer-authorization-receipt", "--authorization-head"):
+            with patch("sys.argv", ["work_state.py", "resume", flag]):
+                with self.assertRaises(SystemExit): ws.main()
+        broken = self.synthetic(second=True, dependency=True); p = broken / "docs/project/work-items/A.json"; old = json.loads(p.read_text()); old["lifecycle"]="Blocked"; old["lifecycleLabel"]="blocked"; p.write_text(ws.dump(old)); (broken / "docs/work/checkpoints/A/checkpoint.md").write_text((broken / "docs/work/checkpoints/A/checkpoint.md").read_text().replace("`NotStarted`", "`Blocked`")); before = {q.relative_to(broken).as_posix():q.read_bytes() for q in broken.rglob("*") if q.is_file()}; real = __import__("os").replace; count=[0]
+        def fail(src, dst):
+            count[0] += 1
+            if count[0] == 2: raise OSError("atomic failure")
+            return real(src, dst)
+        with patch("tools.governance.work_state.observe_git", return_value=(head, "feature/a", True)), patch("os.replace", side_effect=fail): self.assertNotEqual(self.operation(broken, "resume", **dict(values, expected_baseline=old["baseline"]))[0], 0)
+        self.assertGreaterEqual(count[0], 2); self.assertEqual(before, {q.relative_to(broken).as_posix():q.read_bytes() for q in broken.rglob("*") if q.is_file()}); self.assertFalse(ws.runtime_journal(broken).exists()); self.assertFalse(list(broken.rglob(".work-state-*")))
     def test_replace_failure_rolls_back_all_payloads(self):
         self.reset_gws1_transition_fixture()
         a=type("A",(),{"id":"GWS1","state":"ReviewRequired","reason":"returning to review after verification","select":True,"check":False,"dry_run":False})(); paths=list((self.d/"docs/project/work-items").glob("*.json"))+[self.d/"docs/work/governance/GWS1/checkpoint.md",self.d/"docs/project/execution.json"]; before={p:p.read_bytes() for p in paths}; real=__import__("os").replace; count=[0]
@@ -947,172 +741,71 @@ class WorkStateTests(unittest.TestCase):
         self.assertIn("--remove-label active", output)
 
     def test_closeout_requires_receipts_identity_and_resolved_findings_and_promotes_only_ready_dependents(self):
-        root = self.synthetic(second=True, dependency=True)
-        old_item_path = root / "docs/project/work-items/A.json"
-        canonical_item_path = root / "docs/project/work-items/GH-57.json"
-        old_item_path.rename(canonical_item_path)
-        old_checkpoint = root / "docs/work/checkpoints/A"
-        canonical_checkpoint = root / "docs/work/checkpoints/G57-TPO"
-        old_checkpoint.rename(canonical_checkpoint)
-        item_path = canonical_item_path
-        item = json.loads(item_path.read_text(encoding="utf-8"))
-        item.update(id="GH-57", kind="github-issue", number=57, checkpointId="G57-TPO",
-                    checkpointPath="docs/work/checkpoints/G57-TPO", sourceUrl="https://github.com/o/r/issues/57",
-                    pr="https://github.com/o/r/pull/110", expectedGithubState="OPEN")
-        item_path.write_text(ws.dump(item), encoding="utf-8")
-        dependent_path = root / "docs/project/work-items/B.json"
-        dependent = json.loads(dependent_path.read_text(encoding="utf-8"))
-        dependent["dependencies"] = ["GH-57"]
-        dependent_path.write_text(ws.dump(dependent), encoding="utf-8")
-        self.assertEqual(ws.validate(root), 0)
-        self.assertEqual(self.activate(root, item="GH-57", execution_id="GH-57:G57-TPO", claim="src/a",
-                                       current_branch="feature/a", worktree_id="worktree-gh57")[0], 0)
-        h1, h2, h3 = "d"*40, "e"*40, "f"*40
-        pr = {"number":110,"url":"https://github.com/o/r/pull/110","state":"OPEN","isDraft":False,
-              "author":{"login":"actual-author", "id":"U_kgDODXRwzA", "is_bot":False,
-                         "name":"Actual Author", "url":"https://github.com/actual-author"},
-              "headRefOid":h1,"mergeCommit":None,"reviewDecision":"APPROVED"}
-        takeover_head = "07319b35ad2d7c1d2ee12f6c1438ad0e13e7afde"
-        takeover_urls = ["https://github.com/o/r/issues/57#issuecomment-5713964023",
-                         "https://github.com/o/r/issues/57#issuecomment-5714397001"]
-        takeover_logins = ["Abood-essa", "Qhatahet"]
-        def takeover_comment(url, login, association):
-            body = (f"SEQDOC PEER TAKEOVER DECISION v1\nItem: GH-57\nCheckpoint: G57-TPO\nExecution: GH-57:G57-TPO\nBaseline: {'a'*40}\n"
-                    f"Blocked head: {takeover_head}\nPeer: {login}\nDecision: authorize bounded maintainer takeover\n")
-            if login == "Abood-essa":
-                body = body[:-1]
-            return {"html_url":url, "issue_url":"https://api.github.com/repos/o/r/issues/57",
-                    "user":{"login":login, "type":"User"}, "author_association":association, "body":body}
-        def gh_view(merged=False, head=h2, review_state="APPROVED", review_head=h2, review_peer="reviewer", merge_sha="a"*40, review_type="User", malformed_reviews=False, state=None, omit=()):
-            view = dict(pr, state="MERGED" if merged else "OPEN", headRefOid=head, mergeCommit={"oid":merge_sha} if merged else None)
-            if state is not None:
-                view["state"] = state
-            for field in omit:
-                view.pop(field, None)
-            user = {"login":review_peer}
-            if review_type != "missing":
-                user["type"] = review_type
-            reviews = ["malformed"] if malformed_reviews else [[{"user":{"login":"other", "type":"User"}, "state":"COMMENTED", "commit_id":h1}],
-                       [{"user":user, "state":review_state, "commit_id":review_head}]]
-            def run(command, *args, **kwargs):
-                text = " ".join(command) if isinstance(command, (list, tuple)) else str(command)
-                if "merge-base" in text:
-                    return type("R",(),{"stdout":"", "returncode":0})()
-                if "issues/comments/5713964023" in text:
-                    return type("R",(),{"stdout":json.dumps(takeover_comment(takeover_urls[0], takeover_logins[0], "COLLABORATOR"))})()
-                if "issues/comments/5714397001" in text:
-                    return type("R",(),{"stdout":json.dumps(takeover_comment(takeover_urls[1], takeover_logins[1], "MEMBER"))})()
-                return type("R",(),{"stdout":json.dumps(reviews if "reviews" in text else view)})()
-            return run
-        with patch("subprocess.run", side_effect=gh_view(head=h1, review_head=h1)) as run:
-            handoff_code, _ = self.operation(root, "handoff", id="GH-57", execution_id="GH-57:G57-TPO", pr="https://github.com/o/r/pull/110",
-                                             head=h1, observed_head="spoofed", observed_author="spoofed",
-                                             peer="reviewer", epoch="1", finding=["Fixed: focused verification receipt"])
-        self.assertEqual(handoff_code, 0)
-        self.assertEqual(ws.validate(root), 0)
-        handoff_record = json.loads((root / "docs/project/work-items/GH-57.json").read_text(encoding="utf-8"))
-        self.assertEqual(handoff_record["review"]["requestHead"], h1)
-        canonical_body = lambda login: (f"SEQDOC PEER TAKEOVER DECISION v1\nItem: GH-57\nCheckpoint: G57-TPO\nExecution: GH-57:G57-TPO\nBaseline: {'a'*40}\n"
-                                        f"Blocked head: {takeover_head}\nPeer: {login}\nDecision: authorize bounded maintainer takeover\n")
-        takeover_records = [{"url":url, "authorizationDigest":__import__("hashlib").sha256(canonical_body(login).encode()).hexdigest(), "authorizedBy":login}
-                            for url, login in zip(takeover_urls, takeover_logins)]
-        handoff_record["takeover"] = {"mode":"two-peer", "authorizationHead":takeover_head,
-                                      "authorizationReceipts":takeover_records, "reason":"peer-approved takeover", "startHead":h2}
-        (root / "docs/project/work-items/GH-57.json").write_text(ws.dump(handoff_record), encoding="utf-8")
-        for finding in ("open", "unresolved"):
-            self.assertNotEqual(self.operation(root, "closeout", id="GH-57", execution_id="GH-57:G57-TPO", findings=finding)[0], 0)
-        for variant, caller_head in ((dict(merged=False), h2), (dict(merged=True, merge_sha="b"*40), h2),
-                                      (dict(merged=True, review_head=h1), h2),
-                                      (dict(merged=True, review_head=h3), h2),
-                                      (dict(merged=True, review_peer="other"), h2),
-                                      (dict(merged=True), h1), (dict(merged=True), h3),
-                                      (dict(merged=True, review_state="COMMENTED"), h2),
-                                      (dict(merged=True, review_type="Bot"), h2), (dict(merged=True, review_type="App"), h2),
-                                      (dict(merged=True, review_type="missing"), h2), (dict(merged=True, review_type=7), h2),
-                                      (dict(merged=True, malformed_reviews=True), h2),
-                                      (dict(merged=True, state="OPEN"), h2), (dict(merged=True, state="CLOSED"), h2)):
-            with patch("subprocess.run", side_effect=gh_view(**variant)):
-                 rejected, _ = self.operation(root, "closeout", id="GH-57", execution_id="GH-57:G57-TPO", findings="resolved",
-                                               focused_receipt="focused", final_receipt="final", attribution="actual-author",
-                                              pr="https://github.com/o/r/pull/110", head=caller_head,
-                                              observed_head="spoofed", peer="reviewer", merge_sha="a"*40)
-            self.assertNotEqual(rejected, 0, variant)
+        root = self.synthetic(second=True, dependency=True); old = root / "docs/project/work-items/A.json"; old.rename(root / "docs/project/work-items/GH-57.json"); (root / "docs/work/checkpoints/A").rename(root / "docs/work/checkpoints/G57-TPO"); path = root / "docs/project/work-items/GH-57.json"; item = json.loads(path.read_text()); item.update(id="GH-57", kind="github-issue", number=57, checkpointId="G57-TPO", checkpointPath="docs/work/checkpoints/G57-TPO", sourceUrl="https://github.com/o/r/issues/57", pr="https://github.com/o/r/pull/110", expectedGithubState="OPEN"); path.write_text(ws.dump(item)); dep = root / "docs/project/work-items/B.json"; value = json.loads(dep.read_text()); value["dependencies"]=["GH-57"]; dep.write_text(ws.dump(value)); self.assertEqual(ws.validate(root), 0)
+        execution = "GH-57:G57-TPO"; h1, h2, merge = "d"*40, "e"*40, "f"*40; self.assertEqual(self.activate(root, item="GH-57", execution_id=execution, claim="src/a", current_branch="feature/a", worktree_id="worktree-gh57")[0], 0)
+        pr = {"number":110,"url":"https://github.com/o/r/pull/110","state":"OPEN","isDraft":False,"author":{"login":"Actual-Author","id":"U_author","is_bot":False,"name":"Author"},"headRefOid":h1,"mergeCommit":None,"reviewDecision":"APPROVED"}; calls=[]
+        def run(command, *args, **kwargs):
+            text=" ".join(command); calls.append(text); self.assertNotIn("issues/comments", text)
+            if "reviews" in text: return type("R",(),{"stdout":json.dumps([[{"user":{"login":"Peer","type":"User"},"state":"APPROVED","commit_id":h1}]]),"returncode":0})()
+            merged = len([x for x in calls if "pull/110" in x]) > 1
+            return type("R",(),{"stdout":json.dumps(dict(pr, state="MERGED" if merged else "OPEN", headRefOid=h2 if merged else h1, mergeCommit={"oid":merge} if merged else None)),"returncode":0})()
+        with patch("subprocess.run", side_effect=run):
+            self_review_before = {q.relative_to(root).as_posix(): q.read_bytes() for q in root.rglob("*") if q.is_file()}
+            self.assertNotEqual(self.operation(root, "handoff", id="GH-57", execution_id=execution, pr=pr["url"], head=h1, observed_head="x", observed_author="x", peer="actual-author", epoch="1", finding=["Fixed: check"])[0], 0)
+            self.assertEqual(self_review_before, {q.relative_to(root).as_posix(): q.read_bytes() for q in root.rglob("*") if q.is_file()})
+            self.assertEqual(self.operation(root, "handoff", id="GH-57", execution_id=execution, pr=pr["url"], head=h1, observed_head="x", observed_author="x", peer="pEeR", epoch="1", finding=["Fixed: check"])[0], 0)
+        reviewed = json.loads(path.read_text()); self.assertEqual(reviewed["review"]["author"], "Actual-Author"); self.assertEqual(reviewed["review"]["peer"], "pEeR"); reviewed["resume"]={"reason":"worker resume","startHead":h1}; path.write_text(ws.dump(reviewed))
+        casing_item = __import__("copy").deepcopy(reviewed); casing_item["reviewPeer"] = "PEER"; casing_item["review"]["peer"] = "pEeR"; self.assertEqual(ws.validate_items([casing_item], root), [])
+        different_item = __import__("copy").deepcopy(reviewed); different_item["reviewPeer"] = "different"; different_item["review"]["peer"] = "pEeR"; self.assertTrue(ws.validate_items([different_item], root))
+        self_review_item = __import__("copy").deepcopy(reviewed); self_review_item["review"]["author"] = "Peer"; self_review_item["review"]["peer"] = "pEeR"; self.assertTrue(ws.validate_items([self_review_item], root))
+        base = dict(id="GH-57", execution_id=execution, findings="resolved", focused_receipt="focused", final_receipt="final", attribution="actual-author", repository="o/r", pr=pr["url"], head=h2, peer="PEER", merge_sha=merge)
+        def fresh_rejection(changes=None, review_value=None, **arguments):
+            candidate = Path(tempfile.mkdtemp(dir=self.d)); shutil.copytree(root, candidate, dirs_exist_ok=True)
+            candidate_path = candidate / "docs/project/work-items/GH-57.json"
+            before = {q.relative_to(candidate).as_posix(): q.read_bytes() for q in candidate.rglob("*") if q.is_file()}
+            observation = dict(pr, state="MERGED", headRefOid=h2, mergeCommit={"oid":merge})
+            if changes:
+                for key, value in changes.items():
+                    if value is None: observation.pop(key, None)
+                    else: observation[key] = value
+            def case_run(command, *args, **kwargs):
+                text = " ".join(command); self.assertNotIn("issues/comments", text)
+                if "reviews" in text:
+                    value = review_value if review_value is not None else [[{"user":{"login":"Peer","type":"User"},"state":"APPROVED","commit_id":h2}]]
+                else:
+                    value = observation
+                return type("R",(),{"stdout":json.dumps(value),"returncode":0})()
+            with patch("subprocess.run", side_effect=case_run) as api:
+                rejected, _ = self.operation(candidate, "closeout", **dict(base, **arguments))
+            self.assertNotEqual(rejected, 0, arguments or changes or review_value)
+            self.assertEqual(before, {q.relative_to(candidate).as_posix(): q.read_bytes() for q in candidate.rglob("*") if q.is_file()})
+            self.assertTrue(all("issues/comments" not in str(call) for call in api.call_args_list))
+        for changes in ({"state":"OPEN"}, {"state":"CLOSED"}, {"headRefOid":h1}, {"mergeCommit":{"oid":"a"*40}}, {"author":{"login":"Other","id":"U_other","is_bot":False,"name":"Other"}}, {"number":None}, {"state":None}, {"isDraft":None}, {"author":None}, {"headRefOid":None}, {"mergeCommit":None}, {"reviewDecision":None}):
+            fresh_rejection(changes)
+        for review_value in ([{"bad":"outer"}], [["bad"]], [[{"user":{"login":"Peer","type":"User"},"state":"APPROVED","commit_id":h1}]], [[{"user":{"login":"Other","type":"User"},"state":"APPROVED","commit_id":h2}]], [[{"user":{"login":"Peer","type":"User"},"state":"COMMENTED","commit_id":h2}]], [[{"user":{"login":"Peer","type":"Bot"},"state":"APPROVED","commit_id":h2}]], [[{"user":{"login":"Peer","type":"App"},"state":"APPROVED","commit_id":h2}]], [[{"user":{"login":"Peer"},"state":"APPROVED","commit_id":h2}]], [[{"user":{"login":7,"type":"User"},"state":"APPROVED","commit_id":h2}]], [[{"user":{"login":"Peer","type":"User"},"state":"APPROVED","commit_id":7}]]):
+            fresh_rejection(review_value=review_value)
         for field in ("number", "state", "isDraft", "author", "headRefOid", "mergeCommit", "reviewDecision"):
-            with patch("subprocess.run", side_effect=gh_view(merged=True, omit=(field,))):
-                rejected, _ = self.operation(root, "closeout", id="GH-57", execution_id="GH-57:G57-TPO", findings="resolved",
-                                              focused_receipt="focused", final_receipt="final", attribution="actual-author",
-                                              pr="https://github.com/o/r/pull/110", head=h2,
-                                              observed_head="spoofed", peer="reviewer", merge_sha="a"*40)
-            self.assertNotEqual(rejected, 0, field)
-        with patch("subprocess.run", side_effect=gh_view(merged=True)):
-            rejected, _ = self.operation(root, "closeout", id="GH-57", execution_id="GH-57:G57-TPO", findings="resolved",
-                                          focused_receipt="focused", final_receipt="final", attribution="actual-author",
-                                          repository="other/r", pr="https://github.com/o/r/pull/110", head=h2,
-                                          observed_head="spoofed", peer="reviewer", merge_sha="a"*40)
-        self.assertNotEqual(rejected, 0)
-        for unavailable in (False, True):
-            before = {p.relative_to(root).as_posix():p.read_bytes() for p in root.rglob("*") if p.is_file()}
-            normal_run = gh_view(merged=True)
-            def takeover_run(command, *args, **kwargs):
-                text = " ".join(command)
-                if "issues/comments/5713964023" in text:
-                    if unavailable:
-                        raise subprocess.CalledProcessError(1, command)
-                    edited = takeover_comment(takeover_urls[0], takeover_logins[0], "COLLABORATOR")
-                    edited["body"] += "edited"
-                    return type("R",(),{"stdout":json.dumps(edited)})()
-                return normal_run(command, *args, **kwargs)
-            with patch("subprocess.run", side_effect=takeover_run):
-                rejected, _ = self.operation(root, "closeout", id="GH-57", execution_id="GH-57:G57-TPO", findings="resolved",
-                                              focused_receipt="focused", final_receipt="final", attribution="actual-author",
-                                              pr="https://github.com/o/r/pull/110", head=h2,
-                                              observed_head="spoofed", peer="reviewer", merge_sha="a"*40)
-            self.assertNotEqual(rejected, 0)
-            after = {p.relative_to(root).as_posix():p.read_bytes() for p in root.rglob("*") if p.is_file()}
-            self.assertEqual(before, after)
-        with patch("subprocess.run", side_effect=gh_view(merged=True)):
-            close_code, close_packet = self.operation(root, "closeout", id="GH-57", execution_id="GH-57:G57-TPO", findings="resolved",
-                                                    focused_receipt="focused", final_receipt="final", attribution="actual-author",
-                                                    pr="https://github.com/o/r/pull/110", head=h2,
-                                                   observed_head="spoofed", peer="reviewer", merge_sha="a" * 40)
-        self.assertEqual(close_code, 0, close_packet)
-        self.assertNotRegex(close_packet, r"(?i)([A-Z]:\\|/Users/|/home/|token|password|session|timestamp|2026-)")
-        dependent = json.loads((root / "docs/project/work-items/B.json").read_text(encoding="utf-8"))
-        closed = json.loads((root / "docs/project/work-items/GH-57.json").read_text(encoding="utf-8"))
-        self.assertEqual(closed.get("claims"), [])
-        self.assertEqual(closed["closeout"], {"executionId":"GH-57:G57-TPO", "pr":"https://github.com/o/r/pull/110",
-                                               "head":h2, "mergeSha":"a"*40, "focused":"focused",
-                                                 "final":"final", "attribution":"actual-author", "findings":["resolved"]})
-        self.assertEqual(closed["takeover"]["mode"], "two-peer")
-        self.assertEqual(closed["takeover"]["authorizationHead"], takeover_head)
-        self.assertEqual(closed["takeover"]["authorizationReceipts"], takeover_records)
-        self.assertEqual(closed["id"], "GH-57")
-        self.assertEqual(closed["checkpointId"], "G57-TPO")
-        self.assertEqual(closed["checkpointPath"], "docs/work/checkpoints/G57-TPO")
-        self.assertEqual(closed["pr"], "https://github.com/o/r/pull/110")
-        self.assertEqual(closed["closeout"]["head"], h2)
-        self.assertEqual(closed["closeout"]["mergeSha"], "a"*40)
-        self.assertEqual(closed["closeout"]["attribution"], "actual-author")
-        self.assertNotIn("executionId", closed)
-        self.assertNotIn("worktreeId", closed)
-        self.assertEqual(closed["claims"], [])
-        self.assertNotIn("review", closed)
-        self.assertNotEqual(dependent.get("lifecycle"), "Active")
-        self.assertEqual(dependent.get("claims"), None)
-        self.assertIn("`Closed`", (root / "docs/work/checkpoints/G57-TPO/checkpoint.md").read_text(encoding="utf-8"))
-        self.assertEqual(ws.validate(root), 0)
-        b_capsule = root / "docs/work/checkpoints/B/checkpoint.md"
-        complete_b = b_capsule.read_text(encoding="utf-8")
-        b_capsule.write_text("# incomplete\n", encoding="utf-8")
-        self.assertNotEqual(self.operation(root, "promote", id="B")[0], 0)
-        b_capsule.write_text(complete_b, encoding="utf-8")
-        self.assertEqual(self.operation(root, "promote", id="B")[0], 0)
-        dependent = json.loads((root / "docs/project/work-items/B.json").read_text(encoding="utf-8"))
-        self.assertEqual(dependent.get("lifecycle"), "Ready")
-        self.assertFalse(dependent.get("selectedForExecution")); self.assertNotIn("executionId", dependent)
-        self.assertIn("`NotStarted`", (root / "docs/work/checkpoints/B/checkpoint.md").read_text(encoding="utf-8"))
-        self.assertEqual(ws.validate(root), 0)
-
+            fresh_rejection({field: None})
+        fresh_rejection(repository="other/r")
+        fresh_rejection(attribution="different-account")
+        fresh_rejection(peer="different-account")
+        for bad in (dict(findings="open"), dict(pr="https://github.com/o/r/pull/109"), dict(head=h1), dict(merge_sha="a"*40), dict(attribution="other")):
+            before={q.relative_to(root).as_posix():q.read_bytes() for q in root.rglob("*") if q.is_file()}
+            with patch("subprocess.run", side_effect=run): self.assertNotEqual(self.operation(root, "closeout", **dict(base, **bad))[0], 0)
+            self.assertEqual(before, {q.relative_to(root).as_posix():q.read_bytes() for q in root.rglob("*") if q.is_file()})
+        def final_run(command, *args, **kwargs):
+            text = " ".join(command); calls.append(text); self.assertNotIn("issues/comments", text)
+            if "reviews" in text:
+                value = [[{"user":{"login":"Other","type":"User"},"state":"COMMENTED","commit_id":h1}], [{"user":{"login":"Peer","type":"User"},"state":"APPROVED","commit_id":h2}]]
+            else:
+                value = dict(pr, state="MERGED", headRefOid=h2, mergeCommit={"oid":merge})
+            return type("R",(),{"stdout":json.dumps(value),"returncode":0})()
+        with patch("subprocess.run", side_effect=final_run) as api:
+            code, packet = self.operation(root, "closeout", **base)
+        self.assertEqual(code, 0, packet); closed=json.loads(path.read_text()); self.assertEqual(closed["id"],"GH-57"); self.assertEqual(closed["closeout"]["attribution"],"Actual-Author"); self.assertEqual(closed["resume"], {"reason":"worker resume","startHead":h1}); self.assertNotIn("review", closed); self.assertNotIn("takeover", closed); self.assertNotIn("executionId", closed); self.assertNotIn("worktreeId", closed); self.assertEqual(closed["claims"], []); self.assertEqual(closed["closeout"]["head"],h2); self.assertEqual(closed["closeout"]["mergeSha"],merge); self.assertNotEqual(json.loads(dep.read_text())["lifecycle"], "Ready"); self.assertEqual(api.call_count, 2)
+        self.assertEqual(self.operation(root, "promote", id="B")[0], 0); self.assertEqual(json.loads(dep.read_text())["lifecycle"], "Ready")
+        for field in ("number", "state", "isDraft", "author", "headRefOid", "mergeCommit", "reviewDecision"):
+            candidate=self.synthetic(second=True); self.assertNotEqual(self.operation(candidate, "closeout", id="A", execution_id="x", findings="resolved", focused_receipt="f", final_receipt="g", attribution="a", pr="https://github.com/o/r/pull/1", head="a"*40, peer="p", merge_sha="b"*40)[0], 0)
     def test_github_projection_is_dry_run_idempotent_permission_aware_and_preserves_unrelated_labels(self):
         root = self.synthetic()
         item_path = root / "docs/project/work-items/A.json"

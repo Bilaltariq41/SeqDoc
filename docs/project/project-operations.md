@@ -9,7 +9,7 @@ and Windows case, and rejects ancestor overlap and absolute paths.
 
 | Operation | Write permission | Source of truth |
 |---|---|---|
-| `prepare`, `activate`, `resume`, `handoff`, `closeout`, `promote`, `recover` | assigned Write collaborator on the branch; `resume` is owner-authorized takeover only | registry and capsule |
+| `prepare`, `activate`, `resume`, `handoff`, `closeout`, `promote`, `recover` | assigned Write collaborator on the branch | registry and capsule |
 | `validate`, `project-execution --check`, `check-github` | read-only | registry / observed remote |
 | `project` and `sync-github` | maintainer-approved issue-label permission | registry, then remote |
 | T4 access/settings, rulesets, secrets, apps, visibility, transfer, archive/delete, or bypass | owner only | GitHub controls |
@@ -25,8 +25,7 @@ python -B tools/governance/work_state.py validate --root .
 python -B tools/governance/work_state.py project-execution --root . --check
 python -B tools/governance/work_state.py prepare --root . --id GH-57
 python -B tools/governance/work_state.py activate --root . --id ITEM --execution-id EXEC --expected-baseline aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-branch BRANCH --clean --worktree-id WORKTREE --claim path/to/file --dry-run
-python -B tools/governance/work_state.py resume --root . --id ITEM --execution-id EXEC --worktree-id WORKTREE --expected-baseline aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --start-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-branch BRANCH --clean --claim path/to/file --authorization-receipt OWNER_RECEIPT --reason "bounded takeover"
-python -B tools/governance/work_state.py resume --root . --id ITEM --execution-id EXEC --worktree-id WORKTREE --expected-baseline aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --start-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-branch BRANCH --clean --claim path/to/file --authorization-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --peer-authorization-receipt PEER_RECEIPT_1 --peer-authorization-receipt PEER_RECEIPT_2 --reason "bounded takeover"
+python -B tools/governance/work_state.py resume --root . --id ITEM --execution-id EXEC --worktree-id WORKTREE --expected-baseline aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --start-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --current-branch BRANCH --clean --claim path/to/file --reason "continue repair" --next-action "rerun focused verification"
 python -B tools/governance/work_state.py handoff --root . --id ITEM --execution-id EXEC --pr PR_URL --head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --peer PEER --epoch EPOCH --finding "Fixed: receipt"
 python -B tools/governance/work_state.py closeout --root . --id ITEM --execution-id EXEC --pr PR_URL --head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --peer PEER --findings resolved --focused-receipt FOCUSED --final-receipt FINAL --attribution AUTHOR --merge-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ```
@@ -44,15 +43,13 @@ it is not silently inferred. `activate` requires an eligible item, closed depend
 HEAD/branch/clean worktree identity, a stable execution and worktree ID, and normalized typed claims. Use `--dry-run`
 first. Claims may cover fixtures, governance tools, and exclusive resources; equal exclusive claims conflict.
 
-`resume` is the sole owner-authorized takeover operation. It accepts only a `Blocked` item, moves it directly to
-`ResolvingFindings`, and observes the actual Git HEAD, branch, and clean status from the checkout. Explicit
-`current_head`, `start_head`, and `next_action` values are required; both heads must be lowercase 40-character SHAs
-equal to the observed HEAD. The branch must match the preserved item branch. A non-empty authorization receipt and
-reason are required, and become the takeover's receipt/reason; `next_action` becomes the selected execution's next
-action. The operation preserves the item's baseline, owner, branch, checkpoint, contract, and PR, rejects any
-selected or overlapping execution (including repeated resume), and atomically writes the registry, capsule, and
-execution projection. It does not activate dependents, write GitHub, change lifecycle outside this transition, or run
-the final gate.
+`resume` accepts only a `Blocked` item, moves it directly to `ResolvingFindings`, and observes the actual Git HEAD,
+branch, and clean status from the checkout. Explicit `current_head`, `start_head`, `current_branch`, `reason`, and
+`next_action` values are required; both heads must be lowercase 40-character SHAs equal to the observed HEAD. The
+branch must match the preserved item branch. Dependencies must be closed, no execution may be selected, and claims
+must be normalized, unique, and non-overlapping. The operation preserves the item's baseline, owner, branch,
+checkpoint, contract, and PR, records deterministic `resume:{reason,startHead}` evidence, removes legacy takeover
+metadata, and atomically writes the registry, capsule, and execution projection. It performs no GitHub observation.
 
 Each operation validates the complete candidate before writing. Payloads are sorted and journaled with a deterministic
 generation identity. In-process failures restore every replaced file. `recover` never overwrites a newer generation;
@@ -70,41 +67,21 @@ rejected. Findings are sorted and must receive deterministic dispositions before
 
 `closeout` invokes authenticated PR and paginated review observations, requiring a merged PR, its actual final head and merge SHA, and an exact-final-head `APPROVED` review by the stored peer. The handoff request head is retained only as a historical boundary; the caller's closeout head must match the authenticated final head. It requires matching execution/PR identity, focused and final receipts, attribution, resolved findings,
 and review evidence. It closes atomically and either leaves the root idle or selects an already-complete recipient.
-`resume` has two mutually exclusive authorization routes: one authenticated owner receipt, or exactly two repeated
-authenticated peer receipts plus `authorization_head`. Peer receipts are same-repository, same-issue human comments with
-OWNER/MEMBER/COLLABORATOR association and an exact normalized marker bound to item, checkpoint, execution, baseline,
-authorization head, and authenticated login. Comment IDs and logins must be distinct, neither peer may author the
-item PR, and the authorization head must be an authenticated local ancestor of the observed start head. Persisted
-takeovers use `mode: owner` or `mode: two-peer`; closeout reauthenticates both peer comments, digests, identities, PR
-author, and ancestry. The legacy three-field record remains readable only for the current blocked migration record.
-
-Owner and peer bodies share strict normalization: CRLF and CR become LF; zero or
-one final LF is accepted, but additional final LFs, trailing spaces, blank lines,
-or any other change are rejected. The digest always covers the canonical marker
-with exactly one final LF.
+Phase A schema validation accepts the existing legacy `takeover` object only when it is on the current `Blocked` record.
+It is migration input only: resume never creates, uses, or preserves it, and closeout never revalidates it.
+Phase B deletes this legacy schema allowance after live migration.
 
 `promote` changes only a blocked or draft dependent to `Ready` after every dependency is `Closed` and its capsule is
 complete; it never activates or selects the dependent.
 
 ## Recovery, cancellation, and projection
 
-### Authenticated takeover and closeout
+### Review identity and closeout
 
-`resume` re-fetches an owner Issue-comment receipt from the same repository and
-issue. The authenticated login must equal the repository owner from the validated
-`owner/repo` argument, compared case-insensitively; the assigned contributor in
-`item.owner` is not used. The association must be `OWNER`, and the normalized
-body must exactly bind item, checkpoint, execution, baseline, actual start head,
-and operation. The exact authenticated login is stored with the URL,
-SHA-256 body digest, authenticated login, reason, and start head. `closeout`
-revalidates that receipt and digest. Paginated reviews use `gh api --paginate
---slurp`, require page arrays, flatten them, and accept only a matching
-`User` reviewer. Closeout attribution must match both authenticated PR author
-and stored handoff author; only the authenticated author is persisted.
-
-The pre-existing three-field takeover record is readable for migration only;
-it is not closeout-authorizable and must be replaced by an authenticated
-`Blocked` -> resume cycle before rereview or the final gate.
+Paginated reviews use `gh api --paginate --slurp`, require page arrays, flatten them, and accept only a matching human
+`User` reviewer. GitHub logins are compared case-insensitively for handoff self-review rejection, review matching, and
+attribution; exact authenticated spellings are persisted. Closeout authenticates the merged PR and its final head,
+merge SHA, receipts, attribution, and resolved findings. Legacy takeover metadata is not closeout-authorizable.
 
 Cancellation uses the legal `transition` operation and follows the same journaled transaction. An interrupted process
 leaves its untracked worktree-local journal for `recover`; a successfully rolled-back operation removes it. Run
