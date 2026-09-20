@@ -219,6 +219,26 @@ class WorkStateTests(unittest.TestCase):
         with patch("os.replace",side_effect=fail): self.assertNotEqual(ws.transition(self.d,a),0)
         self.assertGreaterEqual(count[0],2)
         self.assertEqual(before,{p:p.read_bytes() for p in before})
+        recover_root = self.synthetic()
+        recover_action = type("A",(),{"id":"A","state":"Active","reason":"recoverable mutation","select":True,"check":False,"dry_run":False})()
+        recover_before = {p.relative_to(recover_root).as_posix(): p.read_bytes() for p in recover_root.rglob("*") if p.is_file()}
+        replace_count = [0]; write_count = [0]; real_replace = __import__("os").replace; real_write = Path.write_bytes
+        def fail_after_first(source, target):
+            replace_count[0] += 1
+            if replace_count[0] == 2: raise OSError("interrupted commit")
+            return real_replace(source, target)
+        def fail_restore(path, data):
+            write_count[0] += 1
+            if write_count[0] == 1: raise OSError("interrupted restoration")
+            return real_write(path, data)
+        with patch("os.replace", side_effect=fail_after_first), patch.object(Path, "write_bytes", new=fail_restore):
+            self.assertNotEqual(ws.transition(recover_root, recover_action), 0)
+        self.assertTrue(ws.runtime_journal(recover_root).exists())
+        self.assertTrue(list(recover_root.rglob(".work-state-*")))
+        self.assertEqual(self.operation(recover_root, "recover")[0], 0)
+        self.assertFalse(ws.runtime_journal(recover_root).exists())
+        self.assertFalse(list(recover_root.rglob(".work-state-*")))
+        self.assertEqual(recover_before, {p.relative_to(recover_root).as_posix(): p.read_bytes() for p in recover_root.rglob("*") if p.is_file()})
 
     # Issue 57 uses small, complete registries below rather than making the new
     # operation tests depend on whichever real item happens to be selected.
@@ -331,6 +351,8 @@ class WorkStateTests(unittest.TestCase):
         supplied_record = supplied / "docs/project/work-items/A.json"
         supplied_value = json.loads(supplied_record.read_text(encoding="utf-8"))
         supplied_value["checkpointId"], supplied_value["checkpointPath"] = None, None
+        supplied_value["lifecycle"], supplied_value["lifecycleLabel"], supplied_value["selectedForExecution"] = "Active", "active", True
+        supplied_value["nextAction"] = "scaffolded active checkpoint"
         supplied_record.write_text(ws.dump(supplied_value), encoding="utf-8")
         code, output = self.operation(supplied, "prepare", id="A", scaffold=True,
                                       checkpoint_id="custom-a", checkpoint_path="docs/work/custom-a")
@@ -338,6 +360,9 @@ class WorkStateTests(unittest.TestCase):
         stored = json.loads(supplied_record.read_text(encoding="utf-8"))
         self.assertEqual((stored["checkpointId"], stored["checkpointPath"]), ("custom-a", "docs/work/custom-a"))
         self.assertTrue((supplied / "docs/work/custom-a/checkpoint.md").exists())
+        self.assertEqual(ws.execution(supplied, False), 0)
+        execution = json.loads((supplied / "docs/project/execution.json").read_text(encoding="utf-8"))
+        self.assertEqual(execution["activeCheckpointPath"], "docs/work/custom-a")
         for checkpoint_id, checkpoint_path in (("custom-a", "/outside"), ("custom-a", "../outside"),
                                                 ("custom-a", "docs/work"), ("bad/id", "docs/work/bad-id"),
                                                 ("other", "docs/work/custom-a")):
@@ -441,6 +466,32 @@ class WorkStateTests(unittest.TestCase):
         state = json.loads((root / "docs/project/work-items/B.json").read_text(encoding="utf-8"))
         self.assertEqual(state.get("executionId"), "b")
         self.assertTrue(state.get("selectedForExecution"))
+        locked = self.synthetic()
+        ready = Path(tempfile.mkdtemp(dir=self.d)); start = ready / "start"
+        child = "import pathlib,sys,time; from types import SimpleNamespace; import tools.governance.work_state as w; r=pathlib.Path(sys.argv[1]); pathlib.Path(sys.argv[2]).write_text('ready'); s=pathlib.Path(sys.argv[3]);\nwhile not s.exists(): time.sleep(.005)\na=SimpleNamespace(id='A',state='Active',reason='parallel process',next_action='parallel process',select=True,select_id=None,check=False,dry_run=False); print(w.transition(r,a))"
+        processes = [subprocess.Popen([__import__("sys").executable, "-B", "-c", child, str(locked), str(ready / f"ready-{n}"), str(start)], cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for n in (1, 2)]
+        deadline = __import__("time").time() + 10
+        while not all((ready / f"ready-{n}").exists() for n in (1, 2)) and __import__("time").time() < deadline: __import__("time").sleep(.01)
+        self.assertTrue(all((ready / f"ready-{n}").exists() for n in (1, 2)))
+        start.write_text("go")
+        results = [process.communicate(timeout=10)[0] for process in processes]
+        self.assertEqual(sum("\n0\n" in ("\n" + output) for output in results), 1, results)
+        compatible = self.synthetic(second=True)
+        compatible_ready = Path(tempfile.mkdtemp(dir=self.d)); compatible_start = compatible_ready / "start"
+        activation = "import pathlib,sys,time; import tools.governance.work_state as w; r=pathlib.Path(sys.argv[1]); item=sys.argv[2]; ready=pathlib.Path(sys.argv[3]); pathlib.Path(ready).write_text('ready'); s=pathlib.Path(sys.argv[4]);\nwhile not s.exists(): time.sleep(.005)\nargv=['work_state.py','activate','--root',str(r),'--id',item,'--execution-id','proc-'+item.lower(),'--expected-baseline','a'*40,'--current-head','a'*40,'--current-branch','feature/'+item.lower(),'--worktree-id','worktree-'+item.lower(),'--clean','--claim','src/'+item.lower()]; argv += ['--select'] if item == 'A' else []; sys.argv=argv; print(w.main())"
+        workers = [subprocess.Popen([__import__("sys").executable, "-B", "-c", activation, str(compatible), item, str(compatible_ready / f"ready-{item}"), str(compatible_start)], cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for item in ("A", "B")]
+        deadline = __import__("time").time() + 10
+        while not all((compatible_ready / f"ready-{item}").exists() for item in ("A", "B")) and __import__("time").time() < deadline: __import__("time").sleep(.01)
+        self.assertTrue(all((compatible_ready / f"ready-{item}").exists() for item in ("A", "B"))); compatible_start.write_text("go")
+        self.assertTrue(all(worker.communicate(timeout=10)[0].rstrip().endswith("0") for worker in workers))
+        final_items = {item: json.loads((compatible / "docs/project/work-items" / f"{item}.json").read_text()) for item in ("A", "B")}
+        self.assertEqual({final_items[item]["executionId"] for item in final_items}, {"proc-a", "proc-b"}); self.assertEqual({final_items[item]["claims"][0]["value"] for item in final_items}, {"src/a", "src/b"}); self.assertEqual(sum(final_items[item]["selectedForExecution"] for item in final_items), 1)
+        release = self.synthetic(second=True)
+        self.assertNotEqual(self.activate(release, expected_baseline="b"*40)[0], 0)
+        self.assertEqual(self.activate(release, execution_id="after-validation", claim="src/a")[0], 0)
+        with patch("os.replace", side_effect=OSError("injected commit failure")):
+            self.assertNotEqual(self.activate(release, item="B", execution_id="after-failure", claim="src/b")[0], 0)
+        self.assertEqual(self.activate(release, item="B", execution_id="after-failure-retry", claim="src/b")[0], 0)
 
     def test_claim_normalization_rejects_windows_ancestor_fixture_and_tool_conflicts_but_not_disjoint(self):
         root = self.synthetic(second=True)
@@ -461,6 +512,19 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(self.activate(root, execution_id="a", claim="src/a")[0], 0)
         self.assertEqual(self.activate(root, item="B", execution_id="b", claim="docs/b", fixture="fixture-b",
                                        governance_tool="tools/other.py", resource="other")[0], 0)
+        links = root / "links"; real = root / "real"; real.mkdir(); (real / "file.txt").write_text("x")
+        link_capable = True
+        try:
+            links.symlink_to(real, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            link_capable = False
+        if link_capable:
+            linked = self.synthetic(second=True)
+            real_path, link_path = linked / "real", linked / "links"
+            real_path.mkdir(); (real_path / "file.txt").write_text("x"); link_path.symlink_to(real_path, target_is_directory=True)
+            self.assertEqual(self.activate(linked, execution_id="real", claim="real/file.txt")[0], 0)
+            alias_code, _ = self.activate(linked, item="B", execution_id="alias", claim="links/file.txt")
+            self.assertNotEqual(alias_code, 0)
 
     def test_failed_transaction_rolls_back_and_recovery_does_not_replace_newer_state(self):
         root = self.synthetic()
@@ -491,6 +555,13 @@ class WorkStateTests(unittest.TestCase):
             self.assertNotEqual(code, 0)
             self.assertIn("refused", output.lower())
             self.assertEqual(outside.read_text(encoding="utf-8"), "must remain")
+        staged_sentinel = root.parent / "untrusted-stage-sentinel.txt"; staged_sentinel.write_text("must remain staged", encoding="utf-8")
+        current_execution = (root / "docs/project/execution.json").read_bytes(); encoded = base64.b64encode(current_execution).decode("ascii"); digest = ws.file_hash(current_execution)
+        staged_journal = {"generation": generation, "status":"interrupted", "entries":[{"path":"docs/project/execution.json", "originalExists":True, "originalHash":digest, "targetHash":digest, "original":encoded, "target":encoded, "targetStage":str(staged_sentinel), "originalStage":str(staged_sentinel)}]}
+        (root / "docs/project/work-state.journal.json").write_text(json.dumps(staged_journal), encoding="utf-8")
+        canonical_before = {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+        staged_code, staged_output = self.operation(root, "recover")
+        self.assertNotEqual(staged_code, 0); self.assertIn("refused", staged_output.lower()); self.assertEqual(staged_sentinel.read_text(encoding="utf-8"), "must remain staged"); self.assertEqual(canonical_before, {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()})
         absent = root / "docs/project/recovery-absent.json"
         empty = root / "docs/project/recovery-empty.json"
         absent.unlink(missing_ok=True)
@@ -562,7 +633,15 @@ class WorkStateTests(unittest.TestCase):
             value.update(changes)
             return type("R",(),{"stdout":json.dumps(value)})()
         base = {"id":"A", "execution_id":"e", "head":"c"*40, "observed_head":"spoofed",
-                "observed_author":"spoofed", "peer":"reviewer", "epoch":"1", "finding":["Fixed: receipt"]}
+                 "observed_author":"spoofed", "peer":"reviewer", "epoch":"1", "finding":["Fixed: receipt"]}
+        for malformed_head in (None, "", "not-a-sha", "c" * 39, "C" * 40):
+            candidate = self.synthetic(); self.assertEqual(self.activate(candidate, execution_id="e", claim="src/a")[0], 0)
+            before = {p.relative_to(candidate).as_posix(): p.read_bytes() for p in candidate.rglob("*") if p.is_file()}
+            options = dict(base, head=malformed_head, pr="https://github.com/o/r/pull/1")
+            with patch("subprocess.run") as run:
+                rejected, _ = self.operation(candidate, "handoff", **options)
+            self.assertNotEqual(rejected, 0, malformed_head); run.assert_not_called()
+            self.assertEqual(before, {p.relative_to(candidate).as_posix(): p.read_bytes() for p in candidate.rglob("*") if p.is_file()})
         for options, response in (({"pr":"https://github.com/o/r/pull/2"}, pr_view()),
                                   ({"pr":"https://github.com/o/r/pull/1", "head":"b"*40}, pr_view()),
                                   ({"pr":"https://github.com/o/r/pull/1"}, pr_view(isDraft=True)),
@@ -905,6 +984,21 @@ class WorkStateTests(unittest.TestCase):
                 code, output = self.operation(root, "project")
             self.assertNotEqual(code, 0, comments)
             self.assertEqual(run.call_count, 1, comments)
+        ordering = self.synthetic()
+        ordering_item = ordering / "docs/project/work-items/A.json"; ordering_value = json.loads(ordering_item.read_text()); ordering_value.update(kind="github-issue", number=1, sourceUrl="https://github.com/o/r/issues/1", expectedGithubState="OPEN"); ordering_item.write_text(ws.dump(ordering_value))
+        remote = json.dumps([{"number":1,"state":"OPEN","labels":[],"comments":[]}]); calls=[]
+        def ordered(command, *args, **kwargs):
+            calls.append(command)
+            if len(calls) == 1: return type("R",(),{"stdout":remote})()
+            return type("R",(),{"stdout":""})()
+        with patch("subprocess.run", side_effect=ordered):
+            self.assertEqual(self.operation(ordering, "project")[0], 0)
+        edits = [" ".join(command) for command in calls]
+        self.assertLess(next(i for i, command in enumerate(edits) if "issue edit" in command), next(i for i, command in enumerate(edits) if "issue comment" in command))
+        calls.clear()
+        with patch("subprocess.run", side_effect=[type("R",(),{"stdout":remote})(), OSError("edit failed")]) as run:
+            self.assertNotEqual(self.operation(ordering, "project")[0], 0)
+        self.assertEqual(run.call_count, 2)
 
     def test_real_registry_and_checked_in_projection_are_read_only(self):
         registry = {p: p.read_bytes() for p in (ROOT / "docs/project/work-items").glob("*.json")}

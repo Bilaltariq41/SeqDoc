@@ -8,6 +8,8 @@ before replacing any repository file.
 import argparse
 import base64
 import copy
+from contextlib import contextmanager
+from functools import wraps
 import hashlib
 import json
 import os
@@ -15,6 +17,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 STATES = {"Draft", "Blocked", "Ready", "Active", "ReviewRequired", "ResolvingFindings", "Verifying", "Closed", "Cancelled"}
@@ -86,7 +89,20 @@ def normalize_claim_record(record):
     return {"kind": record["kind"], "value": normalize_claim(record["value"])}
 
 
-def claim_records(item):
+def claim_reparse_errors(root, record):
+    if record["kind"] == "exclusive":
+        return []
+    current = root
+    for component in record["value"].split("/"):
+        current = current / component
+        if current.is_symlink() or (hasattr(current, "is_junction") and current.is_junction()):
+            return ["claim follows symlink or reparse point"]
+        if not current.exists():
+            break
+    return []
+
+
+def claim_records(item, root=None):
     raw = item.get("claims", [])
     if not isinstance(raw, list):
         return ["claims must be an array"]
@@ -98,6 +114,8 @@ def claim_records(item):
             normalized.append(canonical)
             if record != canonical:
                 errors.append("noncanonical claim")
+            if root is not None:
+                errors.extend(claim_reparse_errors(root, canonical))
         except ValueError as error:
             errors.append(str(error))
     keys = [(x["kind"], x["value"]) for x in normalized]
@@ -106,7 +124,7 @@ def claim_records(item):
     return errors
 
 
-def metadata_errors(item):
+def metadata_errors(item, root=None):
     errors = []
     lifecycle = item.get("lifecycle")
     execution_id = item.get("executionId")
@@ -120,7 +138,7 @@ def metadata_errors(item):
     # readable until an operation explicitly activates or migrates them.
     if lifecycle not in active_states and execution_id is not None:
         errors.append("execution metadata inconsistent with lifecycle")
-    errors.extend(claim_records(item))
+    errors.extend(claim_records(item, root))
     findings = item.get("reviewFindings")
     if findings is not None and (not isinstance(findings, list) or any(not isinstance(x, str) or not valid_finding(x) for x in findings) or len(findings) != len(set(findings)) or findings != sorted(findings)):
         errors.append("invalid review findings")
@@ -307,7 +325,7 @@ def validate_items(items, root=None, capsule_overrides=None):
                 errors.append(f"{item_id} invalid baseline")
         if item.get("selectedForExecution") and (lifecycle not in {"Active", "ReviewRequired", "ResolvingFindings", "Verifying"} or not item.get("checkpointId") or not item.get("checkpointPath") or not item.get("nextAction")):
             errors.append(f"selected item incomplete {item_id}")
-        errors.extend(f"{item_id} {error}" for error in metadata_errors(item))
+        errors.extend(f"{item_id} {error}" for error in metadata_errors(item, root))
         text = (capsule_overrides or {}).get(item.get("checkpointPath"), capsule_text(root, item))
         if item.get("checkpointPath") and text is None:
             errors.append(f"{item_id} missing checkpoint capsule")
@@ -382,7 +400,7 @@ def execution(root, check=False):
     return 0
 
 
-def claims_from_args(args):
+def claims_from_args(args, root=None):
     records = []
     values = (("path", args.claim), ("fixture", args.fixture), ("governance-tool", args.governance_tool), ("exclusive", args.resource))
     for kind, entries in values:
@@ -392,6 +410,10 @@ def claims_from_args(args):
             entries = [entries]
         for value in entries:
             records.append(normalize_claim_record({"kind": kind, "value": value}))
+            if root is not None:
+                errors = claim_reparse_errors(root, records[-1])
+                if errors:
+                    raise ValueError(errors[0])
     return sorted(records, key=lambda claim: (claim["kind"], claim["value"]))
 
 
@@ -412,8 +434,69 @@ def runtime_journal(root):
     return directory / "journal.json"
 
 
+@contextmanager
+def repository_lock(root):
+    lock_path = runtime_journal(root).with_name("lock")
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+    acquired = False
+    try:
+        size = os.fstat(fd).st_size
+        if size != 1:
+            os.ftruncate(fd, 1)
+            if size == 0:
+                os.lseek(fd, 0, os.SEEK_SET)
+                os.write(fd, b"0")
+            os.fsync(fd)
+        if os.name == "nt":
+            import msvcrt
+            while True:
+                os.lseek(fd, 0, os.SEEK_SET)
+                try:
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as error:
+                    if getattr(error, "winerror", None) not in {33, 36} and getattr(error, "errno", None) not in {11, 13, 36}:
+                        raise
+                    time.sleep(0.01)
+            acquired = True
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            acquired = True
+        yield
+    finally:
+        try:
+            if acquired and os.name == "nt":
+                import msvcrt
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            elif acquired:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def filesystem_operation(function):
+    @wraps(function)
+    def locked(root, args):
+        with repository_lock(root):
+            return function(root, args)
+    return locked
+
+
 def file_hash(value):
     return hashlib.sha256(value or b"").hexdigest()
+
+
+def write_journal(path, value):
+    encoded = dump(value).encode("utf-8")
+    fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC)
+    try:
+        os.write(fd, encoded)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def atomic_write(root, payloads):
@@ -428,22 +511,30 @@ def atomic_write(root, payloads):
         entries.append({"path": relative, "originalExists": originals[path] is not None, "originalHash": file_hash(originals[path]), "targetHash": file_hash(target), "original": base64.b64encode(originals[path] or b"").decode("ascii"), "target": base64.b64encode(target).decode("ascii")})
     generation = hashlib.sha256(dump([{key: entry[key] for key in ("path", "originalHash", "targetHash")} for entry in entries]).encode("utf-8")).hexdigest()
     journal_path = runtime_journal(root)
-    journal_fd = os.open(journal_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC)
+    journal_value = {"generation": generation, "status": "prepared", "entries": entries}
+    write_journal(journal_path, journal_value)
+    staged, originals_staged, replaced = [], {}, []
     try:
-        os.write(journal_fd, dump({"generation": generation, "status": "prepared", "entries": entries}).encode("utf-8"))
-        os.fsync(journal_fd)
-    finally:
-        os.close(journal_fd)
-    staged, replaced = [], []
-    try:
+        entry_by_path = {entry["path"]: entry for entry in entries}
         for path in paths:
             path.parent.mkdir(parents=True, exist_ok=True)
             fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=".work-state-")
             os.write(fd, payloads[path].encode("utf-8")); os.fsync(fd); os.close(fd)
+            temporary = Path(temporary)
             staged.append((path, Path(temporary)))
+            entry_by_path[str(path.relative_to(root)).replace("\\", "/")]["targetStage"] = temporary.resolve().relative_to(root.resolve()).as_posix()
+            if originals[path] is not None:
+                fd, original_temporary = tempfile.mkstemp(dir=path.parent, prefix=".work-state-original-")
+                os.write(fd, originals[path]); os.fsync(fd); os.close(fd)
+                originals_staged[path] = Path(original_temporary)
+                entry_by_path[str(path.relative_to(root)).replace("\\", "/")]["originalStage"] = Path(original_temporary).resolve().relative_to(root.resolve()).as_posix()
+        journal_value["entries"] = entries
+        write_journal(journal_path, journal_value)
         for path, temporary in staged:
             os.replace(temporary, path)
             replaced.append(path)
+        for temporary in originals_staged.values():
+            temporary.unlink(missing_ok=True)
         journal_path.unlink(missing_ok=True)
     except OSError as error:
         rollback_error = None
@@ -452,8 +543,12 @@ def atomic_write(root, payloads):
                 if originals[path] is None:
                     path.unlink(missing_ok=True)
                 else:
-                    path.write_bytes(originals[path])
+                    original_stage = originals_staged[path]
+                    original_stage.write_bytes(originals[path])
+                    os.replace(original_stage, path)
             for _, temporary in staged:
+                temporary.unlink(missing_ok=True)
+            for temporary in originals_staged.values():
                 temporary.unlink(missing_ok=True)
         except OSError as failure:
             rollback_error = failure
@@ -461,6 +556,8 @@ def atomic_write(root, payloads):
             journal_path.unlink(missing_ok=True)
             print(f"transaction rolled back; recovery is unnecessary: {error}", file=sys.stderr)
         else:
+            journal_value["status"] = "interrupted"
+            write_journal(journal_path, journal_value)
             print(f"transaction interrupted and rollback failed; run recover: {rollback_error}", file=sys.stderr)
         raise
 
@@ -475,7 +572,7 @@ def read_journal(root):
 
 def confined_path(root, relative):
     """Resolve a journal target without following any reparse component."""
-    relative = normalize_repository_path(relative)
+    relative = normalize_journal_path(relative)
     root = root.resolve()
     current = root
     for component in relative.split("/"):
@@ -488,6 +585,20 @@ def confined_path(root, relative):
     return current
 
 
+def confined_stage(root, target, value, prefix):
+    if not isinstance(value, str):
+        raise ValueError("malformed staged evidence")
+    relative = normalize_journal_path(value)
+    if relative != value:
+        raise ValueError("staged path is not canonical")
+    stage = confined_path(root, relative)
+    if (stage.parent.resolve() != target.parent.resolve() or not stage.name.startswith(prefix) or
+            (prefix == ".work-state-" and stage.name.startswith(".work-state-original-"))):
+        raise ValueError("staged path is not adjacent and canonical")
+    return stage
+
+
+@filesystem_operation
 def prepare(root, args):
     items = load(root)
     targets = [item for item in items if not args.id or item.get("id") == args.id]
@@ -496,6 +607,7 @@ def prepare(root, args):
         return 1
     if args.scaffold:
         candidate = copy.deepcopy(items)
+        targets = [item for item in candidate if not args.id or item.get("id") == args.id]
         payloads = {}
         for item in targets:
             supplied_id = getattr(args, "checkpoint_id", None)
@@ -519,7 +631,11 @@ def prepare(root, args):
             item["checkpointId"], item["checkpointPath"] = checkpoint_id, relative
             path = root / relative / "checkpoint.md"
             if not path.exists():
-                payloads[path] = "# checkpoint\n\n## State\n\n`NotStarted`\n\n## Objective\n\nTODO: blocking placeholder.\n\n## Target paths\n\nTODO: blocking placeholder.\n\n## Non-goals\n\nTODO: blocking placeholder.\n\n## Risks\n\nTODO: blocking placeholder.\n\n## Existing coverage\n\nTODO: blocking placeholder.\n\n## Test budget\n\nTODO: blocking placeholder.\n\n## Focused verification\n\nTODO: blocking placeholder.\n\n## Final gate\n\nTODO: blocking placeholder.\n\n## Review boundary\n\nTODO: blocking placeholder.\n\n## Acceptance proof\n\nTODO: blocking placeholder.\n"
+                state = CAPSULE_STATES.get(item.get("lifecycle"), "NotStarted")
+                if item.get("lifecycle") == "Active":
+                    payloads[path] = (f"# checkpoint\n\n## State\n\n`{state}`\n\n## Objective\n\nScaffolded active checkpoint.\n\n## Target paths\n\n- `governance target`\n\n## Non-goals\n\n- Product behavior.\n\n## Risks\n\n- Transactional write failure.\n\n## Existing coverage\n\n- Synthetic baseline.\n\n## Test budget\n\n- Focused governance coverage.\n\n## Focused verification\n\n`python -B -m unittest tests.governance.test_work_state`\n\n## Final gate\n\n`python -B -m unittest tests.governance.test_work_state`\n\n## Review boundary\n\nA latest-head non-author peer reviews the candidate.\n\n## Acceptance proof\n\nThe operation is observable and transactional.\n")
+                else:
+                    payloads[path] = f"# checkpoint\n\n## State\n\n`{state}`\n\n## Objective\n\nTODO: blocking placeholder.\n\n## Target paths\n\nTODO: blocking placeholder.\n\n## Non-goals\n\nTODO: blocking placeholder.\n\n## Risks\n\nTODO: blocking placeholder.\n\n## Existing coverage\n\nTODO: blocking placeholder.\n\n## Test budget\n\nTODO: blocking placeholder.\n\n## Focused verification\n\nTODO: blocking placeholder.\n\n## Final gate\n\nTODO: blocking placeholder.\n\n## Review boundary\n\nTODO: blocking placeholder.\n\n## Acceptance proof\n\nTODO: blocking placeholder.\n"
             payloads[root / "docs/project/work-items" / (item["id"] + ".json")] = dump(item)
         payloads[root / "docs/project/execution.json"] = execution_payload(candidate)
         try:
@@ -556,6 +672,21 @@ def normalize_repository_path(value):
         parts.append(part)
     if not parts or parts[-1].lower() == "checkpoint.md":
         raise ValueError("checkpoint path must name a directory")
+    return "/".join(parts)
+
+
+def normalize_journal_path(value):
+    if not isinstance(value, str) or not value or value.startswith("/") or re.match(r"^[A-Za-z]:", value):
+        raise ValueError("absolute or empty path")
+    parts = []
+    for part in value.replace("\\", "/").split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            raise ValueError("parent traversal")
+        parts.append(part)
+    if not parts:
+        raise ValueError("empty path")
     return "/".join(parts)
 
 
@@ -659,6 +790,7 @@ def activation_packet(item, execution_id, claims):
     return "\n".join(lines) + "\n"
 
 
+@filesystem_operation
 def activate(root, args):
     items = load(root)
     candidate = copy.deepcopy(items)
@@ -703,7 +835,7 @@ def activate(root, args):
     if not args.execution_id or not args.worktree_id or not ID.fullmatch(args.worktree_id) or "/" in args.worktree_id or "\\" in args.worktree_id:
         errors.append("invalid worktree identity")
     try:
-        claims = claims_from_args(args)
+        claims = claims_from_args(args, root)
     except ValueError as error:
         errors.append(str(error)); claims = []
     if item:
@@ -750,6 +882,7 @@ def activate(root, args):
     return 0
 
 
+@filesystem_operation
 def resume(root, args):
     items = load(root)
     candidate = copy.deepcopy(items)
@@ -790,7 +923,7 @@ def resume(root, args):
     if not args.clean or not clean or args.dirty:
         errors.append("worktree is dirty")
     try:
-        claims = claims_from_args(args)
+        claims = claims_from_args(args, root)
     except ValueError as error:
         errors.append(str(error)); claims = []
     if not claims:
@@ -834,6 +967,7 @@ def resume(root, args):
     return 0
 
 
+@filesystem_operation
 def handoff(root, args):
     items = load(root)
     current = next((item for item in items if item.get("id") == args.id), None)
@@ -842,6 +976,8 @@ def handoff(root, args):
         errors.append("execution identity mismatch")
     if not args.pr or (current and current.get("pr") and current.get("pr") != args.pr):
         errors.append("PR identity mismatch")
+    if not SHA.fullmatch(args.head or ""):
+        errors.append("head identity mismatch")
     observation = None
     if not errors:
         try:
@@ -903,6 +1039,7 @@ def handoff(root, args):
     return 0
 
 
+@filesystem_operation
 def closeout(root, args):
     items = load(root)
     current = next((item for item in items if item.get("id") == args.id), None)
@@ -989,6 +1126,7 @@ def closeout(root, args):
     return 0
 
 
+@filesystem_operation
 def promote(root, args):
     items = load(root)
     current = next((item for item in items if item.get("id") == args.id), None)
@@ -1026,6 +1164,7 @@ def promote(root, args):
     return 0
 
 
+@filesystem_operation
 def recover(root, args):
     path = read_journal(root)
     if not path:
@@ -1047,12 +1186,13 @@ def recover(root, args):
         print("recovery refused: journal has no safe entries", file=sys.stderr)
         return 1
     plans = []
+    evidence_stages = []
     for entry in entries:
         if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
             print("recovery refused: malformed journal path", file=sys.stderr)
             return 1
         try:
-            relative = normalize_repository_path(entry["path"])
+            relative = normalize_journal_path(entry["path"])
         except ValueError:
             print("recovery refused: journal path escapes repository", file=sys.stderr)
             return 1
@@ -1061,6 +1201,14 @@ def recover(root, args):
             return 1
         try:
             target = confined_path(root, relative)
+        except ValueError as error:
+            print(f"recovery refused: {error}", file=sys.stderr)
+            return 1
+        try:
+            if entry.get("targetStage") is not None:
+                evidence_stages.append(confined_stage(root, target, entry["targetStage"], ".work-state-"))
+            if entry.get("originalStage") is not None:
+                evidence_stages.append(confined_stage(root, target, entry["originalStage"], ".work-state-original-"))
         except ValueError as error:
             print(f"recovery refused: {error}", file=sys.stderr)
             return 1
@@ -1097,14 +1245,26 @@ def recover(root, args):
             print("recovery refused: newer state exists; inspect journal before retrying", file=sys.stderr)
             return 1
         plans.append((target, original, current, original_exists, entry["targetHash"]))
-    for plan in plans:
-        target, original, current, original_exists, *target_hash = plan
-        if target_hash and file_hash(current) == target_hash[0]:
-            if original_exists:
-                target.write_bytes(original)
-            else:
-                target.unlink(missing_ok=True)
-    path.unlink(missing_ok=True)
+    restore_stages = []
+    try:
+        for plan in plans:
+            target, original, current, original_exists, *target_hash = plan
+            if target_hash and file_hash(current) == target_hash[0]:
+                if original_exists:
+                    fd, temporary = tempfile.mkstemp(dir=target.parent, prefix=".work-state-recover-")
+                    os.write(fd, original); os.fsync(fd); os.close(fd)
+                    temporary = Path(temporary); restore_stages.append(temporary)
+                    os.replace(temporary, target)
+                else:
+                    target.unlink(missing_ok=True)
+        for temporary in restore_stages:
+            temporary.unlink(missing_ok=True)
+        for temporary in evidence_stages:
+            temporary.unlink(missing_ok=True)
+        path.unlink(missing_ok=True)
+    except OSError as error:
+        print(f"recovery interrupted; journal and staged evidence retained: {error}", file=sys.stderr)
+        return 1
     print("recovered interrupted operation")
     return 0
 
@@ -1131,7 +1291,7 @@ def github_projection(args, root):
     remote = read_remote(args.repository)
     if remote is None:
         return 1
-    lifecycle_labels = set(LABELS.values()); commands = []
+    lifecycle_labels = set(LABELS.values()); label_commands = []; edit_commands = []; comment_commands = []
     for item in load(root):
         if "number" not in item:
             continue
@@ -1156,7 +1316,7 @@ def github_projection(args, root):
         if expected and expected not in attached:
             changes.append(("--add-label", expected))
         if changes:
-            commands.append(["gh", "issue", "edit", str(item["number"]), "--repo", args.repository] + [value for pair in changes for value in pair])
+            edit_commands.append(["gh", "issue", "edit", str(item["number"]), "--repo", args.repository] + [value for pair in changes for value in pair])
         if args.command == "project" and "comments" in observed:
             marker = f"seqdoc-state-v1:{item['id']}:{item['lifecycle']}"
             comments = observed.get("comments", [])
@@ -1164,7 +1324,7 @@ def github_projection(args, root):
             if any(isinstance(comment, dict) and str(comment.get("body", "")).splitlines()[:1] == [marker] for comment in comments):
                 print(f"OBSERVED {marker} {phase}")
             else:
-                commands.append(["gh", "issue", "comment", str(item["number"]), "--repo", args.repository, "--body", marker + f"\nSeqDoc packet: {phase} {item['id']}"])
+                comment_commands.append(["gh", "issue", "comment", str(item["number"]), "--repo", args.repository, "--body", marker + f"\nSeqDoc packet: {phase} {item['id']}"])
     if args.command == "check-github":
         drift = []
         for item in load(root):
@@ -1180,8 +1340,9 @@ def github_projection(args, root):
     if args.command == "sync-github":
         observed_labels = {label.get("name") for value in remote.values() for label in value.get("labels", []) if isinstance(label, dict)}
         for label in sorted(lifecycle_labels - observed_labels):
-            commands.insert(0, ["gh", "label", "create", label, "--repo", args.repository, "--color", "ededed", "--force"])
-    for command in sorted(commands, key=lambda value: tuple(value)):
+            label_commands.append(["gh", "label", "create", label, "--repo", args.repository, "--color", "ededed", "--force"])
+    commands = sorted(label_commands, key=lambda value: tuple(value)) + sorted(edit_commands, key=lambda value: tuple(value)) + sorted(comment_commands, key=lambda value: tuple(value))
+    for command in commands:
         print(("DRY-RUN " if args.dry_run else "") + " ".join(command))
         if not args.dry_run:
             try:
@@ -1197,6 +1358,7 @@ def gh(args, root):
     return github_projection(args, root)
 
 
+@filesystem_operation
 def transition(root, args):
     items = load(root); target = next((item for item in items if item.get("id") == args.id), None)
     if not target or args.state not in TRANSITIONS.get(target.get("lifecycle"), set()):
@@ -1208,6 +1370,8 @@ def transition(root, args):
         return 1
     candidate = copy.deepcopy(items); item = next(value for value in candidate if value["id"] == args.id)
     item.update(lifecycle=args.state, lifecycleLabel=LABELS.get(args.state))
+    if args.select and not item.get("nextAction"):
+        item["nextAction"] = "continue active execution"
     if args.state in {"Blocked", "Cancelled"}:
         for field in ("executionId", "worktreeId", "claims", "review", "reviewEpoch", "reviewPeer", "reviewFindings"):
             item.pop(field, None)

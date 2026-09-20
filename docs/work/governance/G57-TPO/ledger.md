@@ -195,6 +195,42 @@ gate is claimed.
   normalization and duplicate-after-normalization rejection.
 - These are complete-candidate repairs only; no lifecycle invocation, handoff, commit, push, or final gate is claimed.
 
+## Abood complete-candidate review — F18-F24
+
+- Reviewer: Abood-essa; review locus: https://github.com/Bilaltariq41/SeqDoc/pull/110
+- F18: **Fixed** — every filesystem-mutating public operation takes one repository-scoped blocking Windows/POSIX lock
+  from load through validation, observation, journal, replacement, rollback, or recovery completion.
+- F19: **Fixed** — deterministic staged preimages, current-hash validation, confined journal targets, `os.replace`
+  restoration, and retained journal/staging evidence make interrupted recovery retryable and idempotent.
+- F20: **Fixed** — scaffold mutations and validation/projection payloads derive from one deep-copied candidate, including
+  self-consistent active capsules.
+- F21: **Fixed** — persisted and supplied path-like claims reject existing symlink/junction/reparse components while
+  preserving nonexistent ordinary paths and abstract exclusive resources.
+- F22: **Fixed** — projection writes missing labels, issue edits, and marker comments in deterministic phases; failures
+  stop later phases and marker retries remain idempotent.
+- F23: **Fixed** — handoff requires an exact lowercase 40-hex head before any GitHub subprocess.
+- F24: **Fixed** — the accepted T2 amendment records the seven additional governance paths, rationale, risks, coverage,
+  and the rule that execution/GH-57 state are operation-generated rather than hand-edited.
+- Focused verification after implementation: **28 passed, 2 capability-gated symlink skips**. No lifecycle invocation,
+  GitHub write, final gate, commit, push, or handoff is claimed.
+
+## F18/F19 hardening repair
+
+- Stage metadata now persists only canonical repository-relative paths. Recovery confines each stage beside its target,
+  requires the exact target/original prefix, rejects absolute, escaped, symlink, reparse, and external-sentinel paths,
+  and relies on embedded preimage bytes and hashes for restoration authority.
+- The repository lock is an exactly one-byte `O_CREAT|O_RDWR` file. Windows acquisition loops on contention while
+  preserving unexpected errors; POSIX `fcntl` locking and finally-release behavior remain unchanged.
+- Journal writes, including staged metadata and interrupted status, use an fsyncing helper. Present originals restore by
+  staged rename; absent originals retain the documented validated direct-unlink boundary. Focused verification now
+  passes **28/28 with 1 actual symlink-capability skip**.
+
+## Inspected lock-release correction
+
+- **Fixed** — `repository_lock` now tracks successful acquisition and unlocks only after acquisition. Initialization or
+  unexpected acquisition errors close the descriptor without an unlock attempt, preserving the original failure while
+  retaining blocking contention and finally-release semantics.
+
 ## Reviewer F16
 
 - F16: **Fixed** — handoff now has direct cross-repository, malformed or missing source URL, and mismatched

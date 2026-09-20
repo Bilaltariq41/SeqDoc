@@ -69,6 +69,28 @@ rejected. Findings are sorted and must receive deterministic dispositions before
 Before any GitHub observation, handoff and closeout validate the canonical issue source URL, item number, PR repository,
 and supplied repository binding. Issue and PR numbers remain independent.
 
+All filesystem-mutating operations (`prepare`, `activate`, `resume`, `handoff`, `closeout`, `promote`, `recover`, and
+`transition`) take the repository-scoped blocking lock before loading state and hold it through validation, observation,
+journaling, replacement, rollback, or recovery completion. The lock is adjacent to the runtime journal, is an exactly
+one-byte `O_CREAT|O_RDWR` file, uses a blocking `msvcrt` nonblocking-acquisition loop on Windows and `fcntl` on POSIX,
+and is never stale-deleted. GitHub projection remains outside this filesystem transaction.
+
+Transactions stage target preimages before replacement. Every journal entry is validated in deterministic order against
+the current hash and confined, non-reparse path. Staged target and original paths are canonical repository-relative
+names, adjacent to their target, and carry their exact stage prefix; absolute or escaped stage paths are refused.
+Journal rewrites use an fsyncing helper. Recovery restores originals with staged `os.replace` operations and removes
+journal/staging evidence only after all restores succeed; interrupted rollback preserves both for retry. For an
+originally absent target, the recovery boundary remains a validated direct unlink after the current-hash check because
+there is no original byte stream to rename; failure leaves the journal actionable.
+
+`prepare --scaffold` derives target mutations, validation, and execution output from one deep-copied candidate. Path,
+fixture, and governance-tool claims reject existing symlink, junction, or reparse components under the repository;
+nonexistent ordinary components remain admissible, and abstract exclusive resources are not filesystem paths.
+
+GitHub projection writes in phases: missing lifecycle labels, issue label edits, then marker comments, each sorted
+deterministically. A failed earlier phase prevents later writes, and existing marker detection makes comment retry
+idempotent. Handoff rejects a non-lowercase or non-40-hex `head` before any GitHub subprocess.
+
 `closeout` invokes authenticated PR and paginated review observations, requiring a merged PR, its actual final head and merge SHA, and an exact-final-head `APPROVED` review by the stored peer. The handoff request head is retained only as a historical boundary; the caller's closeout head must match the authenticated final head. It requires matching execution/PR identity, focused and final receipts, attribution, resolved findings,
 and review evidence. It closes atomically and either leaves the root idle or selects an already-complete recipient.
 The live migration completed at `f8919e2`; worker-owned resume is now the final policy.
