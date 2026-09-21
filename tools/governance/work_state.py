@@ -143,6 +143,33 @@ def claim_records(item, root=None):
     return errors
 
 
+def registry_shape_errors(items):
+    if not isinstance(items, list):
+        return ["work-item registry is not an array"]
+    errors = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            errors.append(f"registry record {index} is not an object")
+            continue
+        item_id = item.get("id", "<unknown>")
+        dependencies = item.get("dependencies", [])
+        if not isinstance(dependencies, list):
+            errors.append(f"{item_id} dependencies must be an array")
+        elif any(not isinstance(value, str) or not ID.fullmatch(value) for value in dependencies):
+            errors.append(f"{item_id} dependencies contain an invalid ID")
+        if "claims" in item:
+            claims = item["claims"]
+            if not isinstance(claims, list):
+                errors.append(f"{item_id} claims must be an array")
+            else:
+                for claim in claims:
+                    try:
+                        normalize_claim_record(claim)
+                    except (TypeError, ValueError) as error:
+                        errors.append(f"{item_id} invalid claim: {error}")
+    return errors
+
+
 def metadata_errors(item, root=None):
     errors = []
     lifecycle = item.get("lifecycle")
@@ -285,6 +312,9 @@ def capsule_errors(text, expected=None, strict=False):
 
 def validate_items(items, root=None, capsule_overrides=None):
     root = root or Path(".")
+    shape_errors = registry_shape_errors(items)
+    if shape_errors:
+        return shape_errors
     record_schema = schema(root)
     properties = record_schema["properties"]
     errors, ids, numbers = [], {}, {}
@@ -904,8 +934,192 @@ def observe_git(root):
     return head, branch, not status
 
 
-def activation_packet(item, execution_id, claims):
-    lines = ["# Work activation", "", f"- Item: `{item['id']}`", f"- Execution: `{execution_id}`", f"- Checkpoint: `{item.get('checkpointId')}`", "- State: `Building`", "- Claims:"]
+RAW_DIFF_HEADER = re.compile(rb"^:([0-7]{6}) ([0-7]{6}) ([0-9a-f]{40}) ([0-9a-f]{40}) ([A-Z])$")
+IMMUTABLE_ACTIVATION_FIELDS = ("id", "baseline", "branch", "checkpointId", "checkpointPath",
+                               "contractRevision", "dependencies", "owner", "track")
+
+
+def git_bytes(root, command):
+    try:
+        result = subprocess.run(["git", *command], cwd=root, capture_output=True, check=False)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ValueError(f"activation Git observation failed: {error}")
+    if result.returncode != 0 or not isinstance(result.stdout, bytes):
+        raise ValueError("activation Git observation failed")
+    return result.stdout
+
+
+def authoritative_activation_record(root, baseline, head, item_id):
+    path = f"docs/project/work-items/{item_id}.json"
+    baseline_tree = git_bytes(root, ["ls-tree", "-z", baseline, "--", path])
+    def read(commit):
+        try:
+            value = json.loads(git_bytes(root, ["show", f"{commit}:{path}"]).decode("utf-8", "strict"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError(f"activation record is malformed: {error}")
+        return value if isinstance(value, dict) else None
+    baseline_value = None
+    if baseline_tree:
+        expected_tree = re.compile(rb"^[0-7]{6} blob [0-9a-f]{40}\t" + re.escape(path.encode("utf-8")) + rb"\0$")
+        if not expected_tree.fullmatch(baseline_tree):
+            raise ValueError("activation record baseline entry is malformed")
+        baseline_value = read(baseline)
+        if baseline_value and baseline_value.get("lifecycle") == "Ready":
+            return baseline_value
+    raw = git_bytes(root, ["log", "--reverse", "--format=%H%x00", "--name-status", "-z", baseline + ".." + head, "--", path])
+    if not raw or not raw.endswith(b"\0"):
+        raise ValueError("activation record history is malformed")
+    tokens = [token for token in raw.split(b"\0") if token]
+    additions = []
+    events = []
+    current = None
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        index += 1
+        for line in token.splitlines():
+            line = line.strip(b"\r\n")
+            if not line:
+                continue
+            if re.fullmatch(rb"[0-9a-f]{40}", line):
+                current = line.decode("ascii")
+                continue
+            if current is None:
+                raise ValueError("activation record history is malformed")
+            if b"\t" in line:
+                status, changed = line.split(b"\t", 1)
+            elif line in {b"A", b"M"} and index < len(tokens):
+                status, changed = line, tokens[index]
+                index += 1
+            else:
+                raise ValueError("activation record history is malformed")
+            try:
+                changed_text = changed.decode("utf-8", "strict")
+            except UnicodeDecodeError as error:
+                raise ValueError(f"activation record history encoding is malformed: {error}")
+            if changed_text != path:
+                raise ValueError("activation record history contains an unexpected path")
+            if status not in {b"A", b"M"}:
+                raise ValueError("activation record history contains delete, rename, or copy")
+            events.append((current, status))
+            if status == b"A":
+                additions.append(current)
+    if not baseline_tree and (len(additions) != 1 or len(set(additions)) != 1):
+        raise ValueError("activation record history is absent or ambiguous")
+    authority = None
+    for commit, _ in events:
+        value = read(commit)
+        if value and value.get("lifecycle") == "Ready":
+            if authority is not None:
+                raise ValueError("activation record has ambiguous Ready authority")
+            authority = value
+    if authority is None:
+        raise ValueError("activation record has no Ready authority")
+    return authority
+
+
+def parse_activation_diff(raw, baseline, head, item_id, checkpoint, copied_oids=()):
+    if not isinstance(raw, bytes):
+        raise ValueError("activation diff output is not bytes")
+    if not raw:
+        if baseline == head:
+            return []
+        raise ValueError("activation diff is empty")
+    if not raw.endswith(b"\0"):
+        raise ValueError("activation diff is truncated")
+    fields = raw[:-1].split(b"\0")
+    allowed_record = f"docs/project/work-items/{item_id}.json"
+    allowed = []
+    added_oids = set()
+    index = 0
+    while index < len(fields):
+        header = fields[index]
+        index += 1
+        match = RAW_DIFF_HEADER.fullmatch(header)
+        if not match:
+            raise ValueError(f"malformed activation diff record: {header!r}")
+        old_mode, new_mode, old_oid, new_oid, status = match.groups()
+        zeros = b"0" * 40
+        valid = ((status == b"A" and old_mode == b"000000" and old_oid == zeros and new_mode == b"100644" and new_oid != zeros) or
+                 (status == b"M" and old_mode == new_mode == b"100644" and old_oid != zeros and new_oid != zeros and old_oid != new_oid))
+        if not valid or index >= len(fields):
+            raise ValueError("activation diff contains a forbidden change")
+        try:
+            path = fields[index].decode("utf-8", "strict")
+        except UnicodeDecodeError as error:
+            raise ValueError(f"malformed activation diff encoding: {error}")
+        index += 1
+        if (not path or "\\" in path or path.startswith("/") or "//" in path or
+                any(part in {"", ".", ".."} for part in path.split("/"))):
+            raise ValueError("malformed activation diff path")
+        if path != allowed_record and not path.startswith(checkpoint + "/"):
+            raise ValueError("activation diff contains an outside path")
+        if status == b"A" and new_oid in copied_oids and path != allowed_record:
+            raise ValueError(f"activation diff contains a copy: {path}")
+        if status == b"A":
+            if new_oid in added_oids:
+                raise ValueError("activation diff contains duplicate added content")
+            added_oids.add(new_oid)
+        allowed.append(path)
+    return sorted(set(allowed))
+
+
+def observe_activation_history(root, baseline, head, item):
+    """Verify and enumerate the narrowly permitted real-Git planning delta."""
+    if (not isinstance(item, dict) or not isinstance(item.get("id"), str) or not ID.fullmatch(item["id"]) or
+            not isinstance(item.get("checkpointPath"), str) or not isinstance(baseline, str) or not isinstance(head, str)):
+        raise ValueError("invalid activation planning identity")
+    try:
+        checkpoint = normalize_repository_path(item["checkpointPath"])
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"invalid activation checkpoint path: {error}")
+    if (checkpoint != item["checkpointPath"] or not checkpoint.startswith("docs/work/") or
+            checkpoint.rstrip("/").split("/")[-1] != item.get("checkpointId")):
+        raise ValueError("invalid activation checkpoint path")
+    if not (root / ".git").exists():
+        if baseline == head:
+            return True, []
+        raise ValueError("descendant baseline requires a Git checkout")
+    if not SHA.fullmatch(baseline) or not SHA.fullmatch(head):
+        raise ValueError("invalid activation baseline or HEAD")
+    try:
+        exists = subprocess.run(["git", "cat-file", "-e", f"{baseline}^{{commit}}"], cwd=root,
+                                capture_output=True, check=False)
+        if exists.returncode != 0:
+            raise ValueError("activation baseline object is unavailable")
+        ancestry = subprocess.run(["git", "merge-base", "--is-ancestor", baseline, head], cwd=root,
+                                  capture_output=True, check=False)
+        if ancestry.returncode != 0:
+            raise ValueError("activation baseline is not an ancestor")
+        authoritative = authoritative_activation_record(root, baseline, head, item["id"])
+        if authoritative != item:
+            raise ValueError("activation record differs from Ready authority")
+        if (not isinstance(authoritative.get("id"), str) or not ID.fullmatch(authoritative["id"]) or
+                not isinstance(authoritative.get("baseline"), str) or not SHA.fullmatch(authoritative["baseline"]) or
+                not isinstance(authoritative.get("branch"), str) or
+                not isinstance(authoritative.get("checkpointId"), str) or not ID.fullmatch(authoritative["checkpointId"]) or
+                not isinstance(authoritative.get("checkpointPath"), str)):
+            raise ValueError("activation Ready authority identity is malformed")
+        auth_checkpoint = normalize_repository_path(authoritative["checkpointPath"])
+        if (auth_checkpoint != authoritative["checkpointPath"] or not auth_checkpoint.startswith("docs/work/") or
+                auth_checkpoint.rstrip("/").split("/")[-1] != authoritative["checkpointId"]):
+            raise ValueError("activation Ready authority checkpoint is invalid")
+        result = subprocess.run(["git", "diff", "--raw", "-z", "--abbrev=40", "--no-ext-diff", "--no-renames", baseline, head, "--"],
+                                cwd=root, capture_output=True, check=False)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ValueError(f"activation history observation failed: {error}")
+    if result.returncode != 0:
+        raise ValueError("activation history observation failed")
+    baseline_tree = git_bytes(root, ["ls-tree", "-r", "-z", baseline])
+    copied_oids = {match.group(1) for match in re.finditer(rb"\bblob ([0-9a-f]{40})\t", baseline_tree)}
+    return True, parse_activation_diff(result.stdout, baseline, head, authoritative["id"], authoritative["checkpointPath"], copied_oids)
+
+
+def activation_packet(item, execution_id, claims, baseline, head, changes):
+    lines = ["# Work activation", "", f"- Item: `{item['id']}`", f"- Execution: `{execution_id}`", f"- Checkpoint: `{item.get('checkpointId')}`", "- State: `Building`", f"- Baseline: `{baseline}`", f"- Observed HEAD: `{head}`", "- Baseline ancestry: `verified`", "- Allowed planning changes:"]
+    lines.extend(f"  - {path}" for path in changes)
+    lines.append("")
+    lines.append("- Claims:")
     lines.extend(f"  - `{claim['kind']}: {claim['value']}`" for claim in claims)
     return "\n".join(lines) + "\n"
 
@@ -913,6 +1127,10 @@ def activation_packet(item, execution_id, claims):
 @filesystem_operation
 def activate(root, args):
     items = load(root)
+    shape_errors = registry_shape_errors(items)
+    if shape_errors:
+        print("\n".join(shape_errors), file=sys.stderr)
+        return 1
     candidate = copy.deepcopy(items)
     item = next((value for value in candidate if value.get("id") == args.id), None)
     expected, branch = observed_activation(args)
@@ -920,6 +1138,12 @@ def activate(root, args):
     clean = args.clean
     errors = []
     git_checkout = (root / ".git").exists()
+    planning_changes = []
+    ancestry_verified = False
+    if expected is not None and (not isinstance(expected, str) or not SHA.fullmatch(expected)):
+        errors.append("invalid activation baseline")
+    if current_head is not None and (not isinstance(current_head, str) or not SHA.fullmatch(current_head)):
+        errors.append("invalid observed HEAD")
     if git_checkout or current_head is None or branch is None or (not args.clean and not args.dirty):
         try:
             observed_head, observed_branch, observed_clean = observe_git(root)
@@ -936,15 +1160,31 @@ def activate(root, args):
             clean = observed_clean
         except ValueError as error:
             errors.append(str(error))
+    if not errors and item and current_head and expected:
+        try:
+            ancestry_verified, planning_changes = observe_activation_history(root, expected, current_head, item)
+        except ValueError as error:
+            errors.append(str(error))
     if not item:
         errors.append("unknown item")
     elif item.get("lifecycle") != "Ready":
         errors.append("item is not eligible for activation")
-    if item and any(next((dependency for dependency in candidate if dependency.get("id") == dep), {}).get("lifecycle") != "Closed" for dep in item.get("dependencies", [])):
-        errors.append("dependency not closed")
+    if item and (not isinstance(item.get("checkpointId"), str) or not ID.fullmatch(item["checkpointId"]) or
+                 not isinstance(item.get("checkpointPath"), str) or
+                 item["checkpointPath"].rstrip("/").split("/")[-1] != item.get("checkpointId")):
+        errors.append("invalid checkpoint identity")
+    if item:
+        dependencies = item.get("dependencies")
+        if not isinstance(dependencies, list) or any(not isinstance(dependency, str) or not ID.fullmatch(dependency) for dependency in dependencies):
+            errors.append("invalid dependencies")
+        elif any(next((dependency for dependency in candidate if dependency.get("id") == dep), {}).get("lifecycle") != "Closed" for dep in dependencies):
+            errors.append("dependency not closed")
     if item and expected != item.get("baseline"):
         errors.append("baseline identity mismatch")
-    if current_head != expected:
+    if (not isinstance(expected, str) or not SHA.fullmatch(expected) or
+            (item and (not isinstance(item.get("baseline"), str) or not SHA.fullmatch(item["baseline"])) )):
+        errors.append("invalid activation baseline")
+    if current_head != expected and not ancestry_verified:
         errors.append("current HEAD is stale")
     if item and branch != item.get("branch"):
         errors.append("branch identity mismatch")
@@ -989,7 +1229,7 @@ def activate(root, args):
     if validation_errors:
         print("\n".join(validation_errors), file=sys.stderr)
         return 1
-    packet = activation_packet(item, args.execution_id, claims)
+    packet = activation_packet(item, args.execution_id, claims, expected, current_head, planning_changes)
     if args.dry_run:
         print(packet, end="")
         return 0
