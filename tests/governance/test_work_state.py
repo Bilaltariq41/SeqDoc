@@ -296,7 +296,14 @@ class WorkStateTests(unittest.TestCase):
             else:
                 argv.extend([flag, str(value)])
         output = io.StringIO()
-        with patch("sys.argv", argv), contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+        observation = contextlib.nullcontext()
+        if command == "activate" and not (root / ".git").exists() and not (root / ".git-unusable").exists():
+            observation = contextlib.ExitStack()
+            observation.enter_context(patch("tools.governance.work_state.observe_git",
+                                             return_value=(options.get("current_head", "a" * 40), options.get("current_branch", "feature/a"), True)))
+            observation.enter_context(patch("tools.governance.work_state.observe_activation_history",
+                                             return_value=(options.get("current_head", "a" * 40) == options.get("expected_baseline", "a" * 40), [])))
+        with observation, patch("sys.argv", argv), contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
             try:
                 code = ws.main()
             except SystemExit as exc:
@@ -311,6 +318,276 @@ class WorkStateTests(unittest.TestCase):
                  "worktree_id": f"worktree-{ordinal}"}
         facts.update(options)
         return self.operation(root, "activate", **facts)
+
+    def real_git_activation_fixture(self):
+        root = Path(tempfile.mkdtemp(dir=self.d))
+        (root / "docs/project/work-items").mkdir(parents=True)
+        (root / "docs/work/checkpoints/A").mkdir(parents=True)
+        shutil.copy(ROOT / "docs/project/work-state.schema.json", root / "docs/project/work-state.schema.json")
+        (root / "README.md").write_text("baseline\n", encoding="utf-8")
+        capsule = """# checkpoint
+
+## State
+
+`NotStarted`
+
+## Objective
+
+A real repository activation objective.
+
+## Target paths
+
+- `tests/governance/test_work_state.py`
+
+## Non-goals
+
+- Product behavior.
+
+## Risks
+
+- Git ancestry and path admission.
+
+## Existing coverage
+
+- Real disposable Git repository.
+
+## Test budget
+
+- Adversarial governance claims.
+
+## Focused verification
+
+`python -B -m unittest tests.governance.test_work_state`
+
+## Final gate
+
+`python -B -m unittest tests.governance.test_work_state`
+
+## Review boundary
+
+A latest-head non-author peer reviews the candidate.
+
+## Acceptance proof
+
+The operation is observable.
+"""
+        (root / "docs/work/checkpoints/A/checkpoint.md").write_text(capsule, encoding="utf-8")
+        (root / "docs/work/checkpoints/A/notes.txt").write_text("checkpoint note\n", encoding="utf-8")
+        (root / "docs/project/execution.json").write_text(ws.execution_payload([]), encoding="utf-8")
+        def git(*args):
+            env = __import__("os").environ.copy()
+            env.update(GIT_AUTHOR_DATE="2000-01-01T00:00:00Z", GIT_COMMITTER_DATE="2000-01-01T00:00:00Z")
+            return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, check=True, env=env).stdout.strip()
+        git("init", "-q")
+        git("config", "user.email", "tests@example.invalid")
+        git("config", "user.name", "governance tests")
+        git("add", ".")
+        git("commit", "-q", "-m", "baseline")
+        baseline = git("rev-parse", "HEAD")
+        item = {"schemaVersion": 1, "id": "A", "kind": "synthetic", "title": "real activation A canonical record",
+                "owner": "tester", "track": "governance", "lifecycle": "Ready",
+                "dependencies": [], "contractRevision": "contract-v1", "baseline": baseline,
+                "checkpointId": "A", "checkpointPath": "docs/work/checkpoints/A",
+                "branch": "feature/a", "pr": None, "selectedForExecution": False,
+                "nextAction": None, "expectedGithubState": "NONE", "lifecycleLabel": "ready",
+                "statusReason": "real Git fixture"}
+        (root / "docs/project/work-items/A.json").write_text(ws.dump(item), encoding="utf-8")
+        git("add", "docs/project/work-items/A.json")
+        git("commit", "-q", "-m", "canonical record")
+        git("checkout", "-q", "-b", "feature/a")
+        return root, baseline, git
+
+    def test_real_descendant_admits_only_canonical_record_and_checkpoint_changes(self):
+        root, baseline, git = self.real_git_activation_fixture()
+        capsule = root / "docs/work/checkpoints/A/checkpoint.md"
+        capsule.write_text(capsule.read_text(encoding="utf-8").replace("- Real disposable Git repository.", "- Real disposable Git repository.\n- Descendant checkpoint."), encoding="utf-8")
+        git("add", "docs/work/checkpoints/A/checkpoint.md")
+        git("commit", "-q", "-m", "checkpoint descendant")
+        head = git("rev-parse", "HEAD")
+        code, packet = self.operation(root, "activate", id="A", execution_id="real-execution",
+                                      expected_baseline=baseline, current_branch="feature/a",
+                                      worktree_id="worktree-a", clean=True, claim=["src/a"])
+        self.assertEqual(code, 0, packet)
+        expected_block = (f"- Baseline: `{baseline}`\n- Observed HEAD: `{head}`\n"
+                          "- Baseline ancestry: `verified`\n- Allowed planning changes:\n"
+                          "  - docs/project/work-items/A.json\n"
+                          "  - docs/work/checkpoints/A/checkpoint.md\n\n- Claims:")
+        self.assertIn(expected_block, packet)
+        self.assertNotIn("Frozen Baseline", packet)
+        self.assertNotIn("- Head:", packet)
+        self.assertNotIn("Changed paths", packet)
+        self.assertNotIn(str(root), packet)
+        stored = json.loads((root / "docs/project/work-items/A.json").read_text(encoding="utf-8"))
+        self.assertEqual(stored["lifecycle"], "Active")
+        other, other_baseline, other_git = self.real_git_activation_fixture()
+        other_capsule = other / "docs/work/checkpoints/A/checkpoint.md"
+        other_capsule.write_text(other_capsule.read_text(encoding="utf-8").replace("- Real disposable Git repository.", "- Real disposable Git repository.\n- Descendant checkpoint."), encoding="utf-8")
+        other_git("add", "docs/work/checkpoints/A/checkpoint.md")
+        other_git("commit", "-q", "-m", "checkpoint descendant")
+        other_head = other_git("rev-parse", "HEAD")
+        other_code, other_packet = self.operation(other, "activate", id="A", execution_id="real-execution",
+                                                  expected_baseline=other_baseline, current_branch="feature/a",
+                                                  worktree_id="worktree-a", clean=True, claim=["src/a"])
+        self.assertEqual(other_code, 0, other_packet)
+        self.assertEqual((baseline, head, packet), (other_baseline, other_head, other_packet))
+        external = Path(tempfile.mkdtemp(dir=self.d))
+        (external / "docs/project/work-items").mkdir(parents=True)
+        (external / "docs/work/quality/I100-B").mkdir(parents=True)
+        (external / "docs/work/quality/I100-A").mkdir(parents=True)
+        shutil.copy(ROOT / "docs/project/work-state.schema.json", external / "docs/project/work-state.schema.json")
+        shutil.copy(ROOT / "docs/project/work-items/GH-106.json", external / "docs/project/work-items/GH-106.json")
+        shutil.copy(ROOT / "docs/work/quality/I100-A/checkpoint.md", external / "docs/work/quality/I100-A/checkpoint.md")
+        shutil.copy(ROOT / "docs/project/execution.json", external / "docs/project/execution.json")
+        def external_git(*args):
+            env = __import__("os").environ.copy(); env.update(GIT_AUTHOR_DATE="2000-01-01T00:00:00Z", GIT_COMMITTER_DATE="2000-01-01T00:00:00Z")
+            return subprocess.run(["git", *args], cwd=external, capture_output=True, text=True, check=True, env=env).stdout.strip()
+        external_git("init", "-q"); external_git("config", "user.email", "tests@example.invalid"); external_git("config", "user.name", "governance tests")
+        external_git("add", "."); external_git("commit", "-q", "-m", "baseline")
+        planning_baseline = external_git("rev-parse", "HEAD")
+        shutil.copy(ROOT / "docs/work/quality/I100-B/checkpoint.md", external / "docs/work/quality/I100-B/checkpoint.md")
+        shutil.copy(ROOT / "docs/work/quality/I100-B/ledger.md", external / "docs/work/quality/I100-B/ledger.md")
+        record = json.loads((ROOT / "docs/project/work-items/GH-107.json").read_text(encoding="utf-8")); record["baseline"] = planning_baseline
+        (external / "docs/project/work-items/GH-107.json").write_text(ws.dump(record), encoding="utf-8")
+        external_git("checkout", "-q", "-b", record["branch"]); external_git("add", "."); external_git("commit", "-q", "-m", "planning files")
+        before = {path.relative_to(external).as_posix(): path.read_bytes() for path in external.rglob("*") if path.is_file()}
+        command = [__import__("sys").executable, str(ROOT / "tools/governance/work_state.py"), "activate", "--root", str(external),
+                   "--id", "GH-107", "--execution-id", "external-tool", "--expected-baseline", planning_baseline,
+                   "--current-branch", record["branch"], "--worktree-id", "worktree-107", "--clean", "--claim", "src/gh107", "--dry-run"]
+        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+        packet = completed.stdout + completed.stderr
+        self.assertEqual(completed.returncode, 0, packet)
+        self.assertIn("  - docs/project/work-items/GH-107.json\n  - docs/work/quality/I100-B/checkpoint.md\n  - docs/work/quality/I100-B/ledger.md", packet)
+        self.assertNotIn(str(external), packet)
+        self.assertEqual(before, {path.relative_to(external).as_posix(): path.read_bytes() for path in external.rglob("*") if path.is_file()})
+
+    def test_real_git_admission_rejects_unrelated_paths_and_non_descendants(self):
+        mutations = ("product", "test", "build", "governance", "outside", "rename", "copy", "delete", "mode", "submodule")
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                root, baseline, git = self.real_git_activation_fixture()
+                if mutation == "product": path, content = "src/Product.cs", "product\n"
+                elif mutation == "test": path, content = "tests/Adversarial.cs", "test\n"
+                elif mutation == "build": path, content = "bin/output.dll", "build\n"
+                elif mutation == "governance": path, content = "docs/project/unrelated.md", "governance\n"
+                elif mutation == "outside": path, content = "outside.txt", "outside\n"
+                if mutation in {"product", "test", "build", "governance", "outside"}:
+                    target = root / path; target.parent.mkdir(parents=True, exist_ok=True); target.write_text(content, encoding="utf-8")
+                    git("add", path); git("commit", "-q", "-m", mutation)
+                elif mutation == "rename": git("-c", "status.renames=true", "mv", "docs/work/checkpoints/A/notes.txt", "docs/work/checkpoints/A/renamed-notes.txt"); git("commit", "-q", "-m", mutation)
+                elif mutation == "copy": shutil.copy(root / "docs/work/checkpoints/A/notes.txt", root / "docs/work/checkpoints/A/copied-notes.txt"); git("add", "docs/work/checkpoints/A/copied-notes.txt"); git("commit", "-q", "-m", mutation)
+                elif mutation == "delete": git("rm", "-q", "docs/work/checkpoints/A/notes.txt"); git("commit", "-q", "-m", mutation)
+                elif mutation == "mode": git("update-index", "--chmod=+x", "docs/work/checkpoints/A/notes.txt"); git("commit", "-q", "-m", mutation)
+                else:
+                    git("update-index", "--add", "--cacheinfo", "160000," + baseline + ",docs/work/checkpoints/A/nested-submodule")
+                    git("commit", "-q", "-m", mutation)
+                code, output = self.operation(root, "activate", id="A", execution_id="e", expected_baseline=baseline,
+                                              current_branch="feature/a", worktree_id="worktree-a", clean=True, claim=["src/a"])
+                self.assertNotEqual(code, 0, output)
+        root, baseline, git = self.real_git_activation_fixture()
+        redirected = root / "docs/work/quality/I100-B"
+        redirected.mkdir(parents=True)
+        shutil.copy(root / "docs/work/checkpoints/A/checkpoint.md", redirected / "checkpoint.md")
+        record_path = root / "docs/project/work-items/A.json"
+        record = json.loads(record_path.read_text(encoding="utf-8")); record.update(checkpointId="I100-B", checkpointPath="docs/work/quality/I100-B")
+        record_path.write_text(ws.dump(record), encoding="utf-8")
+        git("add", "."); git("commit", "-q", "-m", "redirected checkpoint")
+        self.assertNotEqual(self.operation(root, "activate", id="A", execution_id="e", expected_baseline=baseline,
+                                           current_branch="feature/a", worktree_id="worktree-a", clean=True, claim=["src/a"])[0], 0)
+        malformed = (("dependencies", None, "dependencies must be an array"),
+                     ("dependencies", {}, "dependencies must be an array"),
+                     ("dependencies", "GH-1", "dependencies must be an array"),
+                     ("dependencies", ["bad id"], "dependencies contain an invalid ID"),
+                     ("claims", None, "claims must be an array"),
+                     ("claims", {}, "claims must be an array"),
+                     ("claims", [{"kind": "bad", "value": "x"}], "invalid claim"))
+        for field, value, evidence in malformed:
+            with self.subTest(field=field, value=value):
+                malformed_root, malformed_baseline, _ = self.real_git_activation_fixture()
+                record = {"id": "B", "lifecycle": "Draft", "dependencies": [], "claims": []}
+                record[field] = value
+                (malformed_root / "docs/project/work-items/B.json").write_text(ws.dump(record), encoding="utf-8")
+                code, output = self.operation(malformed_root, "activate", id="A", execution_id="e", expected_baseline=malformed_baseline,
+                                               current_branch="feature/a", worktree_id="worktree-a", clean=True, claim=["src/a"])
+                self.assertNotEqual(code, 0)
+                self.assertIn(evidence, output)
+        malformed_root, malformed_baseline, _ = self.real_git_activation_fixture()
+        (malformed_root / "docs/project/work-items/B.json").write_text("[]\n", encoding="utf-8")
+        code, output = self.operation(malformed_root, "activate", id="A", execution_id="e", expected_baseline=malformed_baseline,
+                                      current_branch="feature/a", worktree_id="worktree-a", clean=True, claim=["src/a"])
+        self.assertNotEqual(code, 0)
+        self.assertIn("registry record", output)
+        root, baseline, git = self.real_git_activation_fixture()
+        git("checkout", "-q", "--orphan", "unrelated")
+        (root / "orphan.txt").write_text("orphan\n", encoding="utf-8"); git("add", "."); git("commit", "-q", "-m", "orphan")
+        self.assertNotEqual(self.operation(root, "activate", id="A", execution_id="e", expected_baseline=baseline,
+                                            current_branch="unrelated", worktree_id="worktree-a", clean=True, claim=["src/a"])[0], 0)
+        self.assertNotEqual(self.operation(root, "activate", id="A", execution_id="e", expected_baseline="f" * 40,
+                                            current_branch="unrelated", worktree_id="worktree-a", clean=True, claim=["src/a"])[0], 0)
+        root, baseline, git = self.real_git_activation_fixture()
+        (root / "src/Product.cs").parent.mkdir(parents=True, exist_ok=True)
+        (root / "src/Product.cs").write_text("outside history\n", encoding="utf-8")
+        git("add", "src/Product.cs"); git("commit", "-q", "-m", "outside product")
+        git("rm", "-q", "src/Product.cs"); git("commit", "-q", "-m", "revert outside product")
+        capsule = root / "docs/work/checkpoints/A/checkpoint.md"
+        capsule.write_text(capsule.read_text(encoding="utf-8").replace("- Real disposable Git repository.", "- Real disposable Git repository.\n- Final planning change."), encoding="utf-8")
+        git("add", "docs/work/checkpoints/A/checkpoint.md"); git("commit", "-q", "-m", "allowed planning change")
+        before = {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+        code, output = self.operation(root, "activate", id="A", execution_id="e", expected_baseline=baseline,
+                                      current_branch="feature/a", worktree_id="worktree-a", clean=True, claim=["src/a"])
+        self.assertNotEqual(code, 0, output)
+        self.assertNotIn("Baseline ancestry: `verified`", output)
+        self.assertEqual(before, {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()})
+        root, baseline, git = self.real_git_activation_fixture()
+        git("checkout", "-q", "-b", "outside-parent")
+        (root / "tests/HiddenHistory.cs").parent.mkdir(parents=True, exist_ok=True)
+        (root / "tests/HiddenHistory.cs").write_text("outside parent\n", encoding="utf-8")
+        git("add", "tests/HiddenHistory.cs"); git("commit", "-q", "-m", "outside parent")
+        git("checkout", "-q", "feature/a")
+        git("merge", "--no-ff", "-s", "ours", "outside-parent", "-m", "ours merge")
+        capsule = root / "docs/work/checkpoints/A/checkpoint.md"
+        capsule.write_text(capsule.read_text(encoding="utf-8").replace("- Real disposable Git repository.", "- Real disposable Git repository.\n- Merge planning change."), encoding="utf-8")
+        git("add", "docs/work/checkpoints/A/checkpoint.md"); git("commit", "-q", "-m", "merge planning change")
+        before = {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+        code, output = self.operation(root, "activate", id="A", execution_id="e", expected_baseline=baseline,
+                                      current_branch="feature/a", worktree_id="worktree-a", clean=True, claim=["src/a"])
+        self.assertNotEqual(code, 0, output)
+        self.assertNotIn("Baseline ancestry: `verified`", output)
+        self.assertEqual(before, {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()})
+
+    def test_real_git_activation_fails_closed_for_entries_paths_dirty_observation_and_head(self):
+        for field, value in (("id", "B"), ("checkpointId", "../A"), ("checkpointPath", "../outside"), ("checkpointPath", "docs/work/checkpoints/A/checkpoint.md")):
+            with self.subTest(field=field, value=value):
+                root, baseline, git = self.real_git_activation_fixture()
+                path = root / "docs/project/work-items/A.json"; item = json.loads(path.read_text(encoding="utf-8")); item[field] = value; path.write_text(ws.dump(item), encoding="utf-8"); git("add", str(path.relative_to(root))); git("commit", "-q", "-m", "malformed")
+                self.assertNotEqual(self.operation(root, "activate", id="A", execution_id="e", expected_baseline=baseline, current_branch="feature/a", worktree_id="worktree-a", clean=True, claim=["src/a"])[0], 0)
+        root, baseline, git = self.real_git_activation_fixture()
+        (root / "README.md").write_text("dirty\n", encoding="utf-8")
+        self.assertNotEqual(self.operation(root, "activate", id="A", execution_id="e", expected_baseline=baseline, current_branch="feature/a", worktree_id="worktree-a", clean=True, claim=["src/a"])[0], 0)
+        root, baseline, git = self.real_git_activation_fixture()
+        with patch("tools.governance.work_state.observe_git", side_effect=ValueError("git observation unavailable")):
+            self.assertNotEqual(self.operation(root, "activate", id="A", execution_id="e", expected_baseline=baseline, current_branch="feature/a", worktree_id="worktree-a", clean=True, claim=["src/a"])[0], 0)
+        root, baseline, git = self.real_git_activation_fixture()
+        (root / ".git").rename(root / ".git-unusable")
+        before = {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+        code, output = self.operation(root, "activate", id="A", execution_id="e", expected_baseline=baseline,
+                                      current_head=baseline, current_branch="feature/a", worktree_id="worktree-a",
+                                      clean=True, claim=["src/a"])
+        self.assertNotEqual(code, 0, output)
+        self.assertNotIn("Baseline ancestry: `verified`", output)
+        self.assertEqual(before, {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()})
+        root, baseline, git = self.real_git_activation_fixture()
+        self.assertNotEqual(self.operation(root, "activate", id="A", execution_id="e", expected_baseline=baseline, current_head="0" * 40, current_branch="feature/a", worktree_id="worktree-a", clean=True, claim=["src/a"])[0], 0)
+        root, baseline, git = self.real_git_activation_fixture()
+        with patch("tools.governance.work_state.observe_activation_history", side_effect=ValueError("activation history observation failed")):
+            code, output = self.operation(root, "activate", id="A", execution_id="e", expected_baseline=baseline,
+                                          current_branch="feature/a", worktree_id="worktree-a", clean=True, claim=["src/a"])
+        self.assertNotEqual(code, 0)
+        self.assertIn("activation history observation failed", output)
+        zeros = "0" * 40
+        valid_a = (b":000000 100644 " + zeros.encode() + b" " + b"1" * 40 + b" A\0docs/project/work-items/A.json\0")
+        with self.assertRaises(ValueError): ws.parse_activation_diff(valid_a[:-1], baseline, baseline + "1", "A", "docs/work/checkpoints/A")
+        malformed_oid = b":000000 100644 " + (b"z" * 40) + b" " + b"1" * 40 + b" A\0docs/project/work-items/A.json\0"
+        with self.assertRaises(ValueError): ws.parse_activation_diff(malformed_oid, baseline, baseline + "1", "A", "docs/work/checkpoints/A")
 
     def test_prepare_scaffold_rejects_unknown_or_incomplete_fields_then_reports_complete_capsule(self):
         root = self.synthetic()
@@ -497,7 +774,7 @@ class WorkStateTests(unittest.TestCase):
         self.assertEqual(sum("\n0\n" in ("\n" + output) for output in results), 1, results)
         compatible = self.synthetic(second=True)
         compatible_ready = Path(tempfile.mkdtemp(dir=self.d)); compatible_start = compatible_ready / "start"
-        activation = "import pathlib,sys,time; import tools.governance.work_state as w; r=pathlib.Path(sys.argv[1]); item=sys.argv[2]; ready=pathlib.Path(sys.argv[3]); pathlib.Path(ready).write_text('ready'); s=pathlib.Path(sys.argv[4]);\nwhile not s.exists(): time.sleep(.005)\nargv=['work_state.py','activate','--root',str(r),'--id',item,'--execution-id','proc-'+item.lower(),'--expected-baseline','a'*40,'--current-head','a'*40,'--current-branch','feature/'+item.lower(),'--worktree-id','worktree-'+item.lower(),'--clean','--claim','src/'+item.lower()]; argv += ['--select'] if item == 'A' else []; sys.argv=argv; print(w.main())"
+        activation = "import pathlib,sys,time; import tools.governance.work_state as w; r=pathlib.Path(sys.argv[1]); item=sys.argv[2]; w.observe_git=lambda root: ('a'*40,'feature/'+item.lower(),True); w.observe_activation_history=lambda *args: (True,[]); ready=pathlib.Path(sys.argv[3]); pathlib.Path(ready).write_text('ready'); s=pathlib.Path(sys.argv[4]);\nwhile not s.exists(): time.sleep(.005)\nargv=['work_state.py','activate','--root',str(r),'--id',item,'--execution-id','proc-'+item.lower(),'--expected-baseline','a'*40,'--current-head','a'*40,'--current-branch','feature/'+item.lower(),'--worktree-id','worktree-'+item.lower(),'--clean','--claim','src/'+item.lower()]; argv += ['--select'] if item == 'A' else []; sys.argv=argv; print(w.main())"
         workers = [subprocess.Popen([__import__("sys").executable, "-B", "-c", activation, str(compatible), item, str(compatible_ready / f"ready-{item}"), str(compatible_start)], cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for item in ("A", "B")]
         deadline = __import__("time").time() + 10
         while not all((compatible_ready / f"ready-{item}").exists() for item in ("A", "B")) and __import__("time").time() < deadline: __import__("time").sleep(.01)
