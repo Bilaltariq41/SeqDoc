@@ -961,6 +961,14 @@ Independent rereview returned PASS with no findings. It accepted F10 Fixed, F11 
 fresh-worktree governance receipts, the primary-worktree 76/76 receipt, the exact bounded scope, and preservation of all
 76 ProcessOwnership claims. Publish the repair, require green GitHub `validate`, and request Ahmad's exact-head rereview.
 
+Ahmad's exact-head rereview at
+https://github.com/Bilaltariq41/SeqDoc/pull/109#issuecomment-5753171524 technically accepted F10, F11, the complete
+candidate, 76/76 with zero skipped, and green GitHub `validate`, but returned `BLOCK` on
+`1007d6faaebd2270dee9dbd2452be9059d1a202b` for I100-A-F12: canonical `nextAction` still requested publication and CI
+that were already complete. F12 is Fixed by the required lifecycle round trip and exact Ahmad handoff. F10/F11 code and
+tests are unchanged from `1007d6f`; their focused and CI receipts remain accepted. This correction changes only canonical
+handoff/evidence text and claims neither approval nor a final gate.
+
 ### Owner platform-floor amendment
 
 Abood selected the evidence-backed repair: require Windows 10 / Windows Server 2016 x64 or newer and use

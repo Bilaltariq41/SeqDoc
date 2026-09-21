@@ -17,7 +17,7 @@
   ],
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Commit and push the bounded F10/F11 repair, require green GitHub validate at the new exact head, then request Ahmad's authorized non-independent PASS or BLOCK. Do not run the final gate before PASS.",
+  "nextAction": "Obtain Ahmad's owner-authorized non-independent PASS or BLOCK on the latest published head. Do not run the final gate before PASS.",
   "schemaVersion": 2,
   "sourceId": "GH-106"
 }

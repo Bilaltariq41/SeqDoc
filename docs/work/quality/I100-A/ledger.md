@@ -764,3 +764,9 @@ Verified-by-framework-contract pending independent rereview and required CI.
 Independent rereview verdict: PASS, no findings. F10 and F11 dispositions, verification anomalies, exact bounded scope,
 and all 76 prior ProcessOwnership claims are accepted. Required GitHub `validate` and Ahmad exact-head rereview remain;
 the final gate is still prohibited.
+
+Ahmad rereview receipt https://github.com/Bilaltariq41/SeqDoc/pull/109#issuecomment-5753171524: technical acceptance of
+F10/F11, the complete candidate, 76/76 with zero skipped, and green `validate`; governance-only `BLOCK` on exact head
+`1007d6faaebd2270dee9dbd2452be9059d1a202b` for I100-A-F12 stale canonical handoff. F12 is Fixed through the required
+`ReviewRequired` → `ResolvingFindings` → `ReviewRequired` transition and exact Ahmad review next action. Product source,
+tests, build files, and F10/F11 technical evidence are unchanged. No approval or final gate is claimed.

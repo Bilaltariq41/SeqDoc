@@ -10,14 +10,14 @@
   "kind": "github-issue",
   "lifecycle": "ReviewRequired",
   "lifecycleLabel": "review-required",
-  "nextAction": "Commit and push the bounded F10/F11 repair, require green GitHub validate at the new exact head, then request Ahmad's authorized non-independent PASS or BLOCK. Do not run the final gate before PASS.",
+  "nextAction": "Obtain Ahmad's owner-authorized non-independent PASS or BLOCK on the latest published head. Do not run the final gate before PASS.",
   "number": 106,
   "owner": "abood",
   "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/109",
   "schemaVersion": 1,
   "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/106",
-  "statusReason": "F10 is Fixed and F11 is Verified-by-framework-contract. Ordered verification passed targeted governance 1/1, full governance 35/35 with 2 skipped, ProcessOwnership 76/76 with zero skipped, 51-item validation, projection check, and diff check; independent rereview passed with no findings.",
+  "statusReason": "I100-A-F12 is Fixed. F10/F11 code and tests remain unchanged from 1007d6f; focused 76/76 and green validate receipts remain accepted. This correction changes only canonical handoff and evidence text.",
   "title": "[Testing] Prove Windows contained-process ownership primitive",
   "track": "quality"
 }
