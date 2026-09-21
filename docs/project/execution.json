@@ -17,7 +17,7 @@
   ],
   "generatedBy": "tools/governance/work_state.py",
   "mode": "active",
-  "nextAction": "Obtain Ahmad's owner-authorized non-independent PASS or BLOCK on the latest published head. Do not run the final gate before PASS.",
+  "nextAction": "Do not rerun the final gate. Record and publish its exact non-passing receipt, then satisfy remaining GitHub merge conditions before merge and transactional closeout.",
   "schemaVersion": 2,
   "sourceId": "GH-106"
 }

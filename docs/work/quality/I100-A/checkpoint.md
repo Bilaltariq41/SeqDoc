@@ -2,7 +2,7 @@
 
 ## State
 
-`ReviewRequired`
+`Verifying`
 
 ## Authority and frozen state
 
@@ -968,6 +968,23 @@ candidate, 76/76 with zero skipped, and green GitHub `validate`, but returned `B
 that were already complete. F12 is Fixed by the required lifecycle round trip and exact Ahmad handoff. F10/F11 code and
 tests are unchanged from `1007d6f`; their focused and CI receipts remain accepted. This correction changes only canonical
 handoff/evidence text and claims neither approval nor a final gate.
+
+Ahmad posted the owner-authorized non-independent exact-head technical `PASS` for
+`ca46f66b8e14cdb02fc76bbfb6e0ade9bfc139e1` at
+https://github.com/Bilaltariq41/SeqDoc/pull/109#issuecomment-5757805303. He accepted the complete candidate, F10/F11/F12,
+76/76 with zero skipped, clean local receipts, green required `validate`, and no remaining findings. This receipt permits
+`Verifying` and the checkpoint's single declared final gate; it does not itself claim that gate or authorize premature
+merge.
+
+The single declared final gate was executed with the pinned SDK 10.0.302 after two pre-execution tooling boundaries: the
+Gate Runner's evidence wrapper was denied before command execution, and the first bare `dotnet` invocation found only
+SDK 9.0.314 on `PATH` and failed global.json resolution before test loading. With `PATH` corrected to the already-used
+isolated 10.0.302 SDK, the unchanged declared command executed once. Literal result: **Failed 33, Passed 90, Skipped 0,
+Total 123, Duration 3m04s**. This is not characterized as passed. No `ProcessOwnershipTests` entry failed; accepted focused
+evidence remains 76/76. The failures are confined to structurally unrelated EF6/GetMeaning/FourFlows fixture reference
+resolution, DotNet-eShop package/reference resolution, and unavailable/drifted ServiceClient/OutboundHttp external lanes.
+Post-gate review found no I100-A regression and accepted `PASS-TO-MERGE-CONDITIONS`, with residual risk that the broader
+Acceptance lane remains unhealthy. The gate is complete and must not be rerun; assess remaining GitHub merge conditions.
 
 ### Owner platform-floor amendment
 

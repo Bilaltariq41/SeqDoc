@@ -770,3 +770,20 @@ F10/F11, the complete candidate, 76/76 with zero skipped, and green `validate`; 
 `1007d6faaebd2270dee9dbd2452be9059d1a202b` for I100-A-F12 stale canonical handoff. F12 is Fixed through the required
 `ReviewRequired` → `ResolvingFindings` → `ReviewRequired` transition and exact Ahmad review next action. Product source,
 tests, build files, and F10/F11 technical evidence are unchanged. No approval or final gate is claimed.
+
+Ahmad exact-head technical review receipt:
+https://github.com/Bilaltariq41/SeqDoc/pull/109#issuecomment-5757805303 — owner-authorized non-independent `PASS` on
+`ca46f66b8e14cdb02fc76bbfb6e0ade9bfc139e1`, with F10/F11/F12 accepted and no findings remaining. GH-106 may enter
+`Verifying` and run the single declared final gate; merge remains prohibited until its exact receipt and all remaining
+GitHub conditions are satisfied.
+
+Final-gate receipt after Ahmad PASS: the Gate Runner wrapper was denied before execution, then a bare `dotnet` preflight
+found only SDK 9.0.314 and failed pinned-10.0.302 resolution before loading tests. After correcting only `PATH` to the
+existing isolated SDK, the exact declared command
+`dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release` executed once. Literal result:
+**Failed 33, Passed 90, Skipped 0, Total 123, Duration 3m04s**. It is not a passing gate. No ProcessOwnership test failed;
+the accepted focused lane remains 76/76. Failure classes: EF6 fixture missing framework/predefined references;
+GetMeaning/FourFlows fixtures missing `Microsoft.EntityFrameworkCore`/`DbContext`/`DbSet`; DotNet-eShop external corpus
+missing MediatR/EF/package references; ServiceClient and OutboundHttp external lanes unavailable or drifted. None of
+those paths is modified by I100-A. Post-gate review verdict: `PASS-TO-MERGE-CONDITIONS`, no I100-A regression finding.
+Residual risk: broader Acceptance fixture/external dependency resolution remains unhealthy. Do not rerun the gate.
