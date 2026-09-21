@@ -1,0 +1,23 @@
+{
+  "baseline": "ab6e3e1cf16213ee5346506b16949fa32c4ddfa4",
+  "branch": "integration/issue-106-process-ownership-ahmad",
+  "checkpointId": "I100-A",
+  "checkpointPath": "docs/work/quality/I100-A",
+  "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/pull/109#issuecomment-5709738022",
+  "dependencies": [],
+  "expectedGithubState": "OPEN",
+  "id": "GH-106",
+  "kind": "github-issue",
+  "lifecycle": "Verifying",
+  "lifecycleLabel": "verifying",
+  "nextAction": "Do not rerun the final gate. Record and publish its exact non-passing receipt, then satisfy remaining GitHub merge conditions before merge and transactional closeout.",
+  "number": 106,
+  "owner": "abood",
+  "pr": "https://github.com/Bilaltariq41/SeqDoc/pull/109",
+  "schemaVersion": 1,
+  "selectedForExecution": true,
+  "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/106",
+  "statusReason": "Final gate is complete with 33 unrelated failures, 90 passes, zero skipped, and no ProcessOwnership regression; post-gate review permits merge-condition assessment.",
+  "title": "[Testing] Prove Windows contained-process ownership primitive",
+  "track": "quality"
+}
