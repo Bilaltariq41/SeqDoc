@@ -2,7 +2,7 @@
 
 ## State
 
-`Verifying`
+`Closed`
 
 ## Authority and frozen state
 
@@ -994,3 +994,15 @@ assigns the listed jobs to the child during process creation, that its payload m
 list is destroyed, and that support begins with Windows 10 / Windows Server 2016. The attribute list therefore owns
 both the exact three-handle inheritance payload and the one-job payload through `CreateProcessW`; post-creation
 `AssignProcessToJobObject` is no longer the admission mechanism.
+
+## Exceptional post-merge durable closeout
+
+State: `Closed`.
+
+Ordinary closeout could not encode `OWNER-BYPASS v1`, the exact focused and final receipts, the PR merge and Issue
+#106 closure, or contributor attribution. Owner-authorized exceptional closeout records PR #109 head
+`182ea35533482cebdfc070b368f3a7fa247a1735` merged as `227d2e9f8b49ce6a414795b16bb0408ed213012a`, AhmadKrarha's
+attribution, Qhatahet's exact-head formal approval, focused `76/76`, and the final gate's literal non-passing receipt
+of `33 failed/90 passed/0 skipped` with zero ProcessOwnership failures. Qais's repeated `22 failed/101 passed` receipts
+also had zero ProcessOwnership failures; accepted unrelated signatures and required CI were recorded. The final gate
+was not rerun.

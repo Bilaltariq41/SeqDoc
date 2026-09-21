@@ -1,23 +1,11 @@
 {
-  "activeCheckpointId": "I100-A",
-  "activeCheckpointPath": "docs/work/quality/I100-A",
+  "activeCheckpointId": null,
+  "activeCheckpointPath": null,
   "activePlanPath": null,
-  "executions": [
-    {
-      "branch": "integration/issue-106-process-ownership-ahmad",
-      "checkpointId": "I100-A",
-      "checkpointPath": "docs/work/quality/I100-A",
-      "claims": [],
-      "dependencies": [],
-      "executionId": "GH-106:I100-A",
-      "owner": "abood",
-      "sourceId": "GH-106",
-      "worktreeId": null
-    }
-  ],
+  "executions": [],
   "generatedBy": "tools/governance/work_state.py",
-  "mode": "active",
-  "nextAction": "Do not rerun the final gate. Record and publish its exact non-passing receipt, then satisfy remaining GitHub merge conditions before merge and transactional closeout.",
+  "mode": "idle",
+  "nextAction": "No work item is selected.",
   "schemaVersion": 2,
-  "sourceId": "GH-106"
+  "sourceId": null
 }
