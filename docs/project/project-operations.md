@@ -35,6 +35,18 @@ registries must supply equivalent observed evidence. `prepare --scaffold` derive
 when identity is absent, or accepts a relative `--checkpoint-id`/`--checkpoint-path`; it rejects absolute, parent, and
 root-level capsule paths and writes the record and placeholder atomically.
 
+Activation always observes the real Git checkout directly. A clean descendant is admitted only after the baseline object
+and ancestry are verified, every commit in `baseline..HEAD` is enumerated, and every commit is compared with every parent.
+Each parent transition must contain only added or modified regular, non-executable files at the exact canonical item record
+or below its validated checkpoint directory. Renames, copies, deletions, mode/type changes, gitlinks, malformed paths,
+and command or decoding failures are rejected, including changes visible only through a non-first merge parent. The
+receipt records the frozen baseline, observed `HEAD`, verified ancestry, and sorted union of allowed planning changes;
+supplied checkout facts are expectations, not observations.
+When a clean planning descendant is accepted, an operator may invoke the newer accepted tool with `--root` against that
+checkout; admission always observes and mutates that root. Use the exact invocation `python tools/governance/work_state.py
+activate --root <clean-planning-descendant> ...`; accepted PR or merge provenance identifies the tool revision outside
+the activation packet, because the governance repair commit itself may be outside the permitted planning delta.
+
 ## Readiness, claims, and activation
 
 `prepare --id ITEM` validates one complete canonical capsule: objective, targets, non-goals, risks, existing coverage,
