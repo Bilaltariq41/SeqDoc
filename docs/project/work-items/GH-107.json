@@ -3,23 +3,59 @@
   "branch": "testing/issue-107-fixture-cleanup",
   "checkpointId": "I100-B",
   "checkpointPath": "docs/work/quality/I100-B",
+  "claims": [
+    {
+      "kind": "exclusive",
+      "value": "acceptance-git-worktree-metadata"
+    },
+    {
+      "kind": "fixture",
+      "value": "fixturecleanup"
+    },
+    {
+      "kind": "governance-tool",
+      "value": "tools/governance/work_state.py"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/work-items/gh-107.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/work/quality/i100-b"
+    },
+    {
+      "kind": "path",
+      "value": "tests/seqdoc.acceptancetests/fixturecleanup.cs"
+    },
+    {
+      "kind": "path",
+      "value": "tests/seqdoc.acceptancetests/fixturecleanuptests.cs"
+    },
+    {
+      "kind": "path",
+      "value": "tests/seqdoc.acceptancetests/seqdoc.acceptancetests.csproj"
+    }
+  ],
   "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5696378047",
   "dependencies": [
     "GH-106"
   ],
+  "executionId": "GH-107:I100-B",
   "expectedGithubState": "OPEN",
   "id": "GH-107",
   "kind": "github-issue",
-  "lifecycle": "Ready",
-  "lifecycleLabel": "ready",
+  "lifecycle": "Active",
+  "lifecycleLabel": "active",
   "nextAction": "Activate transactionally only when implementation is intentionally selected; do not select or activate now.",
   "number": 107,
   "owner": "ahmad",
   "pr": null,
   "schemaVersion": 1,
-  "selectedForExecution": false,
+  "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/107",
   "statusReason": "Second readiness audit pass: GH-106 is closed and accepted; F1/F4/F5 are resolved in the frozen I100-B contract. GH-107 remains Ready, unselected, and idle at baseline dfc28b0b227e544bda937229dd11e31619bb0f25.",
   "title": "[Testing] Prove fixture-owned worktree cleanup and lock attribution",
-  "track": "quality"
+  "track": "quality",
+  "worktreeId": "seqdoc-i107-implementation"
 }
