@@ -787,3 +787,15 @@ GetMeaning/FourFlows fixtures missing `Microsoft.EntityFrameworkCore`/`DbContext
 missing MediatR/EF/package references; ServiceClient and OutboundHttp external lanes unavailable or drifted. None of
 those paths is modified by I100-A. Post-gate review verdict: `PASS-TO-MERGE-CONDITIONS`, no I100-A regression finding.
 Residual risk: broader Acceptance fixture/external dependency resolution remains unhealthy. Do not rerun the gate.
+
+## Exceptional post-merge durable closeout
+
+Immutable receipt: PR #109 exact head `182ea35533482cebdfc070b368f3a7fa247a1735` merged as
+`227d2e9f8b49ce6a414795b16bb0408ed213012a`; owner-bypass `issuecomment-5752397694`; Qhatahet exact-head formal
+approval; focused `76/76` with zero ProcessOwnership failures; final gate executed once with `33 failed/90 passed/0
+skipped` and zero ProcessOwnership failures; Qais repeated `22 failed/101 passed` twice with zero ProcessOwnership
+failures; accepted unrelated signatures; required CI green; attribution `AhmadKrarha`; findings resolved. The final
+gate was not rerun.
+
+The main-push sync failure at `227d2e9` was expected: the synchronizer saw stale `OPEN` state while GitHub already
+reported `CLOSED`. This exceptional closeout repairs the durable canonical record and projection.
