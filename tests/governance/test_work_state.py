@@ -468,7 +468,14 @@ The operation is observable.
         completed = subprocess.run(command, capture_output=True, text=True, check=False)
         packet = completed.stdout + completed.stderr
         self.assertEqual(completed.returncode, 0, packet)
-        self.assertIn("  - docs/project/work-items/GH-107.json\n  - docs/work/quality/I100-B/checkpoint.md\n  - docs/work/quality/I100-B/ledger.md", packet)
+        allowed_block = packet.split("- Allowed planning changes:\n", 1)[1].split("\n- Claims:", 1)[0]
+        allowed_paths = [line[4:] if line.startswith("  - ") else line
+                         for line in allowed_block.splitlines() if line]
+        self.assertEqual(allowed_paths, [
+            "docs/project/work-items/GH-107.json",
+            "docs/work/quality/I100-B/checkpoint.md",
+            "docs/work/quality/I100-B/ledger.md",
+        ])
         self.assertNotIn(str(external), packet)
         self.assertEqual(before, {path.relative_to(external).as_posix(): path.read_bytes() for path in external.rglob("*") if path.is_file()})
 
