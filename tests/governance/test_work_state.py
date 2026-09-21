@@ -444,9 +444,21 @@ The operation is observable.
         external_git("init", "-q"); external_git("config", "user.email", "tests@example.invalid"); external_git("config", "user.name", "governance tests")
         external_git("add", "."); external_git("commit", "-q", "-m", "baseline")
         planning_baseline = external_git("rev-parse", "HEAD")
-        shutil.copy(ROOT / "docs/work/quality/I100-B/checkpoint.md", external / "docs/work/quality/I100-B/checkpoint.md")
+        checkpoint = ROOT / "docs/work/quality/I100-B/checkpoint.md"
+        checkpoint_text = checkpoint.read_text(encoding="utf-8").splitlines(keepends=True)
+        state_index = next(i for i, line in enumerate(checkpoint_text) if line.strip() == "## State")
+        value_index = next(i for i in range(state_index + 1, len(checkpoint_text)) if checkpoint_text[i].strip())
+        checkpoint_text[value_index] = "`NotStarted`\n"
+        (external / "docs/work/quality/I100-B/checkpoint.md").write_text("".join(checkpoint_text), encoding="utf-8")
         shutil.copy(ROOT / "docs/work/quality/I100-B/ledger.md", external / "docs/work/quality/I100-B/ledger.md")
-        record = json.loads((ROOT / "docs/project/work-items/GH-107.json").read_text(encoding="utf-8")); record["baseline"] = planning_baseline
+        source_record = json.loads((ROOT / "docs/project/work-items/GH-107.json").read_text(encoding="utf-8"))
+        record = dict(source_record)
+        record.update(lifecycle="Ready", lifecycleLabel="ready", selectedForExecution=False,
+                      baseline=planning_baseline, pr=None, claims=[], nextAction="await disposable activation",
+                      statusReason="disposable pre-activation fixture")
+        for field in ("executionId", "worktreeId", "review", "reviewEpoch", "reviewPeer", "reviewFindings"):
+            record.pop(field, None)
+        self.assertEqual(record["lifecycle"], "Ready")
         (external / "docs/project/work-items/GH-107.json").write_text(ws.dump(record), encoding="utf-8")
         external_git("checkout", "-q", "-b", record["branch"]); external_git("add", "."); external_git("commit", "-q", "-m", "planning files")
         before = {path.relative_to(external).as_posix(): path.read_bytes() for path in external.rglob("*") if path.is_file()}
