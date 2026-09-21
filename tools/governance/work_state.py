@@ -924,21 +924,26 @@ def authenticated_reviews(repository, number, peer, head):
 
 
 def observe_git(root):
-    """Obtain trusted checkout facts when the CLI caller did not supply them."""
+    """Obtain and validate all trusted checkout facts from Git."""
     try:
-        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
-        branch = subprocess.run(["git", "branch", "--show-current"], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
-        status = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True, check=True).stdout
-    except (OSError, subprocess.SubprocessError) as error:
+        def output(command):
+            result = subprocess.run(["git", *command], cwd=root, capture_output=True, check=True)
+            if not isinstance(result.stdout, bytes):
+                raise ValueError("Git observation output is not bytes")
+            return result.stdout.decode("utf-8", "strict")
+        head = output(["rev-parse", "HEAD"]).strip()
+        branch = output(["branch", "--show-current"]).strip()
+        status = output(["status", "--porcelain"])
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as error:
         raise ValueError(f"git observation unavailable: {error}")
+    if not SHA.fullmatch(head):
+        raise ValueError("malformed observed HEAD")
+    if not branch or "\n" in branch or "\r" in branch:
+        raise ValueError("detached or malformed observed branch")
     return head, branch, not status
 
 
 RAW_DIFF_HEADER = re.compile(rb"^:([0-7]{6}) ([0-7]{6}) ([0-9a-f]{40}) ([0-9a-f]{40}) ([A-Z])$")
-IMMUTABLE_ACTIVATION_FIELDS = ("id", "baseline", "branch", "checkpointId", "checkpointPath",
-                               "contractRevision", "dependencies", "owner", "track")
-
-
 def git_bytes(root, command):
     try:
         result = subprocess.run(["git", *command], cwd=root, capture_output=True, check=False)
@@ -1022,9 +1027,7 @@ def parse_activation_diff(raw, baseline, head, item_id, checkpoint, copied_oids=
     if not isinstance(raw, bytes):
         raise ValueError("activation diff output is not bytes")
     if not raw:
-        if baseline == head:
-            return []
-        raise ValueError("activation diff is empty")
+        return []
     if not raw.endswith(b"\0"):
         raise ValueError("activation diff is truncated")
     fields = raw[:-1].split(b"\0")
@@ -1077,9 +1080,7 @@ def observe_activation_history(root, baseline, head, item):
             checkpoint.rstrip("/").split("/")[-1] != item.get("checkpointId")):
         raise ValueError("invalid activation checkpoint path")
     if not (root / ".git").exists():
-        if baseline == head:
-            return True, []
-        raise ValueError("descendant baseline requires a Git checkout")
+        raise ValueError("Git checkout is unavailable")
     if not SHA.fullmatch(baseline) or not SHA.fullmatch(head):
         raise ValueError("invalid activation baseline or HEAD")
     try:
@@ -1104,15 +1105,22 @@ def observe_activation_history(root, baseline, head, item):
         if (auth_checkpoint != authoritative["checkpointPath"] or not auth_checkpoint.startswith("docs/work/") or
                 auth_checkpoint.rstrip("/").split("/")[-1] != authoritative["checkpointId"]):
             raise ValueError("activation Ready authority checkpoint is invalid")
-        result = subprocess.run(["git", "diff", "--raw", "-z", "--abbrev=40", "--no-ext-diff", "--no-renames", baseline, head, "--"],
-                                cwd=root, capture_output=True, check=False)
     except (OSError, subprocess.SubprocessError) as error:
         raise ValueError(f"activation history observation failed: {error}")
-    if result.returncode != 0:
-        raise ValueError("activation history observation failed")
-    baseline_tree = git_bytes(root, ["ls-tree", "-r", "-z", baseline])
-    copied_oids = {match.group(1) for match in re.finditer(rb"\bblob ([0-9a-f]{40})\t", baseline_tree)}
-    return True, parse_activation_diff(result.stdout, baseline, head, authoritative["id"], authoritative["checkpointPath"], copied_oids)
+    commits = git_bytes(root, ["rev-list", "--reverse", "--topo-order", baseline + ".." + head]).splitlines()
+    if any(not re.fullmatch(rb"[0-9a-f]{40}", commit) for commit in commits) or len(set(commits)) != len(commits):
+        raise ValueError("activation commit range is malformed")
+    paths = set()
+    for commit in commits:
+        parent_record = git_bytes(root, ["rev-list", "--parents", "-n", "1", commit.decode("ascii")]).split()
+        if len(parent_record) < 2 or parent_record[0] != commit or any(not re.fullmatch(rb"[0-9a-f]{40}", parent) for parent in parent_record):
+            raise ValueError("activation commit parents are malformed")
+        for parent in parent_record[1:]:
+            parent_tree = git_bytes(root, ["ls-tree", "-r", "-z", parent.decode("ascii")])
+            copied_oids = {match.group(1) for match in re.finditer(rb"\bblob ([0-9a-f]{40})\t", parent_tree)}
+            raw = git_bytes(root, ["diff", "--raw", "-z", "--abbrev=40", "--no-ext-diff", "--no-renames", parent.decode("ascii"), commit.decode("ascii"), "--"])
+            paths.update(parse_activation_diff(raw, baseline, head, authoritative["id"], authoritative["checkpointPath"], copied_oids))
+    return True, sorted(paths)
 
 
 def activation_packet(item, execution_id, claims, baseline, head, changes):
@@ -1126,6 +1134,11 @@ def activation_packet(item, execution_id, claims, baseline, head, changes):
 
 @filesystem_operation
 def activate(root, args):
+    try:
+        observed_head, observed_branch, observed_clean = observe_git(root)
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 1
     items = load(root)
     shape_errors = registry_shape_errors(items)
     if shape_errors:
@@ -1134,32 +1147,22 @@ def activate(root, args):
     candidate = copy.deepcopy(items)
     item = next((value for value in candidate if value.get("id") == args.id), None)
     expected, branch = observed_activation(args)
-    current_head = args.current_head
-    clean = args.clean
+    current_head = observed_head
+    clean = observed_clean
     errors = []
-    git_checkout = (root / ".git").exists()
     planning_changes = []
     ancestry_verified = False
     if expected is not None and (not isinstance(expected, str) or not SHA.fullmatch(expected)):
         errors.append("invalid activation baseline")
     if current_head is not None and (not isinstance(current_head, str) or not SHA.fullmatch(current_head)):
         errors.append("invalid observed HEAD")
-    if git_checkout or current_head is None or branch is None or (not args.clean and not args.dirty):
-        try:
-            observed_head, observed_branch, observed_clean = observe_git(root)
-            if git_checkout and args.current_head and args.current_head != observed_head:
-                errors = ["observed HEAD differs from supplied expectation"]
-            elif git_checkout and (args.current_branch or args.branch) and (args.current_branch or args.branch) != observed_branch:
-                errors = ["observed branch differs from supplied expectation"]
-            elif git_checkout and args.clean and not observed_clean:
-                errors = ["observed worktree is dirty"]
-            else:
-                errors = []
-            current_head = current_head or observed_head
-            branch = branch or observed_branch
-            clean = observed_clean
-        except ValueError as error:
-            errors.append(str(error))
+    if args.current_head and args.current_head != observed_head:
+        errors.append("observed HEAD differs from supplied expectation")
+    if (args.current_branch or args.branch) and (args.current_branch or args.branch) != observed_branch:
+        errors.append("observed branch differs from supplied expectation")
+    if args.clean and not observed_clean:
+        errors.append("observed worktree is dirty")
+    branch = observed_branch
     if not errors and item and current_head and expected:
         try:
             ancestry_verified, planning_changes = observe_activation_history(root, expected, current_head, item)

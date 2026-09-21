@@ -296,7 +296,14 @@ class WorkStateTests(unittest.TestCase):
             else:
                 argv.extend([flag, str(value)])
         output = io.StringIO()
-        with patch("sys.argv", argv), contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+        observation = contextlib.nullcontext()
+        if command == "activate" and not (root / ".git").exists() and not (root / ".git-unusable").exists():
+            observation = contextlib.ExitStack()
+            observation.enter_context(patch("tools.governance.work_state.observe_git",
+                                             return_value=(options.get("current_head", "a" * 40), options.get("current_branch", "feature/a"), True)))
+            observation.enter_context(patch("tools.governance.work_state.observe_activation_history",
+                                             return_value=(options.get("current_head", "a" * 40) == options.get("expected_baseline", "a" * 40), [])))
+        with observation, patch("sys.argv", argv), contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
             try:
                 code = ws.main()
             except SystemExit as exc:
@@ -516,6 +523,36 @@ The operation is observable.
                                             current_branch="unrelated", worktree_id="worktree-a", clean=True, claim=["src/a"])[0], 0)
         self.assertNotEqual(self.operation(root, "activate", id="A", execution_id="e", expected_baseline="f" * 40,
                                             current_branch="unrelated", worktree_id="worktree-a", clean=True, claim=["src/a"])[0], 0)
+        root, baseline, git = self.real_git_activation_fixture()
+        (root / "src/Product.cs").parent.mkdir(parents=True, exist_ok=True)
+        (root / "src/Product.cs").write_text("outside history\n", encoding="utf-8")
+        git("add", "src/Product.cs"); git("commit", "-q", "-m", "outside product")
+        git("rm", "-q", "src/Product.cs"); git("commit", "-q", "-m", "revert outside product")
+        capsule = root / "docs/work/checkpoints/A/checkpoint.md"
+        capsule.write_text(capsule.read_text(encoding="utf-8").replace("- Real disposable Git repository.", "- Real disposable Git repository.\n- Final planning change."), encoding="utf-8")
+        git("add", "docs/work/checkpoints/A/checkpoint.md"); git("commit", "-q", "-m", "allowed planning change")
+        before = {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+        code, output = self.operation(root, "activate", id="A", execution_id="e", expected_baseline=baseline,
+                                      current_branch="feature/a", worktree_id="worktree-a", clean=True, claim=["src/a"])
+        self.assertNotEqual(code, 0, output)
+        self.assertNotIn("Baseline ancestry: `verified`", output)
+        self.assertEqual(before, {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()})
+        root, baseline, git = self.real_git_activation_fixture()
+        git("checkout", "-q", "-b", "outside-parent")
+        (root / "tests/HiddenHistory.cs").parent.mkdir(parents=True, exist_ok=True)
+        (root / "tests/HiddenHistory.cs").write_text("outside parent\n", encoding="utf-8")
+        git("add", "tests/HiddenHistory.cs"); git("commit", "-q", "-m", "outside parent")
+        git("checkout", "-q", "feature/a")
+        git("merge", "--no-ff", "-s", "ours", "outside-parent", "-m", "ours merge")
+        capsule = root / "docs/work/checkpoints/A/checkpoint.md"
+        capsule.write_text(capsule.read_text(encoding="utf-8").replace("- Real disposable Git repository.", "- Real disposable Git repository.\n- Merge planning change."), encoding="utf-8")
+        git("add", "docs/work/checkpoints/A/checkpoint.md"); git("commit", "-q", "-m", "merge planning change")
+        before = {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+        code, output = self.operation(root, "activate", id="A", execution_id="e", expected_baseline=baseline,
+                                      current_branch="feature/a", worktree_id="worktree-a", clean=True, claim=["src/a"])
+        self.assertNotEqual(code, 0, output)
+        self.assertNotIn("Baseline ancestry: `verified`", output)
+        self.assertEqual(before, {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()})
 
     def test_real_git_activation_fails_closed_for_entries_paths_dirty_observation_and_head(self):
         for field, value in (("id", "B"), ("checkpointId", "../A"), ("checkpointPath", "../outside"), ("checkpointPath", "docs/work/checkpoints/A/checkpoint.md")):
@@ -529,6 +566,15 @@ The operation is observable.
         root, baseline, git = self.real_git_activation_fixture()
         with patch("tools.governance.work_state.observe_git", side_effect=ValueError("git observation unavailable")):
             self.assertNotEqual(self.operation(root, "activate", id="A", execution_id="e", expected_baseline=baseline, current_branch="feature/a", worktree_id="worktree-a", clean=True, claim=["src/a"])[0], 0)
+        root, baseline, git = self.real_git_activation_fixture()
+        (root / ".git").rename(root / ".git-unusable")
+        before = {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+        code, output = self.operation(root, "activate", id="A", execution_id="e", expected_baseline=baseline,
+                                      current_head=baseline, current_branch="feature/a", worktree_id="worktree-a",
+                                      clean=True, claim=["src/a"])
+        self.assertNotEqual(code, 0, output)
+        self.assertNotIn("Baseline ancestry: `verified`", output)
+        self.assertEqual(before, {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()})
         root, baseline, git = self.real_git_activation_fixture()
         self.assertNotEqual(self.operation(root, "activate", id="A", execution_id="e", expected_baseline=baseline, current_head="0" * 40, current_branch="feature/a", worktree_id="worktree-a", clean=True, claim=["src/a"])[0], 0)
         root, baseline, git = self.real_git_activation_fixture()
@@ -728,7 +774,7 @@ The operation is observable.
         self.assertEqual(sum("\n0\n" in ("\n" + output) for output in results), 1, results)
         compatible = self.synthetic(second=True)
         compatible_ready = Path(tempfile.mkdtemp(dir=self.d)); compatible_start = compatible_ready / "start"
-        activation = "import pathlib,sys,time; import tools.governance.work_state as w; r=pathlib.Path(sys.argv[1]); item=sys.argv[2]; ready=pathlib.Path(sys.argv[3]); pathlib.Path(ready).write_text('ready'); s=pathlib.Path(sys.argv[4]);\nwhile not s.exists(): time.sleep(.005)\nargv=['work_state.py','activate','--root',str(r),'--id',item,'--execution-id','proc-'+item.lower(),'--expected-baseline','a'*40,'--current-head','a'*40,'--current-branch','feature/'+item.lower(),'--worktree-id','worktree-'+item.lower(),'--clean','--claim','src/'+item.lower()]; argv += ['--select'] if item == 'A' else []; sys.argv=argv; print(w.main())"
+        activation = "import pathlib,sys,time; import tools.governance.work_state as w; r=pathlib.Path(sys.argv[1]); item=sys.argv[2]; w.observe_git=lambda root: ('a'*40,'feature/'+item.lower(),True); w.observe_activation_history=lambda *args: (True,[]); ready=pathlib.Path(sys.argv[3]); pathlib.Path(ready).write_text('ready'); s=pathlib.Path(sys.argv[4]);\nwhile not s.exists(): time.sleep(.005)\nargv=['work_state.py','activate','--root',str(r),'--id',item,'--execution-id','proc-'+item.lower(),'--expected-baseline','a'*40,'--current-head','a'*40,'--current-branch','feature/'+item.lower(),'--worktree-id','worktree-'+item.lower(),'--clean','--claim','src/'+item.lower()]; argv += ['--select'] if item == 'A' else []; sys.argv=argv; print(w.main())"
         workers = [subprocess.Popen([__import__("sys").executable, "-B", "-c", activation, str(compatible), item, str(compatible_ready / f"ready-{item}"), str(compatible_start)], cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for item in ("A", "B")]
         deadline = __import__("time").time() + 10
         while not all((compatible_ready / f"ready-{item}").exists() for item in ("A", "B")) and __import__("time").time() < deadline: __import__("time").sleep(.01)
