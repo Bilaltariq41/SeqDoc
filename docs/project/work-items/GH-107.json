@@ -1,0 +1,25 @@
+{
+  "baseline": "dfc28b0b227e544bda937229dd11e31619bb0f25",
+  "branch": "testing/issue-107-fixture-cleanup",
+  "checkpointId": "I100-B",
+  "checkpointPath": "docs/work/quality/I100-B",
+  "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5696378047",
+  "dependencies": [
+    "GH-106"
+  ],
+  "expectedGithubState": "OPEN",
+  "id": "GH-107",
+  "kind": "github-issue",
+  "lifecycle": "Ready",
+  "lifecycleLabel": "ready",
+  "nextAction": "Activate transactionally only when implementation is intentionally selected; do not select or activate now.",
+  "number": 107,
+  "owner": "ahmad",
+  "pr": null,
+  "schemaVersion": 1,
+  "selectedForExecution": false,
+  "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/107",
+  "statusReason": "Second readiness audit pass: GH-106 is closed and accepted; F1/F4/F5 are resolved in the frozen I100-B contract. GH-107 remains Ready, unselected, and idle at baseline dfc28b0b227e544bda937229dd11e31619bb0f25.",
+  "title": "[Testing] Prove fixture-owned worktree cleanup and lock attribution",
+  "track": "quality"
+}
