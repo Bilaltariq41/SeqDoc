@@ -1,0 +1,23 @@
+{
+  "baseline": "18aae5e0364c0b13549bd0c5333ba48f8116bc9a",
+  "branch": "testing/issue-116-fixture-authority-git",
+  "checkpointId": "I100-B1",
+  "checkpointPath": "docs/work/quality/I100-B1",
+  "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/116",
+  "dependencies": ["GH-106"],
+  "expectedGithubState": "OPEN",
+  "id": "GH-116",
+  "kind": "github-issue",
+  "lifecycle": "Blocked",
+  "lifecycleLabel": "blocked",
+  "nextAction": "Obtain both Qhatahet and Abood-essa peer receipts against one immutable candidate SHA, then amend the checkpoint before promotion.",
+  "number": 116,
+  "owner": "ahmad",
+  "pr": null,
+  "schemaVersion": 1,
+  "selectedForExecution": false,
+  "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/116",
+  "statusReason": "Planning-only split of GH-107; blocked on Abood findings F1-F5 and the required dual non-author peer decision. No owner authorization or execution selection is claimed.",
+  "title": "[Testing] Establish fixture authority and exact Git cleanup",
+  "track": "quality"
+}

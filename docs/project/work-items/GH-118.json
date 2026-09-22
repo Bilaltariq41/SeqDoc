@@ -1,0 +1,23 @@
+{
+  "baseline": "18aae5e0364c0b13549bd0c5333ba48f8116bc9a",
+  "branch": "testing/issue-118-fixture-integration",
+  "checkpointId": "I100-B3",
+  "checkpointPath": "docs/work/quality/I100-B3",
+  "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/118",
+  "dependencies": ["GH-117"],
+  "expectedGithubState": "OPEN",
+  "id": "GH-118",
+  "kind": "github-issue",
+  "lifecycle": "Blocked",
+  "lifecycleLabel": "blocked",
+  "nextAction": "Remain blocked; amend baseline and dependency receipt to the exact accepted GH-117 merge/head before Ready.",
+  "number": 118,
+  "owner": "ahmad",
+  "pr": null,
+  "schemaVersion": 1,
+  "selectedForExecution": false,
+  "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/118",
+  "statusReason": "The baseline is explicitly provisional. Quarantine, live lock attribution, concurrency, and acceptance integration require the exact accepted GH-117 merge/head and handoff claims.",
+  "title": "[Testing] Prove fixture cleanup and lock attribution integration",
+  "track": "quality"
+}

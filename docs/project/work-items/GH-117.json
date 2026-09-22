@@ -1,0 +1,23 @@
+{
+  "baseline": "18aae5e0364c0b13549bd0c5333ba48f8116bc9a",
+  "branch": "testing/issue-117-fixture-process-rm",
+  "checkpointId": "I100-B2",
+  "checkpointPath": "docs/work/quality/I100-B2",
+  "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/117",
+  "dependencies": ["GH-116"],
+  "expectedGithubState": "OPEN",
+  "id": "GH-117",
+  "kind": "github-issue",
+  "lifecycle": "Blocked",
+  "lifecycleLabel": "blocked",
+  "nextAction": "Remain blocked; amend baseline and dependency receipt to the exact accepted GH-116 merge/head before Ready.",
+  "number": 117,
+  "owner": "ahmad",
+  "pr": null,
+  "schemaVersion": 1,
+  "selectedForExecution": false,
+  "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/117",
+  "statusReason": "The baseline is explicitly provisional. Process-family, deadline, retry, and Restart Manager work cannot begin until GH-116 is accepted and its immutable merge/head is recorded.",
+  "title": "[Testing] Bound fixture process cleanup and Restart Manager attribution",
+  "track": "quality"
+}

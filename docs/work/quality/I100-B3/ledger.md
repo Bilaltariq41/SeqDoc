@@ -1,0 +1,19 @@
+# I100-B3 planning decision ledger
+
+Planning-only. Issue [#118](https://github.com/Bilaltariq41/SeqDoc/issues/118) and its Abood findings, plus parent/reviewer context [#107 comment](https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5774557010) and [#116 findings](https://github.com/Bilaltariq41/SeqDoc/issues/116#issuecomment-5774337600), predate this package. No product/test command, activation, implementation, commit, or push occurred in package preparation.
+
+| Finding/risk | Planned disposition | Proof |
+|---|---|---|
+| F1 — split provenance ([#118](https://github.com/Bilaltariq41/SeqDoc/issues/118)) | Preserve the integration/quarantine child boundary and Abood decision provenance; no owner promotion is inferred. | Capsule authority |
+| F2 — immutable package ([#118](https://github.com/Bilaltariq41/SeqDoc/issues/118)) | Freeze this package at one SHA; both peers review that SHA, with no Ready now. | Package SHA receipt |
+| F3 — common-dir identity ([#118](https://github.com/Bilaltariq41/SeqDoc/issues/118)) | Inherit B1 exact common/admin FILE_ID and vector authority through B2; never weaken it for quarantine or concurrency. | Integration tests 1–3 |
+| F4 — final gate ([#118](https://github.com/Bilaltariq41/SeqDoc/issues/118)) | Require exact 86/0/0 affected command and the complete acceptance project command after review. | Final receipts |
+| F5 — authority/scope/review ([#118](https://github.com/Bilaltariq41/SeqDoc/issues/118)) | Keep two implementation paths, excluded csproj, exact activation claims, sequential predecessor handoff, Qhatahet route, and closeout receipts. | Capsule and review receipts |
+
+Sources: GH-118 body, GH-117/I100-B2, GH-107/I100-B, GH-106/I100-A, `collaboration-model.md` lines 57–60, `issue-readiness.md`, `testing-policy.md`, and `project-operations.md`.
+
+Frozen inherited Git vectors: `worktree add --detach <owned-absolute-path> <40-lowercase-revision>`; `rev-parse --git-common-dir`; `rev-parse --absolute-git-dir`; `status --porcelain=v1 -z --untracked-files=all`; `for-each-ref --format=%(refname)%00%(objectname)%00%(symref)%00 --sort=refname`; `config --local --null --list`; `worktree list --porcelain`; `worktree remove --force <owned-absolute-path>`. No command may manually delete the common admin directory or prune.
+
+F1 live proof is exact: invoke the rooted assembly-staged stub as `sleep-with-marker <owned-absolute-marker-path> 30000`, with marker under receipt-listed output. A bounded event/poll seam and injected monotonic deadline require exact marker bytes and marker ProcessId equal to public `ContainedProcess.ProcessId`; the stub does not hold the lock. The test host independently opens the exact receipt-listed target with `FileMode.Open`, `FileAccess.ReadWrite`, `FileShare.None`. After first direct-delete 32/33 and RM files registration, the observer signals a deterministic barrier; the host disposes the stream, then the barrier releases. No `Thread.Sleep`/`Task.Delay` synchronization; only injected production retry sleeper. Marker absence after forced termination and #106 family-zero proof are required. RM local diagnostics may identify testhost PID+start but never terminate it.
+
+Phase A receipts are split-only: both Qhatahet and Abood-essa review the same immutable planning SHA and post authenticated T2 dispositions; they authorize only split/spec/allowlists, not implementation review or a final gate. Phase B requires implementer self-review, Reviewer agent, dispositions, focused green, `ReviewRequired`, then one latest-head non-author human approval for the implementation SHA (B3 Qhatahet; replacement only by policy evidence), then the final gate. Phase B cannot amend Phase A. Before Ready, amend the exact accepted GH-117 merge/head and claims and rerun readiness audit; this is assigned issue readiness approval, not a new split decision absent scope/contract change.
