@@ -14,6 +14,20 @@ GH-106 is closed and accepted at PR head `182ea35533482cebdfc070b368f3a7fa247a17
 `227d2e9f8b49ce6a414795b16bb0408ed213012a`, and baseline `dfc28b0b227e544bda937229dd11e31619bb0f25`.
 This package is planning-only. It does not select or activate execution.
 
+## Same-issue amendment and clean-history boundary
+
+Issues #116, #117, and #118 are closed superseded planning history, not dependencies, authority, lifecycle records, or
+deliverables. The parent disposition is https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5775101734.
+There is one issue, one implementation branch `testing/issue-107-fixture-cleanup-v2`, one PR, and one outer checkpoint;
+B1/B2/B3 are internal build order only, with no child lifecycle, Ready state, merge, PR, or final gate. The same worker
+session should own the complete candidate when practical. The rejected candidate is preserved local-only and its old
+branch is never reused; no owner bypass is claimed.
+
+This replacement planning branch is clean-history: between baseline `18aae5e0364c0b13549bd0c5333ba48f8116bc9a` and
+the planning head, only `docs/project/work-items/GH-107.json`, `docs/work/quality/I100-B/checkpoint.md`, and
+`docs/work/quality/I100-B/ledger.md` may change. PR119 is superseded unmerged and is not activation ancestry. A reviewed
+descendant may be admitted only from this three-file planning change.
+
 ## Objective
 
 Prove Windows x64 acceptance-test fixture cleanup and lock attribution consuming #106 without redesign. The candidate
@@ -25,7 +39,6 @@ end-to-end result.
 
 - `tests/SeqDoc.AcceptanceTests/FixtureCleanup.cs`
 - `tests/SeqDoc.AcceptanceTests/FixtureCleanupTests.cs`
-- `tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj`
 - `docs/work/quality/I100-B/checkpoint.md`
 - `docs/work/quality/I100-B/ledger.md`
 - generated canonical work-item and execution state only, through `tools/governance/work_state.py`
@@ -151,6 +164,41 @@ with needed 1..64 allocates and sets count to capacity; each success requires co
 third `MORE_DATA` is unstable-list failure; no partial array is exposed on any failure. Every successful start ends with
 `RmEndSession`, whose result is recorded without erasing prior evidence. No `RmShutdown` declaration exists.
 
+B1 technical strengthening freezes rooted `GitExecutablePath` admission only from `%ProgramFiles%\Git\cmd\git.exe` or
+`%ProgramFiles(x86)%\Git\cmd\git.exe`; zero or multiple distinct FILE_ID candidates fail. Capture and revalidate
+source-root and common-dir canonical non-reparse chains, volume serials, and 128-bit FILE_ID_INFO before every
+mutation. The sentinel is exact UTF-8 without BOM, one JSON line plus LF, ordered `schemaVersion`, `token`, `revision`,
+`commonDirectoryDigest`, `roles`; token is 32 random bytes base64url without padding, revision is lowercase 40-hex,
+digest is local `sha256:` plus 64 lowercase hex, and roles are sorted `cache`, `output`, `quarantine`, `worktree` with
+ASCII relative values. Stable evidence contains only schema/stage/role/attempt/classification/count/certainty;
+token, paths, PID/FILETIME, wall time, checkout data, and credentials remain local. Paths are drive-local, full,
+separator-trimmed except roots, OrdinalIgnoreCase with boundary, and reject device/UNC/alternate streams, reparse,
+replacement, escape, and cross-volume forms. Git vectors are exact and have no separator fallback:
+`worktree add --detach <owned-absolute-path> <40-lowercase-revision>`, `rev-parse --git-common-dir`,
+`rev-parse --absolute-git-dir`, `status --porcelain=v1 -z --untracked-files=all`,
+`for-each-ref --format=%(refname)%00%(objectname)%00%(symref)%00 --sort=refname`, `config --local --null --list`,
+`worktree list --porcelain`, and `worktree remove --force <owned-absolute-path>`. Parse registration strictly;
+specific admin is a same-volume direct child of `<common>\worktrees`; never manually delete admin or prune.
+
+B2 technical strengthening freezes retry starts from retry-start `[0,50,150,350,750,1150,1550,1950]` ms, delays
+`[50,100,200,400,400,400,400]` ms, maximum eight attempts, nested monotonic 2-second deletion budget and remaining
+outer deadline. Revalidate full B1 authority before every attempt and after every awaited delay; stop on success,
+nonretryable failure, invalid authority, or deadline. A logical target is one exact receipt-listed regular file;
+direct violations are IOException HResult low word 32/33, while directory-only failures are not attribution. RM is
+`Rstrtmgr.dll`, Unicode, ExactSpelling=true, Winapi, SetLastError=false; constants 0/234, key 32+1, app 255+1,
+service 63+1; exact Start/Register/GetList/End signatures use files LPArray and zero IntPtr apps/services. At most
+three GetList calls permit one growth, cap 64, and fail malformed/non-growing/third MORE_DATA with no partial result;
+End evidence is mandatory and no RmShutdown exists.
+
+B3 technical strengthening freezes quarantine as atomic same-volume move to absent direct sibling
+`seqdoc-fixture-<token>.quarantine`, collision refusal, and same in-memory-owner eventual cleanup only. The existing
+assembly-staged rooted stub vector is exactly `sleep-with-marker <owned-marker-path> 30000`, marker under receipt-listed
+output; bounded event/poll evidence parses marker bytes to public `ContainedProcess.ProcessId`, and marker is absent
+after forced termination. The test host independently opens the exact receipt-listed lock target with
+`FileMode.Open`, `FileAccess.ReadWrite`, `FileShare.None`; an observer/barrier records first 32/33 and RM registration,
+signals host disposal, then releases. No Thread.Sleep/Task.Delay timing synchronization and no testhost termination;
+family zero uses public #106 API. Concurrency key is canonical common-dir FILE_ID and serializes only metadata mutation.
+
 ## Existing coverage
 
 Accepted #106 ProcessOwnership coverage is 76/76; reusable QHTTP/GH93 patterns are read-only risk input. There is no
@@ -165,7 +213,7 @@ primary-failure masking, unsafe quarantine, concurrency, and unavailable platfor
 
 Exactly 10 grouped test methods, with theories/subcases permitted and no duplicated assertion across groups:
 
-1. platform/Git/RM admission fails closed;
+1. Windows/x64/rooted Git admission fails closed;
 2. receipt, v1 sentinel, FILE_ID_INFO replacement, containment, reparse, mismatch, and reconstructed-owner negatives;
 3. real worktree registration/admin capture and exact successful cleanup, including absent registration and admin path;
 4. active-family or unproven-zero blocks every destructive and diagnostic action, including outer deadline/cancellation;
@@ -176,13 +224,15 @@ Exactly 10 grouped test methods, with theories/subcases permitted and no duplica
 9. concurrent fixtures and unrelated repo/ref/config/worktree isolation;
 10. live Windows disposable-repo lock-release end-to-end with no residual registration/admin/root.
 
-## Focused verification
+## Internal phase verification
 
-```powershell
-dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~FixtureCleanupTests
-```
+B1 focused: `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~FixtureCleanupAuthorityTests`, exactly `3 passed/0 failed/0 skipped`; then internal affected `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~ProcessOwnershipTests"`, exactly `79 passed/0 failed/0 skipped`.
 
-Planning validation only; this focused command is not run while preparing the package.
+B2 focused: `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~FixtureCleanupProcessTests`, exactly `3 passed/0 failed/0 skipped`; then internal affected `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~FixtureCleanupProcessTests|FullyQualifiedName~ProcessOwnershipTests"`, exactly `82 passed/0 failed/0 skipped`.
+
+B3 focused: `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~FixtureCleanupIntegrationTests`, exactly `4 passed/0 failed/0 skipped`; before ReviewRequired, internal complete affected `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~FixtureCleanupProcessTests|FullyQualifiedName~FixtureCleanupIntegrationTests|FullyQualifiedName~ProcessOwnershipTests"`, exactly `86 passed/0 failed/0 skipped`. All 79/82/86 commands are internal verification, never final gates. No zero-discovery `FixtureCleanupTests` command exists.
+
+Planning validation only; these commands are not run while preparing the package.
 
 ## Final gate
 
@@ -208,7 +258,6 @@ preemptive lease blocking. Activation must supply exactly these canonical lowerc
 
 - `path:tests/seqdoc.acceptancetests/fixturecleanup.cs`
 - `path:tests/seqdoc.acceptancetests/fixturecleanuptests.cs`
-- `path:tests/seqdoc.acceptancetests/seqdoc.acceptancetests.csproj`
 - `path:docs/work/quality/i100-b`
 - `path:docs/project/work-items/gh-107.json`
 - `fixture:fixturecleanup`
@@ -216,6 +265,21 @@ preemptive lease blocking. Activation must supply exactly these canonical lowerc
 - `exclusive:acceptance-git-worktree-metadata`
 
 Activation must supply exactly this set; no selection occurs now.
+
+The csproj remains outside the initial allowlist and claims. If concrete compiler/build evidence proves it necessary,
+stop before editing; amend GH-107/I100-B target paths, claims, risks, and tests under T2, run worker readiness review,
+and obtain latest-head non-author peer approval on the amended SHA before resuming. Target expansion without an accepted
+amendment is a stop condition, not an automatic permanent block and not an undocumented bypass.
+
+Phase A requires both Qhatahet and Abood-essa to review the same immutable replacement planning SHA and post
+authenticated T2 receipts. They approve only same-issue internal sequencing/spec/allowlists, not implementation findings
+or the final gate. Phase B requires the worker/Orchestrator to invoke an independent Reviewer agent on the complete latest
+candidate and record its invocation/output digest, then self-review/dispositions, focused/affected green,
+`ReviewRequired`, and one authenticated latest-head non-author human GitHub approval for the same implementation SHA
+reserved to Qhatahet (replacement only under policy evidence). A human may independently run tools but need not invoke
+the Reviewer agent. Phase A cannot defer or dispose Phase B findings; Phase B cannot amend the contract without a new
+amendment. No Ready or owner bypass is claimed. Before implementation/promotion, capture clean current-main
+complete-suite counts/signatures and the rule for unrelated known failures; fixture groups may not pass by skip.
 
 ## Acceptance proof
 
