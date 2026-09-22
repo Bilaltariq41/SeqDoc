@@ -2,7 +2,7 @@
 
 ## State
 
-`NotStarted`
+`Blocked`
 
 ## Authority and frozen state
 
