@@ -14,7 +14,7 @@ GH-106 is closed and accepted at PR head `182ea35533482cebdfc070b368f3a7fa247a17
 `227d2e9f8b49ce6a414795b16bb0408ed213012a`, and baseline `dfc28b0b227e544bda937229dd11e31619bb0f25`.
 This package is planning-only. It does not select or activate execution.
 
-## Same-issue amendment and clean-history boundary
+### Same-issue amendment and clean-history boundary
 
 Issues #116, #117, and #118 are closed superseded planning history, not dependencies, authority, lifecycle records, or
 deliverables. The parent disposition is https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5775101734.
@@ -224,7 +224,7 @@ Exactly 10 grouped test methods, with theories/subcases permitted and no duplica
 9. concurrent fixtures and unrelated repo/ref/config/worktree isolation;
 10. live Windows disposable-repo lock-release end-to-end with no residual registration/admin/root.
 
-## Internal phase verification
+## Focused verification
 
 B1 focused: `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~FixtureCleanupAuthorityTests`, exactly `3 passed/0 failed/0 skipped`; then internal affected `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~ProcessOwnershipTests"`, exactly `79 passed/0 failed/0 skipped`.
 
@@ -232,7 +232,8 @@ B2 focused: `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csp
 
 B3 focused: `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~FixtureCleanupIntegrationTests`, exactly `4 passed/0 failed/0 skipped`; before ReviewRequired, internal complete affected `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~FixtureCleanupProcessTests|FullyQualifiedName~FixtureCleanupIntegrationTests|FullyQualifiedName~ProcessOwnershipTests"`, exactly `86 passed/0 failed/0 skipped`. All 79/82/86 commands are internal verification, never final gates. No zero-discovery `FixtureCleanupTests` command exists.
 
-Planning validation only; these commands are not run while preparing the package.
+These B1/B2/B3 commands are internal staged focused/affected verification, not final gates. Planning validation only;
+these commands are not run while preparing the package.
 
 ## Final gate
 
