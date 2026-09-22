@@ -8,8 +8,9 @@
 
 Issue [#107](https://github.com/Bilaltariq41/SeqDoc/issues/107) and its body are specification authority. The parent
 split is [#100](https://github.com/Bilaltariq41/SeqDoc/issues/100#issuecomment-5681943603), published at
-https://github.com/Bilaltariq41/SeqDoc/issues/100#issuecomment-5694678193. Owner readiness authorization is
-https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5696378047; it permits `Ready` after #106 closes.
+https://github.com/Bilaltariq41/SeqDoc/issues/100#issuecomment-5694678193. The historical issue/readiness context
+https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5696378047 was authored by Ahmad; it is not owner
+authorization. No authenticated Bilaltariq41 owner decision is claimed or needed; ordinary T2 peer policy governs.
 GH-106 is closed and accepted at PR head `182ea35533482cebdfc070b368f3a7fa247a1735`, merge
 `227d2e9f8b49ce6a414795b16bb0408ed213012a`, and baseline `dfc28b0b227e544bda937229dd11e31619bb0f25`.
 This package is planning-only. It does not select or activate execution.
@@ -115,9 +116,21 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
    deterministic chronology; otherwise first cleanup failure becomes primary. RM/session-end failures and quarantine
    are degradations, never success. Preserve #106 ordered secondary evidence and truncation without strengthening it.
 9. **Quarantine.** Only after family-zero, receipt/sentinel revalidation, absent Git registration/admin, and exhausted
-   deletion budget. Atomically move the whole owned control root on the same volume to a token-derived collision-safe
-   quarantine parent; the moved sentinel remains. Never quarantine registered, unowned, escaped, or reparse paths.
-   A failed move leaves the root and reports a failing/degraded outcome; path is local diagnostic only.
+    deletion budget. The immutable local authority receipt includes the caller-authorized canonical local-drive control
+    parent, component-by-component non-reparse observations, volume serial, and FILE_ID_INFO. The parent authorizes one
+    direct-child move target but is never owned or deletable. The source control root is its exact immediate child with
+    captured identity/token/sentinel/roles. Separate move-target authority is the exact absent sibling
+    `<source-root-name>.quarantine` (equivalent token-derived exact name), under the same exact parent and volume, with
+    canonical boundary and non-reparse existing destination components. Immediately before one and only one atomic
+    `Directory.Move`, revalidate parent chain/identity, source chain/root FILE_ID/sentinel/roles/stage, target relation/
+    absence, destination components, volume, family zero, Git registration/admin absence, and exhausted deletion budget.
+    Target appearance or collision refuses without overwrite/merge/retry. Move-target authority never authorizes child
+    deletion outside the source receipt, and the parent itself is never a destructive target. On success source is absent,
+    destination is the direct sibling with the pre-move source-root FILE_ID, destination and parent are non-reparse,
+    sentinel bytes are unchanged, registration/admin remain absent, and state is terminal `QuarantinedTerminal`. On
+    exception or ambiguous outcome reobserve source/destination by identity and classify only `SourcePreserved`,
+    `MoveCompleted`, `Collision`, or `Indeterminate`; perform no second move/destructive action. Indeterminate stable
+    evidence and local observations are retained; overall result remains degraded/non-success.
 10. **Concurrency.** A repository-scoped in-process async gate keyed by canonical common Git dir serializes only
     worktree metadata mutations, bounded by the cleanup deadline. Tokens/roots remain independent and Git locks remain
     authority. Prove concurrent fixtures cannot delete/corrupt each other and unrelated snapshots are byte-equivalent.
@@ -130,11 +143,15 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
 ### Cleanup receipt state machine
 
 The same cleanup owner holds an immutable receipt and monotonic in-memory stage: `Provisioned`, `FamilyZero`,
-`GitDeregisteredAdminVerified`, `RoleDeleted`, then either `RootDeleted` or `Quarantined`. A missing path is accepted
+`GitDeregisteredAdminVerified`, `RoleDeleted`, then either `RootDeleted` or `QuarantinedTerminal`. A missing path is accepted
 only after this receipt observed and recorded the prior stage postcondition. The sentinel remains until root completion or
 quarantine. A reconstructed process/receipt may report an orphan from the sentinel but cannot resume destructive cleanup
-from the sentinel alone and fails closed. Partial failures retain sentinel, root, and receipt for same-owner bounded
-retry.
+from the sentinel alone and fails closed. After successful quarantine the original receipt is consumed for destructive
+purposes; a local terminal residual observation records moved path, parent/source/destination FILE_ID/volume, original
+token, sentinel bytes/hash, postconditions, and local exception evidence for report only. Stable evidence contains only
+stage/role/classification/count/certainty. No new or reconstructed process may delete the residual through FixtureCleanup;
+removal is outside this checkpoint and grants no automatic external removal authority; any external disposition must
+establish separate authority. The fixture reports only the local path and overall outcome remains degraded/non-success.
 
 ### Restart Manager managed interop admission table
 
@@ -191,13 +208,18 @@ three GetList calls permit one growth, cap 64, and fail malformed/non-growing/th
 End evidence is mandatory and no RmShutdown exists.
 
 B3 technical strengthening freezes quarantine as atomic same-volume move to absent direct sibling
-`seqdoc-fixture-<token>.quarantine`, collision refusal, and same in-memory-owner eventual cleanup only. The existing
+`seqdoc-fixture-<token>.quarantine`, collision refusal, and terminal `QuarantinedTerminal` only. The existing
 assembly-staged rooted stub vector is exactly `sleep-with-marker <owned-marker-path> 30000`, marker under receipt-listed
-output; bounded event/poll evidence parses marker bytes to public `ContainedProcess.ProcessId`, and marker is absent
-after forced termination. The test host independently opens the exact receipt-listed lock target with
-`FileMode.Open`, `FileAccess.ReadWrite`, `FileShare.None`; an observer/barrier records first 32/33 and RM registration,
-signals host disposal, then releases. No Thread.Sleep/Task.Delay timing synchronization and no testhost termination;
-family zero uses public #106 API. Concurrency key is canonical common-dir FILE_ID and serializes only metadata mutation.
+output; bounded event/poll evidence parses marker bytes to public `ContainedProcess.ProcessId`. The exact live order is:
+provision; start child; observe marker and PID; assert `.completed` absent; independently lock a separate exact
+receipt-listed output file with `FileMode.Open`, `FileAccess.ReadWrite`, `FileShare.None`; terminate/wait/dispose child
+and prove public active-family zero; immediately assert original marker still exists with identical PID bytes and
+`.completed` absent; exact Git remove/registration/admin verification; attempt lock-file deletion and observe direct
+IOException low word 32/33; RM Start/Register/GetList identifies exact testhost PID+start FILETIME locally while held;
+observer signals host disposal and barrier confirms release; retry deletes lock, role cleanup removes original marker, and
+final root/sentinel cleanup proves marker/output/root absent. No RM/delete before family zero, no Thread.Sleep/Task.Delay
+test synchronization, no testhost termination, and RM registration alone is not attribution. Concurrency key is canonical
+common-dir FILE_ID and serializes only metadata mutation.
 
 ## Existing coverage
 
@@ -220,7 +242,9 @@ Exactly 10 grouped test methods, with theories/subcases permitted and no duplica
 5. exact `CleanupTimeout`/10-second grace and nested deletion schedule, transient success, and nonretryable boundaries;
 6. RM first-violation attribution, real admitted-platform empty/known-lock calls, Unicode Marshal layout, injected state-machine negatives, caps/errors/session end, and no shutdown;
 7. primary failure plus ordered cleanup degradation and #106 secondary evidence;
-8. quarantine success and refusal partitions;
+8. wrong/replaced parent ID, source outside parent, target parent reparse/replacement, collision before/after check,
+   cross-volume, source replacement, success identity/sentinel/terminal, SourcePreserved/MoveCompleted/Indeterminate,
+   reconstructed observer no destruction, and concurrent sibling collision/isolation;
 9. concurrent fixtures and unrelated repo/ref/config/worktree isolation;
 10. live Windows disposable-repo lock-release end-to-end with no residual registration/admin/root.
 
@@ -277,8 +301,9 @@ authenticated T2 receipts. They approve only same-issue internal sequencing/spec
 or the final gate. Phase B requires the worker/Orchestrator to invoke an independent Reviewer agent on the complete latest
 candidate and record its invocation/output digest, then self-review/dispositions, focused/affected green,
 `ReviewRequired`, and one authenticated latest-head non-author human GitHub approval for the same implementation SHA
-reserved to Qhatahet (replacement only under policy evidence). A human may independently run tools but need not invoke
-the Reviewer agent. Phase A cannot defer or dispose Phase B findings; Phase B cannot amend the contract without a new
+reserved to Qhatahet (replacement only under policy evidence), and that human independently invokes their own Reviewer
+agent run against the same complete latest SHA before posting the authenticated receipt. Phase A cannot defer or dispose
+Phase B findings; Phase B cannot amend the contract without a new
 amendment. No Ready or owner bypass is claimed. Before implementation/promotion, capture clean current-main
 complete-suite counts/signatures and the rule for unrelated known failures; fixture groups may not pass by skip.
 

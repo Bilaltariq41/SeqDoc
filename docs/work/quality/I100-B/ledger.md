@@ -15,7 +15,7 @@ amendment. The rejected candidate is preserved local-only and its old branch is 
   including public `ContainedProcess` observations, active-zero proof, teardown evidence, and ordered secondary evidence.
 - Reusable QHTTP/GH93 patterns were inspected as read-only risk input; neither contract supplies a sentinel, quarantine,
   or complete Restart Manager cleanup contract.
-- Readiness and authority: Issue #107, owner authorization
+- Readiness and authority: Issue #107 historical issue/readiness context, authored by Ahmad and not owner authorization,
   https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5696378047; parent split
   https://github.com/Bilaltariq41/SeqDoc/issues/100#issuecomment-5681943603; publication
   https://github.com/Bilaltariq41/SeqDoc/issues/100#issuecomment-5694678193.
@@ -74,16 +74,30 @@ Exactly four findings are recorded:
 | F3 | B3 declares two final gates — the 86 result is internal affected verification; the full Acceptance project command is the sole final gate. |
 | F4 | Independent review receipt not reproducible — prior agent summary is advisory only; a new review receipt will be posted on the replacement PR. |
 
+## PR120 finding dispositions
+
+| Finding | Subject | Disposition and proof |
+|---|---|---|
+| Qais I120-F1 | Independent human peer must invoke Reviewer agent at Phase B | **Fixed.** Under collaboration-model lines 37–39, the worker invokes its own Reviewer agent and self-reviews first; after green/dispositions at `ReviewRequired`, reserved independent human Qhatahet separately invokes Reviewer agent against the same complete latest SHA and posts the authenticated GitHub receipt before Gate Runner. |
+| Abood I100-B-R2-F1 | Quarantine parent/source/target authority | **Fixed.** The parent is canonical local-drive, component-wise non-reparse, volume/FILE_ID authority, never destructive; source is its immediate child and target is the absent exact sibling. Group 8 and the terminal residual receipt prove this boundary. |
+| Abood I100-B-R2-F2 | Terminal quarantine and residual handling | **Fixed.** State is `QuarantinedTerminal`; original destructive receipt is consumed, local terminal observation is report-only, stable evidence is sanitized, and no process or fixture cleanup may later delete it. |
+| Abood I100-B-R2-F3 | Marker chronology and lock attribution | **Fixed.** B3 freezes marker/PID order, post-family-zero marker persistence, Git verification, first 32/33, RM list identity, host release barrier, retry, marker removal, and final root proof; marker is not required to disappear after child termination. |
+| Abood I100-B-R2-F4 | Owner attribution and review receipt | **Fixed.** Historical Ahmad readiness context is not owner authorization. Phase B requires worker Reviewer evidence, then the reserved human independently invokes Reviewer agent and posts an authenticated same-SHA GitHub receipt before Gate Runner. |
+| Abood I100-B-R2-F5 | Durable review evidence | **Fixed.** Raw session/task handles are excluded; unavailable reviewer metadata is explicitly unauthenticated, and the replacement PR must carry actor/SHA/agent/version/boundary/digest/outcome/findings/dispositions/evidence URL. |
+
 ## Worker review finding dispositions
 
 | Finding | Disposition and governing evidence |
 |---|---|
 | I100-B-F1 | **Fixed.** The csproj remains outside the initial allowlist and claims. If concrete compiler/build evidence proves it necessary, stop before edit; amend GH-107/I100-B target paths, claims, risks, and tests under T2, run worker readiness review, and obtain latest-head non-author peer approval on the amended SHA before resuming. Unamended target expansion remains a stop condition, not an automatic permanent block or undocumented bypass. |
-| I100-B-F2 | **Rejected.** A human peer is not required to invoke the Reviewer agent. `AGENTS.md` lines 113–117 require the worker to fix, run the Reviewer agent again, rerun focused verification, then request one human approval; `docs/project/collaboration-model.md` lines 57–59 require worker readiness/spec and complete-candidate self-review, the worker's Reviewer agent, and one human latest-head review. Phase B therefore has the worker/Orchestrator invoke the independent Reviewer agent against the complete latest candidate and record invocation/output digest; after green/dispositions, the reserved latest-head non-author human reviews and gives authenticated GitHub approval for that same SHA. The human may independently run tools but need not invoke the agent. |
+| I100-B-F2 | **Fixed.** Qais's controlling rule is accepted under `docs/project/collaboration-model.md` lines 37–39: the worker invokes its own Reviewer agent and self-reviews first; after green/dispositions at `ReviewRequired`, reserved independent human Qhatahet separately invokes Reviewer agent against the same complete latest SHA and posts an authenticated GitHub receipt before Gate Runner. The receipt records actor, exact SHA, reviewer agent name/version, invocation boundary, output digest/outcome, findings/dispositions, and evidence URL. |
 
 ## Advisory worker review receipt
 
-Role: `review`; task: `ses_f373cbfaaffeEh4jo3YbUfJl31`; result: `REQUEST CHANGES`; findings: I100-B-F1 and I100-B-F2. This is advisory worker-review evidence, not formal human completion. Reviewer version and output digest are unknown and intentionally not fabricated; the reproducible output digest will be posted on the replacement PR after final rereview.
+Role: `review`; result: `REQUEST CHANGES`; findings: I100-B-F1 and I100-B-F2. This is advisory worker-review evidence,
+not formal human completion. Reviewer name/version, invocation boundary, exact target SHA, output digest, and public
+evidence URL are unavailable and intentionally not fabricated; no raw task/session identifier is persisted. The durable
+review receipt will be posted on the replacement PR after final rereview.
 
 ## Abood finding inheritance map
 
@@ -115,7 +129,7 @@ and proofs. Original issue URLs remain historical sources; the exact supplied Ab
 | Finding | Subject | Internal proof |
 |---|---|---|
 | F1 | Split authority/canonical identity ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/118#issuecomment-5774337587)) | Inherited B3 internal phase; same planning SHA and child issue is historical only. |
-| F2 | Quarantine destination authority ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/118#issuecomment-5774337587)) | Same-volume direct sibling, collision refusal, sentinel retention, and same-owner eventual cleanup. |
+| F2 | Quarantine destination authority ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/118#issuecomment-5774337587)) | Same-volume direct sibling, collision refusal, sentinel retention, and terminal report-only residual; FixtureCleanup grants no later removal authority and any external disposition requires separate authority. |
 | F3 | Live executable/synchronization ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/118#issuecomment-5774337587)) | Rooted marker stub, marker PID proof, independent FileStream lock, deterministic observer/barrier, no sleeps or termination. |
 | F4 | Exact paths/receipts/review route ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/118#issuecomment-5774337587)) | Two implementation paths, excluded csproj, B3 focused/affected route, and Qhatahet Phase B review. |
 | F5 | Isolation inheritance ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/118#issuecomment-5774337587)) | Four unrelated vectors and common-dir FILE_ID concurrency inherit B1/B2 authority. |
@@ -125,13 +139,12 @@ and proofs. Original issue URLs remain historical sources; the exact supplied Ab
 B1 focused `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~FixtureCleanupAuthorityTests` is exactly 3/0/0; affected `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~ProcessOwnershipTests"` is exactly 79/0/0. B2 focused `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~FixtureCleanupProcessTests` is exactly 3/0/0; affected `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~FixtureCleanupProcessTests|FullyQualifiedName~ProcessOwnershipTests"` is exactly 82/0/0. B3 focused `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~FixtureCleanupIntegrationTests` is exactly 4/0/0; complete affected `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~FixtureCleanupProcessTests|FullyQualifiedName~FixtureCleanupIntegrationTests|FullyQualifiedName~ProcessOwnershipTests"` is exactly 86/0/0 before ReviewRequired. These are internal verification, not final gates. The sole final gate is `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release`, once after human review and resolved findings.
 
 Phase A requires both Qhatahet and Abood-essa to review the same immutable replacement planning SHA and post
-authenticated T2 receipts; these approve only same-issue sequencing/spec/allowlists. Phase B requires the
-worker/Orchestrator to invoke an independent Reviewer agent against the complete latest candidate and record its
-invocation/output digest, then implementer self-review, Fixed/Rejected dispositions, green internal verification,
-ReviewRequired, and one authenticated latest-head non-author human GitHub approval for the same implementation SHA
-reserved to Qhatahet. A human may independently run tools but need not invoke the agent. Prior agent summaries are
-advisory and not formal independent-review completion. The new reproducible receipt will be posted on the replacement
-PR after final rereview; until then the summary above is explicitly unauthenticated. No Ready now.
+authenticated T2 receipts; these approve only same-issue sequencing/spec/allowlists. Phase B requires the worker/
+Orchestrator to invoke its own Reviewer agent and self-review first, then after focused/affected green and dispositions
+at `ReviewRequired`, reserved independent human Qhatahet separately invokes Reviewer agent against the same complete latest
+SHA and posts an authenticated GitHub receipt containing actor, exact SHA, agent name/version, invocation boundary,
+output digest/outcome, findings/dispositions, and evidence URL. Only then does Gate Runner run the final gate. Prior
+agent summaries are advisory and not formal independent-review completion. No Ready now.
 
 ## Technical inheritance
 
