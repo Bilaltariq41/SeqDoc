@@ -14,6 +14,7 @@ amendment. The rejected candidate is preserved local-only and its old branch is 
 - Microsoft CreateFileW: https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew
 - Microsoft SetFileInformationByHandle: https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle
 - Microsoft FILE_RENAME_INFO: https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info
+- Microsoft FILE_RENAME_INFORMATION: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
 - Local accepted #106 public API boundary and cleanup pattern findings: `I100-A/checkpoint.md` and `I100-A/ledger.md`,
   including public `ContainedProcess` observations, active-zero proof, teardown evidence, and ordered secondary evidence.
 - Reusable QHTTP/GH93 patterns were inspected as read-only risk input; neither contract supplies a sentinel, quarantine,
@@ -33,6 +34,7 @@ amendment. The rejected candidate is preserved local-only and its old branch is 
 | Diagnostics | RM is bounded attribution evidence only, never ownership or termination authority; stable receipts exclude raw paths and timestamps. |
 | Failure | Existing primary failure wins; cleanup evidence is chronological and degradation cannot become success. |
 | Lifecycle | Revalidate before every deletion attempt, use the fixed eight-attempt schedule, and quarantine only after all gates. |
+| Baselines | GH-106 baseline `ab6e3e1cf16213ee5346506b16949fa32c4ddfa4`; accepted head `182ea35533482cebdfc070b368f3a7fa247a1735`; merge `227d2e9f8b49ce6a414795b16bb0408ed213012a`; GH-107 replacement baseline `18aae5e0364c0b13549bd0c5333ba48f8116bc9a`. |
 | Concurrency | Serialize only same-common-dir metadata mutations; independent fixture roots and unrelated repository snapshots remain isolated. |
 | Scope | Future implementation is limited to exactly two paths: `FixtureCleanup.cs` and `FixtureCleanupTests.cs`, plus this checkpoint/ledger and generated governance state. The csproj is excluded. |
 
@@ -81,7 +83,7 @@ Exactly four findings are recorded:
 
 | Finding | Subject | Disposition and proof |
 |---|---|---|
-| Qais I120-F1 | Independent human peer must invoke Reviewer agent at Phase B | **Fixed.** Under collaboration-model lines 37–39, the worker invokes its own Reviewer agent and self-reviews first; after green/dispositions at `ReviewRequired`, reserved independent human Qhatahet separately invokes Reviewer agent against the same complete latest SHA and posts the authenticated GitHub receipt before Gate Runner. |
+| Qais I120-F1 | Independent human peer must invoke Reviewer agent at Phase B | **Fixed.** Under `docs/project/collaboration-model.md, Delivery procedure, item 3`, the worker invokes its own Reviewer agent and self-reviews first; after green/dispositions at `ReviewRequired`, reserved independent human Qhatahet separately invokes Reviewer agent against the same complete latest SHA and posts the authenticated GitHub receipt before Gate Runner. |
 | Abood I100-B-R2-F1 | Quarantine parent/source/target authority | **Fixed.** The parent is canonical local-drive, component-wise non-reparse, volume/FILE_ID authority, never destructive; source is its immediate child and target is the absent exact sibling. Group 8 and the terminal residual receipt prove this boundary. |
 | Abood I100-B-R2-F2 | Terminal quarantine and residual handling | **Fixed.** State is `QuarantinedTerminal`; original destructive receipt is consumed, local terminal observation is report-only, stable evidence is sanitized, and no process or fixture cleanup may later delete it. |
 | Abood I100-B-R2-F3 | Marker chronology and lock attribution | **Fixed.** B3 freezes marker/PID order, post-family-zero marker persistence, Git verification, first 32/33, RM list identity, host release barrier, retry, marker removal, and final root proof; marker is not required to disappear after child termination. |
@@ -92,12 +94,26 @@ Exactly four findings are recorded:
 | Abood I100-B-R4-F2 | Low — ambiguous source-name wording | **Fixed.** The checkpoint now distinguishes destination-name collision before the native call from a new unrelated object at the vacated source name after successful rename; group 8 proves both races and preservation. |
 | Abood I100-B-R4-F3 | Low — R3 disposition outside Markdown table | **Fixed.** R2, R3, and R4 rows are contiguous in this one valid PR120 table; review evidence: `https://github.com/Bilaltariq41/SeqDoc/pull/120#pullrequestreview-5288493974`. |
 
+## PR120 R5 and Qhatahet dispositions
+
+| Finding | Subject | Disposition and proof |
+|---|---|---|
+| Abood I100-B-R5-F1 | Complete destructive ABI | **Fixed.** The checkpoint's one authoritative managed admission table freezes exact Kernel32 declarations, masks, safe-handle/error/finally semantics, x64 `FILE_RENAME_INFO` layout, name/buffer validation, no-call failures, and group-8 metadata/layout/disposal proofs. Primary sources are CreateFileW, SetFileInformationByHandle, FILE_RENAME_INFO, and ntifs FILE_RENAME_INFORMATION links above. |
+| Abood I100-B-R5-F2 | Baseline identities | **Fixed.** GH-106 baseline/head/merge and GH-107 replacement baseline are frozen in the checkpoint and ledger; superseded `dfc28b0...` is historical GH-107 context only. |
+| Abood I100-B-R5-F3 | Git working directories | **Fixed.** Explicit source/owned-worktree cwd table, scalar-output parsing, relative-output resolution, and process-cwd mismatch tests are frozen in the checkpoint. |
+| Abood I100-B-R5-F4 | Retry completion/overrun | **Fixed.** Attempt admission, inclusive 1950/2000 boundary, overrun classifications, no ninth attempt, in-flight outer expiry, and retained physical postconditions are frozen in chronology and group 5. |
+| Abood I100-B-R5-F5 | Baseline observation, not gate | **Fixed.** A clean-main full Acceptance Release observation with exact environment/count/signature receipt is required before promotion; it is not the focused or final gate, and unavailable evidence keeps GH-107 Blocked. |
+| Abood I100-B-R5-F6 | Soft test budget | **Fixed.** The target is 10 grouped methods, with concrete-risk nonduplicate additions recorded with reason/group/total/expected discovery; current 86 is 76+10 and there is no hard cap. |
+| Qhatahet latest F1 | Durable worker receipt | **Fixed.** The superseding receipt is linked above and must be updated with actor/invoker, exact SHA, agent/version, boundary, digest/outcome, findings/dispositions before Phase A authorization. |
+| Qhatahet latest F2 | Collaboration citation and review sequence | **Fixed.** The ledger uses `docs/project/collaboration-model.md, Delivery procedure, item 3`; worker Reviewer/self-review precedes reserved human's independent Reviewer run and authenticated receipt before Gate Runner. |
+| Qhatahet note | Admission observable | **Fixed.** Acceptance proof maps Group 1 admission failure to `AdmissionFailedNoOwnership` and admission success to `Provisioned` as first observed in Group 2. |
+
 ## Worker review finding dispositions
 
 | Finding | Disposition and governing evidence |
 |---|---|
 | I100-B-F1 | **Fixed.** The csproj remains outside the initial allowlist and claims. If concrete compiler/build evidence proves it necessary, stop before edit; amend GH-107/I100-B target paths, claims, risks, and tests under T2, run worker readiness review, and obtain latest-head non-author peer approval on the amended SHA before resuming. Unamended target expansion remains a stop condition, not an automatic permanent block or undocumented bypass. |
-| I100-B-F2 | **Fixed.** Qais's controlling rule is accepted under `docs/project/collaboration-model.md` lines 37–39: the worker invokes its own Reviewer agent and self-reviews first; after green/dispositions at `ReviewRequired`, reserved independent human Qhatahet separately invokes Reviewer agent against the same complete latest SHA and posts an authenticated GitHub receipt before Gate Runner. The receipt records actor, exact SHA, reviewer agent name/version, invocation boundary, output digest/outcome, findings/dispositions, and evidence URL. |
+| I100-B-F2 | **Fixed.** Qais's controlling rule is accepted under `docs/project/collaboration-model.md, Delivery procedure, item 3`: the worker invokes its own Reviewer agent and self-reviews first; after green/dispositions at `ReviewRequired`, reserved independent human Qhatahet separately invokes Reviewer agent against the same complete latest SHA and posts an authenticated GitHub receipt before Gate Runner. The receipt records actor, exact SHA, reviewer agent name/version, invocation boundary, output digest/outcome, findings/dispositions, and evidence URL. |
 
 ## Global audit worker advisory dispositions
 
@@ -108,12 +124,14 @@ Exactly four findings are recorded:
 | I100-B-AUDIT-RM-CAPABILITY | **Fixed.** Missing or unloadable RM capability is an explicit blocking non-pass in group 6. |
 | I100-B-AUDIT-STATE-OUTCOME | **Fixed.** Total physical state transitions, separate final outcome, primary chronology, degradation precedence, and terminal residual rules are explicit. |
 
-## Advisory worker review receipt
+## Superseded worker review history and durable receipt
 
-Role: `review`; result: `REQUEST CHANGES`; findings: I100-B-F1 and I100-B-F2. This is advisory worker-review evidence,
-not formal human completion. Reviewer name/version, invocation boundary, exact target SHA, output digest, and public
-evidence URL are unavailable and intentionally not fabricated; no raw task/session identifier is persisted. The durable
-review receipt will be posted on the replacement PR after final rereview.
+The earlier worker review summary returned `REQUEST CHANGES` with I100-B-F1 and I100-B-F2; both findings are Fixed above.
+It is superseded review history, not current status or formal human completion. The durable reserved receipt is
+https://github.com/Bilaltariq41/SeqDoc/pull/120#issuecomment-5792443353. That public receipt must be updated after the
+exact-SHA worker Reviewer run and show actor/invoker, exact SHA, agent name/version when available, invocation boundary,
+output digest/outcome, findings/dispositions. Until that update is an authenticated approval, it does not authorize
+Phase A. The PR body claim is subordinate to this ledger and linked receipt; no approval is claimed here.
 
 ## Abood finding inheritance map
 
@@ -183,16 +201,10 @@ successful cleanup only.
 
 ## Technical inheritance
 
-The R3 native contract is exact, not an implementation choice: Kernel32.dll `CreateFileW` and
-`SetFileInformationByHandle`, Unicode where applicable, `ExactSpelling=true`, `SetLastError=true`, Winapi. Parent
-access is 0x80|0x00100000, share 1|2 (DELETE share omitted), disposition 3, flags 0x02000000|0x00200000, with no
-inheritance/template; source access is 0x00010000|0x80|0x00100000 with the same share/disposition/flags. Class
-`FileRenameInfo` is 3. On admitted x64, `FILE_RENAME_INFO` is manually packed as ReplaceIfExists DWORD 0 at offset 0,
-zero padding 4–7, parent HANDLE offset 8, filename length offset 16, UTF-16 relative sibling bytes offset 20, exact
-size `20 + FileNameLength`, no required terminator; `IntPtr.Size==8`, offsets, and buffer size are mandatory group-8
-checks. SetFileInformationByHandle receives the live source handle, class 3, pointer and uint size, and false records
-exact GetLastWin32Error locally. Parent/source handles remain live through the call and postclassification; omitted
-FILE_SHARE_DELETE prevents competing delete-access opens until handle close. No FileRenameInfoEx/flags or path fallback.
+The checkpoint's managed/native ABI table is authoritative and incorporates R5-F1: exact Kernel32 declarations,
+metadata, access/share masks, safe-handle/error/finally behavior, x64 `FILE_RENAME_INFO` offsets and buffer checks,
+identity-bound live handles, and no path fallback. The Microsoft and ntifs primary links above are the durable references;
+the ledger does not restate a second ABI variant.
 
 The checkpoint's technical strengthening is authoritative: rooted GitExecutablePath and Program Files admission; exact
 sentinel/stable-vs-local receipt and source/common FILE_ID chains; exact Git vectors without `--` fallback; four

@@ -11,8 +11,10 @@ split is [#100](https://github.com/Bilaltariq41/SeqDoc/issues/100#issuecomment-5
 https://github.com/Bilaltariq41/SeqDoc/issues/100#issuecomment-5694678193. The historical issue/readiness context
 https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5696378047 was authored by Ahmad; it is not owner
 authorization. No authenticated Bilaltariq41 owner decision is claimed or needed; ordinary T2 peer policy governs.
-GH-106 is closed and accepted at PR head `182ea35533482cebdfc070b368f3a7fa247a1735`, merge
-`227d2e9f8b49ce6a414795b16bb0408ed213012a`, and baseline `dfc28b0b227e544bda937229dd11e31619bb0f25`.
+GH-106 baseline is `ab6e3e1cf16213ee5346506b16949fa32c4ddfa4`; its accepted PR head is
+`182ea35533482cebdfc070b368f3a7fa247a1735` and merge is `227d2e9f8b49ce6a414795b16bb0408ed213012a`.
+GH-107 replacement planning/activation baseline is `18aae5e0364c0b13549bd0c5333ba48f8116bc9a`. The former
+`dfc28b0b227e544bda937229dd11e31619bb0f25` is superseded GH-107 historical context only, not current or GH-106 authority.
 This package is planning-only. It does not select or activate execution.
 
 ### Same-issue amendment and clean-history boundary
@@ -65,9 +67,14 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
    escaped, replaced/recreated, reparse, role-mismatched, or changed-identity authority fails closed. The control root
    and sentinel survive child cleanup and the sentinel/root are removed last.
 2. **Git identity.** Capture source before-state: status, exact refs, local config, and worktree porcelain. Create a
-   detached worktree at the exact revision via the #106 process runner. Capture exact registration and
-   `rev-parse --absolute-git-dir`; prove that admin path is under the source common-dir worktrees area. Never infer
-   ownership from business or name vocabulary.
+    detached worktree at the exact revision via the #106 process runner. Capture exact registration and
+    `rev-parse --absolute-git-dir`; prove that admin path is under the source common-dir worktrees area. The source cwd
+    is the canonical source repository root for common-dir, status, refs, config, worktree list, add, and remove. The
+    owned-worktree cwd is the exact owned worktree path only for absolute-git-dir after add. Every adapter receives an
+    explicit cwd and never uses process cwd. Trim exactly one terminal line ending for scalar output; reject embedded
+    NUL, multiple lines, or empty output. Rooted output is canonicalized directly; relative output resolves with
+    `Path.GetFullPath(Path.Combine(exactCommandWorkingDirectory, output))`, never process cwd or a guessed source, then
+    undergoes path/reparse/volume/FILE_ID/digest/containment validation.
 3. **Command adapter.** `FixtureCleanup.cs` may consume only public `ProcessOwnershipOptions`,
    `ContainedProcess.Start`, construction result, `WaitAsync` result, `Terminate`, `Dispose`, `ProcessId`,
    `HasObservedActiveProcessZero`, `FailureClass`, `TeardownFailures`, output/truncation/secondary evidence, and
@@ -99,8 +106,15 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
 6. **Retry.** Exactly eight attempt start offsets are `0, 50, 150, 350, 750, 1150, 1550, 1950 ms`, with inter-attempt
    delays `50, 100, 200, 400, 400, 400, 400 ms`, bounded by both a two-second deletion subdeadline and remaining
    overall cleanup deadline. Use an injectable monotonic clock/sleeper and stop earlier when either bound would be
-   exceeded. Revalidate authority before every attempt. Retry only `IOException` with exact Win32 32 or 33 and
-   `UnauthorizedAccessException` while ownership still revalidates; stop for other failures.
+    exceeded. The two-second budget is attempt-admission/start budget: an attempt starts only when its scheduled offset
+    and actual monotonic time are <= the subdeadline and the outer deadline admits start. Synchronous admitted calls may
+    complete after the subdeadline; capture completion and record stable `DeletionAttemptOverranSubdeadline` without raw
+    duration. No ninth attempt. Success after overrun records the delete postcondition but preserves degradation and
+    continues only if outer time remains. Retryable failure after overrun with outer time enters `DeletionBudgetExhausted`
+    and may admit quarantine; outer expiry in flight records `OuterDeadlineExpiredInFlight`, starts no quarantine/root/new
+    stage after return, and transitions `FailedResidual` except for already completed physical postconditions. Finally
+    obligations remain permitted. Revalidate authority before every attempt. Retry only `IOException` with exact Win32 32
+    or 33 and `UnauthorizedAccessException` while ownership still revalidates; stop for other failures.
 7. **Restart Manager.** The native admission table is Unicode `Rstrtmgr.dll` entry points `RmStartSession`,
    `RmRegisterResources`, `RmGetList`, and `RmEndSession`; no `RmShutdown` import exists. Use a
    `CCH_RM_SESSION_KEY+1` session-key buffer, flags 0, and files-only registration of exact existing files. The
@@ -126,7 +140,7 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
     canonical boundary and non-reparse existing destination components.
 
     There is no `Directory.Move` and no path-based fallback. Open the authorized parent with `CreateFileW` using
-    `OPEN_EXISTING`, `FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT`, required read-attributes and
+    `OPEN_EXISTING`, `FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT`, required traverse, read-attributes, and
     synchronization access, and sharing that prevents parent rename/deletion while permitting the required child
     operation. Open the exact source control-root directory with `CreateFileW` using `DELETE|FILE_READ_ATTRIBUTES|
     SYNCHRONIZE`, the same reparse-safe flags, and `FILE_SHARE_READ|FILE_SHARE_WRITE` while omitting
@@ -135,20 +149,29 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
     handles remain live. An injectable generic quarantine observer/barrier fires exactly after both handles and all
     authority are validated, immediately before the native call.
 
-    The exact x64 Windows contract is mandatory: `Kernel32.dll` `CreateFileW` and `SetFileInformationByHandle`, Unicode
-    where applicable, `ExactSpelling=true`, `SetLastError=true`, `CallingConvention.Winapi`. Parent CreateFileW uses
-    desired access `FILE_READ_ATTRIBUTES` 0x80 | `SYNCHRONIZE` 0x00100000, share `FILE_SHARE_READ` 1 |
-    `FILE_SHARE_WRITE` 2 (omit DELETE 4), disposition `OPEN_EXISTING` 3, flags
-    `FILE_FLAG_BACKUP_SEMANTICS` 0x02000000 | `FILE_FLAG_OPEN_REPARSE_POINT` 0x00200000, and no inheritance or
-    template. Source uses desired access `DELETE` 0x00010000 | FILE_READ_ATTRIBUTES | SYNCHRONIZE, the same share,
-    disposition, flags, no inheritance, and no template. `FileRenameInfo` is class 3. The x64 `FILE_RENAME_INFO` manual
+    The exact x64 Windows contract is mandatory. The `FILE_RENAME_INFO` manual
     buffer is DWORD union/ReplaceIfExists false at offset 0, zero padding 4–7, parent HANDLE at offset 8, filename
     length uint at offset 16, and exact UTF-16 relative sibling bytes at offset 20 with no required terminator and byte
     count excluding any terminator; total size is exactly `20 + FileNameLength`. `IntPtr.Size==8` and explicit offsets/
     buffer length are mandatory group-8 admission checks. No FileRenameInfoEx or flags are allowed.
+    The exact managed admission table is mandatory: `kernel32.dll`, Winapi, `ExactSpelling=true`,
+    `SetLastError=true`; CreateFileW is Unicode with `BestFitMapping=false`, `ThrowOnUnmappableChar=true` and exact
+    declaration `[DllImport("kernel32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true, CallingConvention=CallingConvention.Winapi, BestFitMapping=false, ThrowOnUnmappableChar=true)] static extern SafeFileHandle CreateFileW([MarshalAs(UnmanagedType.LPWStr)] string fileName, uint desiredAccess, uint shareMode, IntPtr securityAttributes, uint creationDisposition, uint flagsAndAttributes, IntPtr templateFile);`. SetFileInformationByHandle is `[DllImport("kernel32.dll", ExactSpelling=true, SetLastError=true, CallingConvention=CallingConvention.Winapi)] [return: MarshalAs(UnmanagedType.Bool)] static extern bool SetFileInformationByHandle(SafeFileHandle file, FILE_INFO_BY_HANDLE_CLASS informationClass, IntPtr information, uint bufferSize);`. The enum underlying type is `int` and `FileRenameInfo=3`.
+    Parent access is FILE_TRAVERSE 0x20 | FILE_READ_ATTRIBUTES 0x80 | SYNCHRONIZE 0x00100000, never FILE_ADD_SUBDIRECTORY;
+    source access is DELETE 0x00010000 | FILE_READ_ATTRIBUTES | SYNCHRONIZE. Both calls use share
+    `FILE_SHARE_READ` 1 | `FILE_SHARE_WRITE` 2 while omitting `FILE_SHARE_DELETE` 4, disposition `OPEN_EXISTING` 3,
+    flags `FILE_FLAG_BACKUP_SEMANTICS` 0x02000000 | `FILE_FLAG_OPEN_REPARSE_POINT` 0x00200000, null security attributes,
+    and a null template. Successful SafeFileHandles own and close handles; null/invalid/closed handles fail before
+    mutation. Immediately after each `CreateFileW`, capture `Marshal.GetLastWin32Error` before inspecting the returned
+    handle; immediately after `SetFileInformationByHandle`, capture it before inspecting the Boolean result. Use the
+    captured value only for a failed result. Dispose source then parent and free the unmanaged buffer in `finally`.
+    A single UTF-16 sibling component is nonempty, NUL-/slash- /
+    dot-/colon-/rooted-/device-/UNC-free and exactly `<source-root-name>.quarantine` by OrdinalIgnoreCase relation; checked
+    even byte length is <= uint.MaxValue-20 and checked buffer length is `20+length`, with no terminator required. Any
+    admission, handle, layout, name, or buffer failure makes no native rename call.
     Rename only with `SetFileInformationByHandle` on the already-open source handle, class 3, pointer plus uint size,
     `ReplaceIfExists=false`, the parent handle as `RootDirectory`, and exact relative sibling name
-    `<source-root-name>.quarantine`. Capture exact `GetLastWin32Error` as local evidence. If API, handle, share, layout,
+    `<source-root-name>.quarantine`. Retain the immediately captured `GetLastWin32Error` as local failure evidence. If API, handle, share, layout,
     root-relative, or x64 admission fails, fail quarantine before mutation; never downgrade. Hold both handles from final
     identity validation through native rename completion and postclassification. Target creation at the atomic call
     refuses without overwrite/merge/retry; target remains unchanged and source retains its ID. Source rename/delete/
@@ -295,18 +318,24 @@ primary-failure masking, unsafe quarantine, concurrency, and unavailable platfor
 
 ## Test budget
 
-Exactly 10 grouped test methods, with theories/subcases permitted and no duplicated assertion across groups:
+Soft target: 10 grouped test methods covering ten mandatory risk groups, with theories/subcases permitted and no
+duplicated assertion across groups. An additional focused nonduplicate regression is allowed only for a concrete finding
+or risk; record its reason, method/group, new total, and focused expected discovery count before `ReviewRequired`. Do not
+remove or combine mandatory groups to hide proof; current expected 86 is 76 accepted #106 plus 10, and any expansion
+amends the candidate expected count through the ordinary issue amendment/review path.
 
 1. Windows/x64/rooted Git admission fails closed;
 2. exact three receipt roles `cache`, `output`, `worktree`, v1 sentinel, stable sanitized receipt, FILE_ID_INFO
    replacement, containment, reparse, partial, and reconstructed-owner authority negatives;
-3. real worktree registration/admin capture and exact successful cleanup, including absent registration and admin path;
+3. real worktree registration/admin capture and exact successful cleanup, including absent registration and admin path,
+   explicit source/owned-worktree cwd, relative/absolute/wrong-base output, and process-cwd mismatch partitions;
 4. active-family or unproven family zero blocks Git mutation, RM, direct filesystem deletion, and quarantine; owned-process
    terminate/wait/dispose and evidence collection remain permitted and mandatory, with cancellation/deadline evidence
    recorded;
 5. exact `CleanupTimeout`/10-second grace and nested deletion schedule, all-eight-fail/no-ninth, partial role success
    then later role failure, per-role inventory, `DeletionBudgetExhausted` evidence, no `RoleCleanupComplete`, and no
-   premature quarantine;
+   premature quarantine. Boundary proofs include start at 1950/complete at 2000 inclusive without overrun, complete at
+   2001 as overrun, wake/start after 2000 with no call, and outer expiry during an admitted call;
 6. explicit missing/unloadable RM capability as blocking non-pass, plus RM scripts, first-violation attribution, real
    admitted-platform empty/known-lock calls, Unicode Marshal layout, injected state-machine negatives, caps/errors,
    session end, and no shutdown;
@@ -321,11 +350,21 @@ Exactly 10 grouped test methods, with theories/subcases permitted and no duplica
    immediately before `SetFileInformationByHandle`; subcases prove competitor source rename/delete denial, same-path
    replacement denial, destination creation race refusal without overwrite, exact moved FILE_ID, unrelated post-success
    source replacement unchanged, unsupported native/layout/handle refusal before mutation, no path-based fallback, and
-   terminal/report-only semantics. No sleeps;
+    terminal/report-only semantics. It also asserts DllImport metadata/signatures, BOOL marshalling, enum width, access
+    masks, invalid-handle refusal, immediate error capture, reverse disposal, buffer free, and no-call-on-failure.
+    No sleeps;
 9. concurrent fixtures and unrelated repo/ref/config/worktree isolation;
 10. successful live cleanup only, with no residual registration/admin/root; quarantine is exclusive to group 8.
 
 ## Focused verification
+
+Before GH-107 promotion/activation, on clean then-current main run the full Acceptance Release command once as a
+baseline observation, not a focused/final gate and not a consumption of the candidate final gate. Record a public Issue
+#107 receipt with exact SHA, relevant `dotnet --info` SDK version, Windows version/architecture, rooted Git identity and
+capability, RM capability, discovered/pass/fail/skip counts, and exact sorted failure signatures. If unavailable, GH-107
+remains Blocked. Candidate comparison requires all ProcessOwnership/FixtureCleanup tests pass with zero skips, no new
+failure signature beyond baseline, and no baseline pass becoming fail; disappeared baseline failures are allowed and count
+changes require explanation. Prefer the same environment and classify differences explicitly.
 
 The one required focused implementation command, before `ReviewRequired`, is:
 `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~FixtureCleanupProcessTests|FullyQualifiedName~FixtureCleanupIntegrationTests|FullyQualifiedName~ProcessOwnershipTests"`, exactly `86 passed/0 failed/0 skipped`.
@@ -385,7 +424,8 @@ complete-suite counts/signatures and the rule for unrelated known failures; fixt
 
 ## Acceptance proof
 
-Group 1 proves Windows/x64/rooted Git admission only; group 2 proves the three-role sentinel/receipt and authority
+Group 1 owns `AdmissionFailedNoOwnership`; admission success first becomes `Provisioned` in group 2, which proves the
+three-role sentinel/receipt and authority
 negatives; group 3 proves Git identity and admin cleanup; group 4 proves family-zero/deadline gating; group 5 proves
 per-role inventory, exact retry exhaustion, and no premature quarantine; group 6 proves blocking RM capability and ABI/
 state machine; group 7 proves physical state versus outcome and primary/secondary precedence; group 8 proves every
