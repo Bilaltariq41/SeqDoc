@@ -164,13 +164,30 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
     `ExactSpelling=true`, `SetLastError=true`; CreateFileW is Unicode with `BestFitMapping=false`,
     `ThrowOnUnmappableChar=true` and exact
     declaration `[DllImport("kernel32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true, CallingConvention=CallingConvention.Winapi, BestFitMapping=false, ThrowOnUnmappableChar=true)] static extern SafeFileHandle CreateFileW([MarshalAs(UnmanagedType.LPWStr)] string fileName, uint desiredAccess, uint shareMode, IntPtr securityAttributes, uint creationDisposition, uint flagsAndAttributes, IntPtr templateFile);`. The rename call itself moves to the native NT layer:
-    `NtSetInformationFile` is `[DllImport("ntdll.dll")] static extern int NtSetInformationFile(SafeFileHandle fileHandle, out IO_STATUS_BLOCK ioStatusBlock, IntPtr fileInformation, uint length, uint fileInformationClass);`, called on the already-open source
-    handle from the same handle-opening/validation sequence as before, with both handles held live through the call.
-    `IO_STATUS_BLOCK` is `[StructLayout(LayoutKind.Sequential)] struct IO_STATUS_BLOCK { public IntPtr Status; public IntPtr Information; }`.
-    The native information-class enum underlying type is `uint` and `FileRenameInformation=10` (plain `FileRenameInformation`
-    only, never the Win32 `FileRenameInfo=3`, the Win32 `FileRenameInfoEx=22`, or the native `FileRenameInformationEx=65`).
-    `NtSetInformationFile` returns an `NTSTATUS` as `int`; success is exactly `0` and any nonzero value is failure, with no
-    NTSTATUS-to-Win32 translation attempted.
+    `NtSetInformationFile` uses the exact frozen declaration `[DllImport("ntdll.dll", ExactSpelling=true, CallingConvention=CallingConvention.Winapi, SetLastError=false)] static extern int NtSetInformationFile(SafeFileHandle fileHandle, out IO_STATUS_BLOCK ioStatusBlock, IntPtr fileInformation, uint length, int fileInformationClass);`, called on the already-open source
+    handle from the same handle-opening/validation sequence as before, with both handles held live via `SafeFileHandle`
+    (never released or reconstructed) through the call and through postclassification. `ntdll.dll` sets no Win32 last
+    error and its own return value is authoritative, so `SetLastError=false` is an exact declared contract, not an
+    omission. `IO_STATUS_BLOCK` is the frozen x64 layout `[StructLayout(LayoutKind.Sequential)] struct IO_STATUS_BLOCK { public IntPtr Status; public IntPtr Information; }`:
+    `Status` at offset 0, 8 bytes, holding the 32-bit `NTSTATUS` in its low 32 bits; `Information` at offset 8, 8 bytes;
+    frozen total size 16 bytes. The native information-class parameter is signed `int fileInformationClass = 10`
+    (`FileRenameInformation`), matching the native C `_FILE_INFORMATION_CLASS` enum's default signed 32-bit underlying
+    type (deliberately not the `uint` used elsewhere in this document for Win32 DWORD-typed constants); never the Win32
+    `FileRenameInfo=3`, the Win32 `FileRenameInfoEx=22`, or the native `FileRenameInformationEx=65`.
+    `NtSetInformationFile`'s own return value is the authoritative `NTSTATUS`, captured as signed `int` local evidence
+    immediately after the call and before evaluating it or the out `IO_STATUS_BLOCK`; success is exactly `0`
+    (`STATUS_SUCCESS`) and any nonzero value is failure, with no NTSTATUS-to-Win32 translation attempted. Exact
+    postclassification, none of which may trigger a fallback rename or a second destructive action: a nonzero returned
+    `NTSTATUS` is failure, reobserved and classified per the existing `SourcePreserved`/`Collision`/`SourceNameReused`/
+    `Indeterminate` rules below; `NTSTATUS==0` with `IO_STATUS_BLOCK.Status`'s low 32 bits also reporting success proceeds
+    to the existing destination/`FILE_ID_INFO`/sentinel/registration postcondition proof; `NTSTATUS==0` with a
+    contradictory nonzero `IO_STATUS_BLOCK.Status` is classified locally as `Indeterminate`, both raw values are
+    retained as local diagnostic evidence, and the overall result remains non-success degradation; `NTSTATUS==0` with
+    agreeing `IO_STATUS_BLOCK` but a failed destination `FILE_ID_INFO`/sentinel/registration postcondition check is
+    likewise classified locally as `Indeterminate` and treated as non-success degradation, never as `MoveCompleted`;
+    and any other partial or unrecognized observation (for example a thrown exception during postclassification, or a
+    handle that becomes invalid mid-check) is classified locally as `Indeterminate` with all captured raw evidence
+    preserved, and no further destructive action follows.
 
     **Accepted boundary.** This checkpoint depends on `NtSetInformationFile`, a native NT API exported by `ntdll.dll` that
     is not part of Microsoft's documented Win32 application surface; `FileRenameInformation` (class 10) has been stable
@@ -180,6 +197,14 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
     shipped product behavior, an incompatibility on a future Windows build is accepted to surface as a loud, fail-closed
     test failure, not a silent defect; this is recorded the same way the rooted-Git-path and RM-capability boundaries are
     already recorded elsewhere in this document.
+
+    This boundary is explicit, not implicit: no version allowlist and no alternative-rename fallback are permitted.
+    Every admitted Group-8 positive partition must execute the real `NtSetInformationFile` call on the actual running
+    Windows build; a missing `ntdll.dll` export, an admission/declaration failure, a nonzero `NTSTATUS`, a contradictory
+    `IO_STATUS_BLOCK`, or an unproven postcondition on any build is a fail-closed failure of that run, classified per
+    clause 9's exact postclassification rules above, and never a skip. The focused-verification receipt (below) records
+    the exact measured Windows build; an unsupported future build is a blocking non-pass for GH-107 promotion, not a
+    silent defect and not cause for a second, different rename attempt.
     Parent access is FILE_TRAVERSE 0x20 | FILE_READ_ATTRIBUTES 0x80 | SYNCHRONIZE 0x00100000, never FILE_ADD_SUBDIRECTORY;
     source access is DELETE 0x00010000 | FILE_READ_ATTRIBUTES | SYNCHRONIZE. Both calls use share
     `FILE_SHARE_READ` 1 | `FILE_SHARE_WRITE` 2 while omitting `FILE_SHARE_DELETE` 4, disposition `OPEN_EXISTING` 3,
@@ -226,17 +251,23 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
 
 ### Permitted test seams
 
-This is a closed table. No hook may return or influence a stage transition, authority/ownership decision, or final
-classification; a hook may only substitute what a real OS call would have returned, or when it would have returned it.
+This is a closed table: exactly these rows exist, and no other hook, hand-rolled seam, or injected override exists
+anywhere in `FixtureCleanup.cs`/`FixtureCleanupTests.cs`. No hook may return or influence a stage transition,
+authority/ownership decision, or final classification; a return-code override hook may substitute only a caller-supplied
+*failure* value for what a real OS/native call would otherwise have returned — it must never synthesize success, a
+`FILE_ID`, a path, sentinel bytes, Git command output, family-zero proof, RM ownership/attribution, a stage, a
+classification, or a postcondition, and it must be inert (unset/no-op) during every group's positive/success partition.
+An unlisted or unenumerated hook fails review.
 
-| Seam | Exact location | What it may override |
-|---|---|---|
-| Injectable monotonic clock/sleeper | Retry-schedule attempt-offset/delay computation and wait | An OS monotonic-clock reading or a timing/sleep observation only |
-| Per-native-call return-code override hook | One specific named native call site (mirrors GH-106's `...ForTests` pattern), e.g. forcing a specific `NTSTATUS`/Win32 error from one call | The OS return value that call would have produced, for testing a hard-to-trigger negative partition |
-| Injectable generic quarantine observer/barrier | Fires exactly after both live handles are open and all parent/source/target authority is validated, immediately before `NtSetInformationFile` | A timing/synchronization observation only (when the native call is about to happen), never the call's outcome |
+| Seam | Exact call site | Allowed override domain | Consuming group | Real positive-path proof (no seam active) |
+|---|---|---|---|---|
+| Injectable monotonic clock/sleeper | The retry loop's `IClock`/`ISleeper`-shaped seam (a hand-rolled `TimeProvider`-shaped test type, not a NuGet reference) wrapping every attempt-offset/delay wait | An OS monotonic-clock reading or a `Task.Delay`/`Thread.Sleep`-shaped timing observation only; never a stage/authority/outcome value | Group 5 | Group 5's successful-retry-then-delete positive case runs the real retry loop with the real clock; the seam is exercised only for the deterministic boundary subcases (1950/2000/2001 ms). |
+| `NtSetInformationFile` return-code override hook | The one call site in the quarantine rename path, immediately after live parent/source handles and all authority are validated | Only the returned `NTSTATUS`, to a caller-supplied nonzero failure value, for Group 8's single "unsupported native/layout/handle admission refusal" negative partition; never `0`/`STATUS_SUCCESS` | Group 8 | Group 8's `QuarantinedTerminal` positive case executes the real `NtSetInformationFile` call with the hook unset. |
+| `RmStartSession`/`RmRegisterResources`/`RmGetList`/`RmEndSession` return-code override hook | The one call site for each of these four RM entry points in the admission/registration/list/session-end sequence | Only that call's own returned DWORD (and, for `RmGetList` only, its `needed`/`count` out-values), to a caller-supplied combination representing a malformed count, non-growing count, third `MORE_DATA`, or an admission/registration/session-end failure code — never a combination already provable on the real admitted platform | Group 6 | Group 6's first-violation-attribution positive case executes the real `RmStartSession`/`RmRegisterResources`/`RmGetList`/`RmEndSession` sequence with every hook unset. |
+| Injectable generic quarantine observer/barrier | Fires exactly after both live handles are open and all parent/source/target authority is validated, immediately before `NtSetInformationFile` | A timing/synchronization observation only (signals that the native call is about to happen); never the call's outcome | Group 8 | Group 8's `QuarantinedTerminal` positive case fires the barrier with no competitor action taken. |
 
-Every group's positive/success partition must execute with no test seam/hook active; see the test-budget "no-override
-positive-path" rule below.
+Every group's positive/success partition must execute with no test seam/hook active — real `git.exe`, real filesystem,
+real native calls throughout; see the test-budget "no-override positive-path" rule below.
 
 ### Total physical state machine and per-role inventory
 
@@ -365,15 +396,17 @@ updates — accepted because this is test-only tooling and any incompatibility f
 
 ## Test budget
 
-Exactly ten `[Fact]` test methods in `FixtureCleanupTests.cs` cover the ten mandatory risk groups below, with no
-duplicated assertion across groups. `[Theory]`/parameterized tests are explicitly prohibited in this file: the flexibility
-to count theories/subcases toward the budget is withdrawn, to keep the `86 passed/0 failed/0 skipped` focused-command
-count exact and unambiguous (76 accepted ProcessOwnership tests + exactly 10 FixtureCleanup `[Fact]` methods = 86, with no
-theory-row multiplication). An additional focused nonduplicate regression is allowed only for a concrete finding or risk;
-record its reason, method/group, new total, and focused expected discovery count before `ReviewRequired`. Do not remove
-or combine mandatory groups to hide proof; current expected 86 is 76 accepted #106 plus 10, and any expansion amends the
-candidate expected count through the ordinary issue amendment/review path. Each group's substantive proof obligations
-(what each group must prove) are unchanged by this mechanical `[Fact]`-only tightening.
+Current soft target: ten `[Fact]` test methods in `FixtureCleanupTests.cs`, one per mandatory risk group below, with no
+duplicated assertion across groups; current focused expectation: `86 passed/0 failed/0 skipped` (76 accepted
+ProcessOwnership tests + 10 FixtureCleanup `[Fact]` methods). Ten is a soft target, not an immutable cap.
+`[Theory]`/parameterized tests remain explicitly prohibited in this file, so the count stays row-for-row unambiguous
+regardless of how many methods it settles at. A concrete, nonduplicate regression is permitted for a real finding or
+risk newly discovered during implementation or review (including a High-severity safety finding surfaced by a B1/B2/B3
+intermediate Reviewer-agent pass); record its reason, method/group, new total method count, and new focused expected
+discovery count before `ReviewRequired`. Do not remove or combine mandatory groups to hide proof; do not add a method
+to pad the count. Any change to the ten-method/86-count baseline amends the candidate's expected count through the
+ordinary issue amendment/review path. Each group's substantive proof obligations (what each group must prove) are
+unchanged regardless of the exact method count that satisfies them.
 
 Every group's positive/success partition must execute with no test seam/hook active — real `git.exe`, real filesystem,
 real native calls throughout — and, for each group, the checkpoint/ledger should be able to name the specific production
@@ -413,7 +446,11 @@ implementation-time/review-time work, not a planning-amendment obligation.
     UTF-16 sibling bytes. It also asserts `NtSetInformationFile`/`ntdll.dll` DllImport metadata/signatures, `IO_STATUS_BLOCK`
     layout, `NTSTATUS==0` success/failure classification (not BOOL marshalling, which no longer applies to the rename
     call itself), native information-class value, access masks, invalid-handle refusal, immediate NTSTATUS capture, reverse
-    disposal, buffer free, and no-call-on-failure. `CreateFileW` handle-opening calls are unaffected and remain
+    disposal, buffer free, and no-call-on-failure. It further covers the `NTSTATUS==0`-with-contradictory-`IO_STATUS_BLOCK`
+    `Indeterminate` partition, the `NTSTATUS==0`-with-failed-postcondition `Indeterminate` partition, and — using only the
+    closed per-native-call return-code override hook, never a real capability probe — one negative partition simulating an
+    unsupported/failing native admission to prove the fail-closed, no-fallback rule required by the accepted
+    `NtSetInformationFile` boundary. `CreateFileW` handle-opening calls are unaffected and remain
     `SafeFileHandle`/`GetLastWin32Error`-based. No sleeps;
 9. concurrent fixtures and unrelated repo/ref/config/worktree isolation;
 10. successful live cleanup only, with no residual registration/admin/root; quarantine is exclusive to group 8.
@@ -437,9 +474,15 @@ full Acceptance Release command once after Phase B human review and resolved fin
 product or dotnet tests are run while preparing the package.
 
 After each of the internal build phases B1, B2, and B3, an independent Reviewer-agent pass must run against the same
-draft PR/branch before the next phase starts. These are advisory containment checks only — not lifecycle states, not
-human approvals, not final gates — and they do not block on their own; they exist to catch an incomplete/hollow phase
-before the next phase is built on top of it. A hand-rolled `TimeProvider`-shaped test seam type (not a
+draft PR/branch before the next phase starts. These are advisory worker containment checks only — not lifecycle
+states, not human approvals, and not final gates. Every finding they raise must be recorded, before the next phase
+starts, as exactly one of: `Fixed` (repaired on the same branch and reverified), `Rejected` with evidence (recorded
+reason the finding does not apply), or `Carried` explicitly into the mandatory complete-candidate review at
+`ReviewRequired` (only for a finding that genuinely cannot be resolved without work belonging to a later phase). A
+High-severity safety or authority finding from a B1/B2/B3 pass stops the next phase from starting until it is
+disposed as `Fixed` or `Rejected`; it may not be silently `Carried`. These passes do not replace, and their
+dispositions do not substitute for, the worker's own complete-candidate Reviewer-agent pass, Abood-essa's authenticated
+latest-head non-author human review, or the final gate. A hand-rolled `TimeProvider`-shaped test seam type (not a
 `Microsoft.Extensions.TimeProvider`/`FakeTimeProvider` NuGet package reference, since that would require an out-of-scope
 `csproj` change) is explicitly permitted inside `FixtureCleanupTests.cs` for deterministic control over the retry
 schedule's clock/sleeper seam.
@@ -458,8 +501,12 @@ Stop at `ReviewRequired` after a green focused lane. Require one latest-head, no
 complete candidate; run the final gate once after findings are resolved. Stop if #106's public API cannot satisfy the
 contract, exact ownership or family-zero proof is absent, Git admin cleanup risks unrelated state, RM would need
 termination authority, Windows x64/Git/RM is unavailable, target paths expand, or GH93/GH18 files would be edited.
-Qhatahet is the reserved eligible untouched non-author human reviewer for the latest candidate. Any replacement follows
-the current reviewer-change evidence policy; no reviewer metadata is created at Ready.
+Following the 2026-09-23 recovery decision (https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5795266589),
+Qhatahet is the implementer/candidate contributor for GH-107/I100-B B1–B3 product implementation and, as of that
+decision, is no longer eligible as an independent reviewer of that candidate. Abood-essa is the confirmed replacement
+reserved eligible untouched non-author human reviewer for the latest candidate
+(https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5795300539). Any further replacement follows the
+current reviewer-change evidence policy; no reviewer metadata is created at Ready.
 
 ### Review and activation contract
 
@@ -481,14 +528,18 @@ stop before editing; amend GH-107/I100-B target paths, claims, risks, and tests 
 and obtain latest-head non-author peer approval on the amended SHA before resuming. Target expansion without an accepted
 amendment is a stop condition, not an automatic permanent block and not an undocumented bypass.
 
-Phase A requires both Qhatahet and Abood-essa to review the same immutable replacement planning SHA and post
-authenticated T2 receipts. They approve only same-issue internal sequencing/spec/allowlists, not implementation findings
-or the final gate. Phase B requires the worker/Orchestrator to invoke an independent Reviewer agent on the complete latest
-candidate and record its invocation/output digest, then self-review/dispositions, focused/affected green,
-`ReviewRequired`, and one authenticated latest-head non-author human GitHub approval for the same implementation SHA
-reserved to Qhatahet (replacement only under policy evidence), and that human independently invokes their own Reviewer
-agent run against the same complete latest SHA before posting the authenticated receipt. Phase A cannot defer or dispose
-Phase B findings; Phase B cannot amend the contract without a new
+Phase A requires both reserved peers to review the same immutable replacement planning SHA and post authenticated T2
+receipts; they approve only same-issue internal sequencing/spec/allowlists, not implementation findings or the final
+gate. When one reserved peer authors a given planning/checkpoint amendment (as Qhatahet did for the 2026-09-23
+quarantine-rename-ABI amendment, under the recovery decision's implementer authorization), that peer is disqualified
+as its own reviewer for that exact SHA and only the surviving non-author reserved peer's authenticated T2 approval is
+required to satisfy Phase A for it. Phase B requires the worker/Orchestrator to invoke an independent Reviewer agent on
+the complete latest B1–B3 implementation candidate and record its invocation/output digest, then self-review/
+dispositions, focused/affected green, `ReviewRequired`, and one authenticated latest-head non-author human GitHub
+approval for the same implementation SHA reserved to Abood-essa, the confirmed replacement Phase-B reviewer under the
+2026-09-23 recovery decision (Qhatahet, now the implementer, is disqualified from Phase B as of that decision), and
+that human independently invokes their own Reviewer agent run against the same complete latest SHA before posting the
+authenticated receipt. Phase A cannot defer or dispose Phase B findings; Phase B cannot amend the contract without a new
 amendment. No Ready or owner bypass is claimed. Before implementation/promotion, capture clean current-main
 complete-suite counts/signatures and the rule for unrelated known failures; fixture groups may not pass by skip.
 
