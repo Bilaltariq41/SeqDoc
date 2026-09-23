@@ -3,23 +3,55 @@
   "branch": "testing/issue-107-fixture-cleanup-v2",
   "checkpointId": "I100-B",
   "checkpointPath": "docs/work/quality/I100-B",
+  "claims": [
+    {
+      "kind": "exclusive",
+      "value": "acceptance-git-worktree-metadata"
+    },
+    {
+      "kind": "fixture",
+      "value": "fixturecleanup"
+    },
+    {
+      "kind": "governance-tool",
+      "value": "tools/governance/work_state.py"
+    },
+    {
+      "kind": "path",
+      "value": "docs/project/work-items/gh-107.json"
+    },
+    {
+      "kind": "path",
+      "value": "docs/work/quality/i100-b"
+    },
+    {
+      "kind": "path",
+      "value": "tests/seqdoc.acceptancetests/fixturecleanup.cs"
+    },
+    {
+      "kind": "path",
+      "value": "tests/seqdoc.acceptancetests/fixturecleanuptests.cs"
+    }
+  ],
   "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5775101734",
   "dependencies": [
     "GH-106"
   ],
+  "executionId": "GH-107:I100-B",
   "expectedGithubState": "OPEN",
   "id": "GH-107",
   "kind": "github-issue",
-  "lifecycle": "Ready",
-  "lifecycleLabel": "ready",
+  "lifecycle": "Active",
+  "lifecycleLabel": "active",
   "nextAction": "Activate I100-B on testing/issue-107-fixture-cleanup-v2 with the frozen claims and implement B1/B2/B3.",
   "number": 107,
   "owner": "ahmad",
   "pr": null,
   "schemaVersion": 1,
-  "selectedForExecution": false,
+  "selectedForExecution": true,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/107",
   "statusReason": "Phase A planning merged at 55fa07d; both exact-head peer approvals and clean-main baseline observation are recorded.",
   "title": "[Testing] Prove fixture-owned worktree cleanup and lock attribution",
-  "track": "quality"
+  "track": "quality",
+  "worktreeId": "seqdoc-i107-v2"
 }
