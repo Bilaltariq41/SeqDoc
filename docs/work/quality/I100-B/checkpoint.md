@@ -2,7 +2,7 @@
 
 ## State
 
-`ResolvingFindings`
+`Blocked`
 
 ## Authority and frozen state
 

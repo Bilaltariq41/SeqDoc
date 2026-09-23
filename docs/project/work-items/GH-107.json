@@ -3,47 +3,16 @@
   "branch": "testing/issue-107-fixture-cleanup-v2",
   "checkpointId": "I100-B",
   "checkpointPath": "docs/work/quality/I100-B",
-  "claims": [
-    {
-      "kind": "exclusive",
-      "value": "acceptance-git-worktree-metadata"
-    },
-    {
-      "kind": "fixture",
-      "value": "fixturecleanup"
-    },
-    {
-      "kind": "governance-tool",
-      "value": "tools/governance/work_state.py"
-    },
-    {
-      "kind": "path",
-      "value": "docs/project/work-items/gh-107.json"
-    },
-    {
-      "kind": "path",
-      "value": "docs/work/quality/i100-b"
-    },
-    {
-      "kind": "path",
-      "value": "tests/seqdoc.acceptancetests/fixturecleanup.cs"
-    },
-    {
-      "kind": "path",
-      "value": "tests/seqdoc.acceptancetests/fixturecleanuptests.cs"
-    }
-  ],
   "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5775101734",
   "dependencies": [
     "GH-106"
   ],
-  "executionId": "GH-107:I100-B:T1",
   "expectedGithubState": "OPEN",
   "id": "GH-107",
   "kind": "github-issue",
-  "lifecycle": "ResolvingFindings",
-  "lifecycleLabel": "resolving-findings",
-  "nextAction": "Fresh checkpoint-builder owns the complete two-file I100-B candidate; run focused verification, then stop at ReviewRequired for Qhatahet.",
+  "lifecycle": "Blocked",
+  "lifecycleLabel": "blocked",
+  "nextAction": "Remain Blocked pending a new separately authorized recovery decision; do not review, run the final gate, merge PR #121, or close Issue #107.",
   "number": 107,
   "owner": "ahmad",
   "pr": null,
@@ -52,10 +21,9 @@
     "startHead": "69f587b9b4c4ebe52ef35a8059e3932bfa9fec52"
   },
   "schemaVersion": 1,
-  "selectedForExecution": true,
+  "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/107",
-  "statusReason": "Fresh-builder transfer authorized after repair-limit block; durable record https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5794406557; blocked worktree preserved and unpublished files excluded.",
+  "statusReason": "Authorized fresh-builder transfer was unavailable: the independent candidate stopped incomplete and omitted mandatory exact Git administration cleanup, Restart Manager execution/state machine, identity-bound quarantine, live process/repository integration, and the required 86-test command. Both blocked worktrees are preserved; no maintainer takeover is authorized.",
   "title": "[Testing] Prove fixture-owned worktree cleanup and lock attribution",
-  "track": "quality",
-  "worktreeId": "seqdoc-i107-transfer"
+  "track": "quality"
 }
