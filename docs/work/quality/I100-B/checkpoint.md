@@ -54,18 +54,21 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
 
 ## Frozen semantic contract
 
-1. **Ownership authority.** Use an immutable in-memory receipt and versioned sentinel at one fixture control root,
-    with an unpredictable token and exact logical roles `cache`, `output`, and `worktree`, sorted in that order. Quarantine
-    is separate caller-parent and sibling move-target authority, never a role or child. The sentinel is
-   UTF-8 schema v1: `schemaVersion=1`, a cryptographic 128-bit-or-longer base64url token, exact expected revision,
-   source common-dir identity digest, and a sorted role-to-canonical-relative-path map; it contains no absolute paths
-   or timestamps. The receipt additionally stores physical canonical paths and Windows `FILE_ID_INFO` volume serial
-   and 128-bit file ID for the control root, sentinel, every existing role root, worktree root, and captured admin dir,
-   plus exact registration identity. Every destructive target is a canonical non-reparse descendant listed in the
-   receipt. Open directories with reparse-safe semantics. Before every destructive attempt revalidate token/content,
-   containment, every non-reparse component, volume/file IDs, role, and Git identity. Missing, malformed, mismatched,
-   escaped, replaced/recreated, reparse, role-mismatched, or changed-identity authority fails closed. The control root
-   and sentinel survive child cleanup and the sentinel/root are removed last.
+1. **Ownership authority.** Use an immutable in-memory receipt and versioned sentinel at one fixture control root.
+    Its source basename is exactly `seqdoc-fixture-<token>` by ordinal equality, where `<token>` is the admitted 32
+    cryptographically random bytes encoded as base64url without padding. The resulting basename is ASCII and is NUL-, dot-, slash-, backslash-,
+    colon-, rooted-, device-, UNC-, and normalization-ambiguity-free; it is neither `.` nor `..`. Any different prefix,
+    token, encoding, casing, padding, character, or normalized representation fails admission. Use exact logical roles
+    `cache`, `output`, and `worktree`, sorted in that order. Quarantine is separate caller-parent and sibling move-target
+    authority, never a role or child. The sentinel is UTF-8 schema v1: `schemaVersion=1`, the same admitted token, exact
+    expected revision, source common-dir identity digest, and a sorted role-to-canonical-relative-path map; it contains no
+    absolute paths or timestamps. The receipt additionally stores physical canonical paths and Windows `FILE_ID_INFO`
+    volume serial and 128-bit file ID for the control root, sentinel, every existing role root, worktree root, and captured
+    admin dir, plus exact registration identity. Every destructive target is a canonical non-reparse descendant listed in
+    the receipt. Open directories with reparse-safe semantics. Before every destructive attempt revalidate token/content,
+    containment, every non-reparse component, volume/file IDs, role, and Git identity. Missing, malformed, mismatched,
+    escaped, replaced/recreated, reparse, role-mismatched, or changed-identity authority fails closed. The control root and
+    sentinel survive child cleanup and the sentinel/root are removed last.
 2. **Git identity.** Capture source before-state: status, exact refs, local config, and worktree porcelain. Create a
     detached worktree at the exact revision via the #106 process runner. Capture exact registration and
     `rev-parse --absolute-git-dir`; prove that admin path is under the source common-dir worktrees area. The source cwd
@@ -135,9 +138,11 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
     deletion budget. The immutable local authority receipt includes the caller-authorized canonical local-drive control
     parent, component-by-component non-reparse observations, volume serial, and FILE_ID_INFO. The parent authorizes one
     direct-child move target but is never owned or deletable. The source control root is its exact immediate child with
-    captured identity/token/sentinel/roles. Separate move-target authority is the exact absent sibling
-    `<source-root-name>.quarantine` (equivalent token-derived exact name), under the same exact parent and volume, with
-    canonical boundary and non-reparse existing destination components.
+    captured identity/token/sentinel/roles. `sourceRootName` means only the receipt-captured source basename admitted by
+    clause 1. Separate move-target authority is the exact absent sibling constructed solely as
+    `sourceRootName + ".quarantine"`, necessarily `seqdoc-fixture-<token>.quarantine`, under the same exact parent and
+    volume, with canonical boundary and non-reparse existing destination components. There is no alternate hard-coded or
+    independently parsed target grammar.
 
     There is no `Directory.Move` and no path-based fallback. Open the authorized parent with `CreateFileW` using
     `OPEN_EXISTING`, `FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT`, required traverse, read-attributes, and
@@ -165,13 +170,16 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
     mutation. Immediately after each `CreateFileW`, capture `Marshal.GetLastWin32Error` before inspecting the returned
     handle; immediately after `SetFileInformationByHandle`, capture it before inspecting the Boolean result. Use the
     captured value only for a failed result. Dispose source then parent and free the unmanaged buffer in `finally`.
-    A single UTF-16 sibling component is nonempty, NUL-/slash- /
-    dot-/colon-/rooted-/device-/UNC-free and exactly `<source-root-name>.quarantine` by OrdinalIgnoreCase relation; checked
-    even byte length is <= uint.MaxValue-20 and checked buffer length is `20+length`, with no terminator required. Any
-    admission, handle, layout, name, or buffer failure makes no native rename call.
+    Before unmanaged-buffer allocation, revalidate the source basename against clause 1 and construct the one target from
+    that validated value. The target must equal the construction by exact ordinal equality, remain ASCII and normalization
+    invariant, and contain exactly one dot: the separator introducing exactly one `.quarantine` suffix. Reject a missing or
+    altered suffix, different token, extra dot or suffix, NUL, slash, backslash, colon, rooted/device/UNC form, `.` or `..`,
+    non-ASCII input, or any normalization-changing representation before buffer allocation or native rename. Its checked
+    even UTF-16 byte length is <= uint.MaxValue-20 and checked buffer length is `20+length`, with no terminator required.
+    Any admission, handle, layout, name, or buffer failure makes no native rename call.
     Rename only with `SetFileInformationByHandle` on the already-open source handle, class 3, pointer plus uint size,
     `ReplaceIfExists=false`, the parent handle as `RootDirectory`, and exact relative sibling name
-    `<source-root-name>.quarantine`. Retain the immediately captured `GetLastWin32Error` as local failure evidence. If API, handle, share, layout,
+    `sourceRootName + ".quarantine"`. Retain the immediately captured `GetLastWin32Error` as local failure evidence. If API, handle, share, layout,
     root-relative, or x64 admission fails, fail quarantine before mutation; never downgrade. Hold both handles from final
     identity validation through native rename completion and postclassification. Target creation at the atomic call
     refuses without overwrite/merge/retry; target remains unchanged and source retains its ID. Source rename/delete/
@@ -289,8 +297,9 @@ service 63+1; exact Start/Register/GetList/End signatures use files LPArray and 
 three GetList calls permit one growth, cap 64, and fail malformed/non-growing/third MORE_DATA with no partial result;
 End evidence is mandatory and no RmShutdown exists.
 
-B3 technical strengthening freezes identity-bound native rename to an absent same-volume direct sibling
-`seqdoc-fixture-<token>.quarantine`, collision refusal, and terminal `QuarantinedTerminal` only. The existing
+B3 technical strengthening freezes identity-bound native rename to the absent same-volume direct sibling produced only by
+`sourceRootName + ".quarantine"`, whose resulting display is `seqdoc-fixture-<token>.quarantine`, plus collision refusal
+and terminal `QuarantinedTerminal` only. The existing
 assembly-staged rooted stub vector is exactly `sleep-with-marker <owned-marker-path> 30000`, marker under receipt-listed
 output; bounded event/poll evidence parses marker bytes to public `ContainedProcess.ProcessId`. The exact live order is:
 provision; start child; observe marker and PID; assert `.completed` absent; independently lock a separate exact
@@ -350,7 +359,11 @@ amends the candidate expected count through the ordinary issue amendment/review 
    immediately before `SetFileInformationByHandle`; subcases prove competitor source rename/delete denial, same-path
    replacement denial, destination creation race refusal without overwrite, exact moved FILE_ID, unrelated post-success
    source replacement unchanged, unsupported native/layout/handle refusal before mutation, no path-based fallback, and
-    terminal/report-only semantics. It also asserts DllImport metadata/signatures, BOOL marshalling, enum width, access
+    terminal/report-only semantics. Naming subcases prove the valid exact `seqdoc-fixture-<token>.quarantine` construction
+    and reject missing/altered suffix, different token, extra dot/suffix, slash, backslash, colon, NUL, rooted/device/UNC
+    form, `.`/`..`, non-ASCII or normalization-changing input, and a source basename that does not match the frozen token;
+    every negative refuses before buffer allocation and native rename, and the positive encodes only the exact constructed
+    UTF-16 sibling bytes. It also asserts DllImport metadata/signatures, BOOL marshalling, enum width, access
     masks, invalid-handle refusal, immediate error capture, reverse disposal, buffer free, and no-call-on-failure.
     No sleeps;
 9. concurrent fixtures and unrelated repo/ref/config/worktree isolation;

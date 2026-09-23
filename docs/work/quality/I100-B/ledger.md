@@ -108,6 +108,13 @@ Exactly four findings are recorded:
 | Qhatahet latest F2 | Collaboration citation and review sequence | **Fixed.** The ledger uses `docs/project/collaboration-model.md, Delivery procedure, item 3`; worker Reviewer/self-review precedes reserved human's independent Reviewer run and authenticated receipt before Gate Runner. |
 | Qhatahet note | Admission observable | **Fixed.** Acceptance proof maps Group 1 admission failure to `AdmissionFailedNoOwnership` and admission success to `Provisioned` as first observed in Group 2. |
 
+## PR120 R6 disposition
+
+| Finding | Subject | Disposition and proof |
+|---|---|---|
+| Abood I100-B-R6-F1 | High — impossible and competing quarantine target grammars | **Fixed.** Clause 1 freezes the source basename as exact ordinal `seqdoc-fixture-<token>` using the admitted unpadded base64url token. Quarantine constructs its sole target as `sourceRootName + ".quarantine"`; source-only grammar validation is separate from exact target equality and the single allowed suffix dot. Group 8 covers the valid construction and every requested token, suffix, character, path-form, and normalization negative before allocation or native rename. Review evidence: `https://github.com/Bilaltariq41/SeqDoc/pull/120#pullrequestreview-5289552311`. |
+| Qhatahet same-head approval | R2–R5 and prior Qhatahet repairs | **Preserved as historical evidence.** Qhatahet approved `5ad33e85638b5ba2297a03351fe86e6b55709a66` at `https://github.com/Bilaltariq41/SeqDoc/pull/120#pullrequestreview-5289582563`; this R6 amendment makes that approval stale for authorization, so both peers must review the new exact SHA. |
+
 ## Worker review finding dispositions
 
 | Finding | Disposition and governing evidence |
