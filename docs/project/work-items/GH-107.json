@@ -1,9 +1,9 @@
 {
-  "baseline": "dfc28b0b227e544bda937229dd11e31619bb0f25",
-  "branch": "testing/issue-107-fixture-cleanup",
+  "baseline": "18aae5e0364c0b13549bd0c5333ba48f8116bc9a",
+  "branch": "testing/issue-107-fixture-cleanup-v2",
   "checkpointId": "I100-B",
   "checkpointPath": "docs/work/quality/I100-B",
-  "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5696378047",
+  "contractRevision": "https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5775101734",
   "dependencies": [
     "GH-106"
   ],
@@ -12,14 +12,14 @@
   "kind": "github-issue",
   "lifecycle": "Blocked",
   "lifecycleLabel": "blocked",
-  "nextAction": "Preserve the rejected worktree and obtain a separately authorized split, transfer, or attribution-preserving bounded takeover.",
+  "nextAction": "Amend the same-issue B1/B2/B3 plan and obtain both Qhatahet and Abood-essa reviews at the same immutable replacement SHA; do not implement until promoted.",
   "number": 107,
   "owner": "ahmad",
   "pr": null,
   "schemaVersion": 1,
   "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/107",
-  "statusReason": "I100-B blocked after two unsuccessful implementation repair rounds; focused tests were insufficient and the candidate lacks frozen ownership, Git-admin, process-family, Restart Manager, quarantine, concurrency, and live-lock evidence.",
+  "statusReason": "I100-B remains Blocked for a clean-history same-issue planning amendment. Issues #116-#118 are closed superseded history only; PR119 is superseded unmerged and not activation ancestry. The rejected candidate is preserved local-only and its old branch is never reused. No owner bypass is claimed.",
   "title": "[Testing] Prove fixture-owned worktree cleanup and lock attribution",
   "track": "quality"
 }

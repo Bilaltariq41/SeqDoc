@@ -1,7 +1,8 @@
 # I100-B planning decision ledger
 
-This is a planning-only ledger. No tests, focused command, final gate, implementation, GitHub operation, commit, push,
-or activation was run.
+This is a planning-only ledger. PR119 commits, pushes, reviews, and child issue creation/comment/closure occurred as
+superseded planning history. No product/test command, implementation, or activation occurred during this replacement
+amendment. The rejected candidate is preserved local-only and its old branch is not reused.
 
 ## Research sources
 
@@ -10,11 +11,15 @@ or activation was run.
 - Restart Manager resource registration: https://learn.microsoft.com/windows/win32/api/restartmanager/nf-restartmanager-rmregisterresources
 - Restart Manager process listing: https://learn.microsoft.com/windows/win32/api/restartmanager/nf-restartmanager-rmgetlist
 - Restart Manager session end: https://learn.microsoft.com/windows/win32/api/restartmanager/nf-restartmanager-rmendsession
+- Microsoft CreateFileW: https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew
+- Microsoft SetFileInformationByHandle: https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle
+- Microsoft FILE_RENAME_INFO: https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info
+- Microsoft FILE_RENAME_INFORMATION: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
 - Local accepted #106 public API boundary and cleanup pattern findings: `I100-A/checkpoint.md` and `I100-A/ledger.md`,
   including public `ContainedProcess` observations, active-zero proof, teardown evidence, and ordered secondary evidence.
 - Reusable QHTTP/GH93 patterns were inspected as read-only risk input; neither contract supplies a sentinel, quarantine,
   or complete Restart Manager cleanup contract.
-- Readiness and authority: Issue #107, owner authorization
+- Readiness and authority: Issue #107 historical issue/readiness context, authored by Ahmad and not owner authorization,
   https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5696378047; parent split
   https://github.com/Bilaltariq41/SeqDoc/issues/100#issuecomment-5681943603; publication
   https://github.com/Bilaltariq41/SeqDoc/issues/100#issuecomment-5694678193.
@@ -29,10 +34,11 @@ or activation was run.
 | Diagnostics | RM is bounded attribution evidence only, never ownership or termination authority; stable receipts exclude raw paths and timestamps. |
 | Failure | Existing primary failure wins; cleanup evidence is chronological and degradation cannot become success. |
 | Lifecycle | Revalidate before every deletion attempt, use the fixed eight-attempt schedule, and quarantine only after all gates. |
+| Baselines | GH-106 baseline `ab6e3e1cf16213ee5346506b16949fa32c4ddfa4`; accepted head `182ea35533482cebdfc070b368f3a7fa247a1735`; merge `227d2e9f8b49ce6a414795b16bb0408ed213012a`; GH-107 replacement baseline `18aae5e0364c0b13549bd0c5333ba48f8116bc9a`. |
 | Concurrency | Serialize only same-common-dir metadata mutations; independent fixture roots and unrelated repository snapshots remain isolated. |
-| Scope | Future implementation is limited to the declared three test paths and governance/generated state paths. |
+| Scope | Future implementation is limited to exactly two paths: `FixtureCleanup.cs` and `FixtureCleanupTests.cs`, plus this checkpoint/ledger and generated governance state. The csproj is excluded. |
 
-## F1-F6 readiness dispositions
+## Inherited I100-B contract dispositions (not PR119 findings)
 
 | Finding | Disposition |
 |---|---|
@@ -40,21 +46,182 @@ or activation was run.
 | F2 — Git residual safety | Fixed: only receipt-listed control-root descendants may be directly deleted; captured common-dir admin data is preserved on residual or quarantine paths, and success requires both admin and registration absence. |
 | F3 — exact sentinel, receipt, and partial identity | Fixed: schema-v1 sentinel, cryptographic token, FILE_ID_INFO identities, reparse-safe revalidation, monotonic owner stages, and reconstructed-owner fail-closed behavior are frozen. |
 | F4 — Restart Manager managed interop admission/state machine | Fixed: exact Unicode P/Invoke attributes, constants, layouts, signatures, 3-call count semantics, real admitted-platform empty/known-lock call, injected negatives, mandatory session end, and no shutdown/ownership inference are frozen. |
-| F5 — claims and reviewer | Fixed: Ready record has no claims; the exact canonical lowercase activation set is frozen in the capsule/ledger and acquired only by activation. Qhatahet is reserved as untouched non-author peer, with replacement governed by current evidence policy and no Ready review metadata. |
-| F6 — lifecycle truth | Fixed: GH-107 is transactionally prepared and validated, Ready, unselected, and execution remains idle. |
+| F5 — claims and reviewer | Fixed: exact GH-107 claims exclude csproj; Qhatahet is reserved for Phase B and both Qhatahet/Abood-essa are required for Phase A. |
+| F6 — lifecycle truth | Fixed: GH-107 is Blocked and unselected; B1/B2/B3 are internal phases with no child lifecycle, PR, merge, or gate; execution remains idle. |
 
 ## Readiness and lifecycle
 
 Readiness claims are frozen but intentionally unleased. Activation must supply exactly these canonical lowercase claims:
 `path:tests/seqdoc.acceptancetests/fixturecleanup.cs`,
 `path:tests/seqdoc.acceptancetests/fixturecleanuptests.cs`,
-`path:tests/seqdoc.acceptancetests/seqdoc.acceptancetests.csproj`,
 `path:docs/work/quality/i100-b`, `path:docs/project/work-items/gh-107.json`,
 `fixture:fixturecleanup`, `governance-tool:tools/governance/work_state.py`, and
 `exclusive:acceptance-git-worktree-metadata`. This exact set is acquired only by activation to avoid preemptive lease
 blocking; no selection occurs now.
 
-GH-106 is the closed dependency at the supplied accepted head and closeout baseline. GH-107 was transactionally
-prepared and validated, is `Ready`, is not selected or activated, and execution remains idle. The readiness audit passed
-after the complete governance validation set: `prepare`, work-state validation, execution projection check, and
-`git diff --check`. No product/test/build verification, GitHub operation, commit, push, or activation was performed.
+GH-106 is the closed dependency at the supplied accepted head and closeout baseline. GH-107 is `Blocked`, unselected,
+and execution remains idle. The replacement branch contains only the three declared planning files relative to the
+18aae5e baseline; no product/test/build verification, implementation, or activation occurred during this amendment.
+
+The replacement state is instead `Blocked` and unselected. Issues #116–#118 are closed superseded history under
+https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5775101734. PR119 is superseded, unmerged, and not
+activation ancestry. Historical PR119 commits/pushes/reviews and child issue create/comment/close are recorded as facts;
+this amendment performed no product/test command, implementation, or activation.
+
+## PR119 finding dispositions
+
+Exactly four findings are recorded:
+
+| Finding | Subject and disposition |
+|---|---|
+| F1 | B2/B3 ledgers misidentify reviewed findings — resolved by deleting child authority and accurately inheriting technical clauses in this one I100-B ledger. |
+| F2 | Implementation deferral authority conflicts — Phase A cannot dispose or defer Phase B; no ownerless `Deferred` disposition. |
+| F3 | B3 declares two final gates — the 86 result is internal affected verification; the full Acceptance project command is the sole final gate. |
+| F4 | Independent review receipt not reproducible — prior agent summary is advisory only; a new review receipt will be posted on the replacement PR. |
+
+## PR120 finding dispositions
+
+| Finding | Subject | Disposition and proof |
+|---|---|---|
+| Qais I120-F1 | Independent human peer must invoke Reviewer agent at Phase B | **Fixed.** Under `docs/project/collaboration-model.md, Delivery procedure, item 3`, the worker invokes its own Reviewer agent and self-reviews first; after green/dispositions at `ReviewRequired`, reserved independent human Qhatahet separately invokes Reviewer agent against the same complete latest SHA and posts the authenticated GitHub receipt before Gate Runner. |
+| Abood I100-B-R2-F1 | Quarantine parent/source/target authority | **Fixed.** The parent is canonical local-drive, component-wise non-reparse, volume/FILE_ID authority, never destructive; source is its immediate child and target is the absent exact sibling. Group 8 and the terminal residual receipt prove this boundary. |
+| Abood I100-B-R2-F2 | Terminal quarantine and residual handling | **Fixed.** State is `QuarantinedTerminal`; original destructive receipt is consumed, local terminal observation is report-only, stable evidence is sanitized, and no process or fixture cleanup may later delete it. |
+| Abood I100-B-R2-F3 | Marker chronology and lock attribution | **Fixed.** B3 freezes marker/PID order, post-family-zero marker persistence, Git verification, first 32/33, RM list identity, host release barrier, retry, marker removal, and final root proof; marker is not required to disappear after child termination. |
+| Abood I100-B-R2-F4 | Owner attribution and review receipt | **Fixed.** Historical Ahmad readiness context is not owner authorization. Phase B requires worker Reviewer evidence, then the reserved human independently invokes Reviewer agent and posts an authenticated same-SHA GitHub receipt before Gate Runner. |
+| Abood I100-B-R2-F5 | Durable review evidence | **Fixed.** Raw session/task handles are excluded; unavailable reviewer metadata is explicitly unauthenticated, and the replacement PR must carry actor/SHA/agent/version/boundary/digest/outcome/findings/dispositions/evidence URL. |
+| Abood I100-B-R3-F1 | High — path-validation-to-mutation TOCTOU | **Fixed.** Qais concurred at formal review `https://github.com/Bilaltariq41/SeqDoc/pull/120#pullrequestreview-5282276127` and follow-up `https://github.com/Bilaltariq41/SeqDoc/pull/120#issuecomment-5782126057`. The checkpoint now requires live identity-bound parent/source handles, the exact x64 `CreateFileW`/`SetFileInformationByHandle`/`FileRenameInfo` contract with parent `RootDirectory` and `ReplaceIfExists=false`, share-denied source races, one generic pre-call barrier, exact postchecks that classify but never authorize, and no path-based fallback. Group 8 proves every race, refusal, success identity, exception, reconstruction, layout/handle admission, and terminal partition. |
+| Abood I100-B-R4-F1 | Medium — quarantine cannot truthfully follow mandatory RoleDeleted/state contradiction | **Fixed.** The disposition maps to `RoleCleanupInProgress`/`RoleCleanupComplete`/`DeletionBudgetExhausted`/`QuarantinedTerminal`/`FailedResidual`; groups 5 and 8 prove the transitions, prerequisites, root-only quarantine failure, and no `RoleDeleted` state. |
+| Abood I100-B-R4-F2 | Low — ambiguous source-name wording | **Fixed.** The checkpoint now distinguishes destination-name collision before the native call from a new unrelated object at the vacated source name after successful rename; group 8 proves both races and preservation. |
+| Abood I100-B-R4-F3 | Low — R3 disposition outside Markdown table | **Fixed.** R2, R3, and R4 rows are contiguous in this one valid PR120 table; review evidence: `https://github.com/Bilaltariq41/SeqDoc/pull/120#pullrequestreview-5288493974`. |
+
+## PR120 R5 and Qhatahet dispositions
+
+| Finding | Subject | Disposition and proof |
+|---|---|---|
+| Abood I100-B-R5-F1 | Complete destructive ABI | **Fixed.** The checkpoint's one authoritative managed admission table freezes exact Kernel32 declarations, masks, safe-handle/error/finally semantics, x64 `FILE_RENAME_INFO` layout, name/buffer validation, no-call failures, and group-8 metadata/layout/disposal proofs. Primary sources are CreateFileW, SetFileInformationByHandle, FILE_RENAME_INFO, and ntifs FILE_RENAME_INFORMATION links above. |
+| Abood I100-B-R5-F2 | Baseline identities | **Fixed.** GH-106 baseline/head/merge and GH-107 replacement baseline are frozen in the checkpoint and ledger; superseded `dfc28b0...` is historical GH-107 context only. |
+| Abood I100-B-R5-F3 | Git working directories | **Fixed.** Explicit source/owned-worktree cwd table, scalar-output parsing, relative-output resolution, and process-cwd mismatch tests are frozen in the checkpoint. |
+| Abood I100-B-R5-F4 | Retry completion/overrun | **Fixed.** Attempt admission, inclusive 1950/2000 boundary, overrun classifications, no ninth attempt, in-flight outer expiry, and retained physical postconditions are frozen in chronology and group 5. |
+| Abood I100-B-R5-F5 | Baseline observation, not gate | **Fixed.** A clean-main full Acceptance Release observation with exact environment/count/signature receipt is required before promotion; it is not the focused or final gate, and unavailable evidence keeps GH-107 Blocked. |
+| Abood I100-B-R5-F6 | Soft test budget | **Fixed.** The target is 10 grouped methods, with concrete-risk nonduplicate additions recorded with reason/group/total/expected discovery; current 86 is 76+10 and there is no hard cap. |
+| Qhatahet latest F1 | Durable worker receipt | **Fixed.** The superseding receipt is linked above and must be updated with actor/invoker, exact SHA, agent/version, boundary, digest/outcome, findings/dispositions before Phase A authorization. |
+| Qhatahet latest F2 | Collaboration citation and review sequence | **Fixed.** The ledger uses `docs/project/collaboration-model.md, Delivery procedure, item 3`; worker Reviewer/self-review precedes reserved human's independent Reviewer run and authenticated receipt before Gate Runner. |
+| Qhatahet note | Admission observable | **Fixed.** Acceptance proof maps Group 1 admission failure to `AdmissionFailedNoOwnership` and admission success to `Provisioned` as first observed in Group 2. |
+
+## PR120 R6 disposition
+
+| Finding | Subject | Disposition and proof |
+|---|---|---|
+| Abood I100-B-R6-F1 | High — impossible and competing quarantine target grammars | **Fixed.** Clause 1 freezes the source basename as exact ordinal `seqdoc-fixture-<token>` using the admitted unpadded base64url token. Quarantine constructs its sole target as `sourceRootName + ".quarantine"`; source-only grammar validation is separate from exact target equality and the single allowed suffix dot. Group 8 covers the valid construction and every requested token, suffix, character, path-form, and normalization negative before allocation or native rename. Review evidence: `https://github.com/Bilaltariq41/SeqDoc/pull/120#pullrequestreview-5289552311`. |
+| Qhatahet same-head approval | R2–R5 and prior Qhatahet repairs | **Preserved as historical evidence.** Qhatahet approved `5ad33e85638b5ba2297a03351fe86e6b55709a66` at `https://github.com/Bilaltariq41/SeqDoc/pull/120#pullrequestreview-5289582563`; this R6 amendment makes that approval stale for authorization, so both peers must review the new exact SHA. |
+
+## Worker review finding dispositions
+
+| Finding | Disposition and governing evidence |
+|---|---|
+| I100-B-F1 | **Fixed.** The csproj remains outside the initial allowlist and claims. If concrete compiler/build evidence proves it necessary, stop before edit; amend GH-107/I100-B target paths, claims, risks, and tests under T2, run worker readiness review, and obtain latest-head non-author peer approval on the amended SHA before resuming. Unamended target expansion remains a stop condition, not an automatic permanent block or undocumented bypass. |
+| I100-B-F2 | **Fixed.** Qais's controlling rule is accepted under `docs/project/collaboration-model.md, Delivery procedure, item 3`: the worker invokes its own Reviewer agent and self-reviews first; after green/dispositions at `ReviewRequired`, reserved independent human Qhatahet separately invokes Reviewer agent against the same complete latest SHA and posts an authenticated GitHub receipt before Gate Runner. The receipt records actor, exact SHA, reviewer agent name/version, invocation boundary, output digest/outcome, findings/dispositions, and evidence URL. |
+
+## Global audit worker advisory dispositions
+
+| Advisory ID | Disposition |
+|---|---|
+| I100-B-AUDIT-QUARANTINE-ROLE | **Fixed.** Removed quarantine from the receipt role map; quarantine is only separate parent/sibling move-target authority. |
+| I100-B-AUDIT-FOCUSED-COMMAND | **Fixed.** One required cumulative 86/0/0 focused command is declared; earlier phase counts are optional developer checks. |
+| I100-B-AUDIT-RM-CAPABILITY | **Fixed.** Missing or unloadable RM capability is an explicit blocking non-pass in group 6. |
+| I100-B-AUDIT-STATE-OUTCOME | **Fixed.** Total physical state transitions, separate final outcome, primary chronology, degradation precedence, and terminal residual rules are explicit. |
+
+## Superseded worker review history and durable receipt
+
+The earlier worker review summary returned `REQUEST CHANGES` with I100-B-F1 and I100-B-F2; both findings are Fixed above.
+It is superseded review history, not current status or formal human completion. The durable reserved receipt is
+https://github.com/Bilaltariq41/SeqDoc/pull/120#issuecomment-5792443353. That public receipt must be updated after the
+exact-SHA worker Reviewer run and show actor/invoker, exact SHA, agent name/version when available, invocation boundary,
+output digest/outcome, findings/dispositions. Until that update is an authenticated approval, it does not authorize
+Phase A. The PR body claim is subordinate to this ledger and linked receipt; no approval is claimed here.
+
+## Abood finding inheritance map
+
+Child issue authority is deleted; these original technical findings are inherited by the corresponding internal clauses
+and proofs. Original issue URLs remain historical sources; the exact supplied Abood finding comment is retained for #116.
+
+### Issue #116 — authority/Git phase
+
+| Finding | Subject | Internal proof |
+|---|---|---|
+| F1 | Split authorization provenance ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/116#issuecomment-5774337600)) | Phase A same-SHA dual-peer receipts; no owner bypass. |
+| F2 | Immutable canonical candidate ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/116#issuecomment-5774337600)) | Exactly three planning files between baseline and head; PR119 not ancestry. |
+| F3 | Source common-directory ownership ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/116#issuecomment-5774337600)) | B1 authority section: canonical non-reparse chains and FILE_ID before every mutation. |
+| F4 | Final gate ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/116#issuecomment-5774337600)) | Sole complete Acceptance gate after Phase B human review. |
+| F5 | Exact authority/scope details ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/116#issuecomment-5774337600)) | Two implementation paths, excluded csproj, claims, Qhatahet Phase B route. |
+
+### Issue #117 — process/RM phase
+
+| Finding | Subject | Internal proof |
+|---|---|---|
+| F1 | Split authority/canonical identity ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/117#issuecomment-5774337571)) | Inherited B2 internal phase; same planning SHA and no child lifecycle or dependency. |
+| F2 | Deadline equation/chronology ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/117#issuecomment-5774337571)) | Outer deadline, reserved family grace, no post-expiry stage, and required finally evidence. |
+| F3 | Retry/RM admission terms ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/117#issuecomment-5774337571)) | Exact eight-attempt schedule, 2-second budget, full revalidation, RM table/state machine. |
+| F4 | Exact paths/completion route ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/117#issuecomment-5774337571)) | Two implementation paths, no csproj, B2 focused/affected route and no final gate. |
+| F5 | Pin #106 dependency/receipts ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/117#issuecomment-5774337571)) | Accepted #106 head/merge, public API boundary, and receipts are pinned before implementation. |
+
+### Issue #118 — integration phase
+
+| Finding | Subject | Internal proof |
+|---|---|---|
+| F1 | Split authority/canonical identity ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/118#issuecomment-5774337587)) | Inherited B3 internal phase; same planning SHA and child issue is historical only. |
+| F2 | Quarantine destination authority ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/118#issuecomment-5774337587)) | Same-volume direct sibling, collision refusal, sentinel retention, and terminal report-only residual; FixtureCleanup grants no later removal authority and any external disposition requires separate authority. |
+| F3 | Live executable/synchronization ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/118#issuecomment-5774337587)) | Rooted marker stub, marker PID proof, independent FileStream lock, deterministic observer/barrier, no sleeps or termination. |
+| F4 | Exact paths/receipts/review route ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/118#issuecomment-5774337587)) | Two implementation paths, excluded csproj, B3 focused/affected route, and Qhatahet Phase B review. |
+| F5 | Isolation inheritance ([comment](https://github.com/Bilaltariq41/SeqDoc/issues/118#issuecomment-5774337587)) | Four unrelated vectors and common-dir FILE_ID concurrency inherit B1/B2 authority. |
+
+## Internal commands and review receipts
+
+Required focused implementation command, before `ReviewRequired`: `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~FixtureCleanupProcessTests|FullyQualifiedName~FixtureCleanupIntegrationTests|FullyQualifiedName~ProcessOwnershipTests"`, exactly `86 passed/0 failed/0 skipped`. B1 3/0/0 and 79/0/0, B2 3/0/0 and 82/0/0, and B3 focused 4/0/0 remain optional developer checks only, not checkpoint commands, gates, or receipts. The sole final gate is `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release`, once after human review and resolved findings.
+
+Phase A requires both Qhatahet and Abood-essa to review the same immutable replacement planning SHA and post
+authenticated T2 receipts; these approve only same-issue sequencing/spec/allowlists. Phase B requires the worker/
+Orchestrator to invoke its own Reviewer agent and self-review first, then after focused/affected green and dispositions
+at `ReviewRequired`, reserved independent human Qhatahet separately invokes Reviewer agent against the same complete latest
+SHA and posts an authenticated GitHub receipt containing actor, exact SHA, agent name/version, invocation boundary,
+output digest/outcome, findings/dispositions, and evidence URL. Only then does Gate Runner run the final gate. Prior
+agent summaries are advisory and not formal independent-review completion. No Ready now.
+
+## State, roles, and outcome proof
+
+The sentinel role map is exactly sorted `cache`, `output`, `worktree`; quarantine is not a role or receipt-listed child.
+The total state transitions are `AdmissionFailedNoOwnership` terminal; `Provisioned` -> `FamilyZero` or `FailedResidual`;
+`FamilyZero` -> `GitDeregisteredAdminVerified` or `FailedResidual`; `GitDeregisteredAdminVerified` ->
+`RoleCleanupInProgress` or `FailedResidual`; `RoleCleanupInProgress` -> `RoleCleanupComplete`,
+`DeletionBudgetExhausted`, or `FailedResidual`; `RoleCleanupComplete` -> `RootDeleted` only, with root/sentinel failure
+to `FailedResidual`; `DeletionBudgetExhausted` -> `QuarantinedTerminal` only when native identity proves completion,
+otherwise `FailedResidual`. Terminal states reject later automatic destruction and there is no `RoleDeleted` state.
+The in-progress inventory is sorted by role and records proven postconditions, remaining roles, attempts/offsets, and last
+classification. Exhaustion requires a remaining role, admitted retry schedule, last retryable class, valid authority,
+family zero, registration/admin absence, exact sentinel, and quarantine budget; it never implies role completion.
+
+Final outcome is separate: only `RootDeleted` without primary failure/degradation is success. RM, EndSession, teardown,
+quarantine, and residual degradations preserve non-success. Primary is set once in order of pre-existing failure,
+first-observed cancellation, first cleanup failure, then deadline; later evidence is deterministic secondary chronology.
+Groups 3/8/10 do not duplicate proof: group 3 owns Git identity, group 8 owns all quarantine, and group 10 owns live
+successful cleanup only.
+
+## Technical inheritance
+
+The checkpoint's managed/native ABI table is authoritative and incorporates R5-F1: exact Kernel32 declarations,
+metadata, access/share masks, safe-handle/error/finally behavior, x64 `FILE_RENAME_INFO` offsets and buffer checks,
+identity-bound live handles, and no path fallback. The Microsoft and ntifs primary links above are the durable references;
+the ledger does not restate a second ABI variant.
+
+The checkpoint's technical strengthening is authoritative: rooted GitExecutablePath and Program Files admission; exact
+sentinel/stable-vs-local receipt and source/common FILE_ID chains; exact Git vectors without `--` fallback; four
+unrelated vectors; outer deadline, retry starts/delays/2-second budget and revalidation; exact RM ABI/state machine;
+identity-bound CreateFileW parent/source handles, FILE_ID checks, SetFileInformationByHandle/FileRenameInfo sibling
+rename with no `Directory.Move` fallback, collision/race classifications, and terminal report-only residual rules;
+`sleep-with-marker <owned-marker-path> 30000`, marker PID equal to public
+ProcessId, independent test-host FileStream `FileShare.None`, deterministic 32/33+RM observer barrier, no sleeps or
+testhost termination; and common-dir FILE_ID concurrency. Exact Git vectors are `worktree add --detach
+<owned-absolute-path> <40-lowercase-revision>`, `rev-parse --git-common-dir`, `rev-parse --absolute-git-dir`,
+`status --porcelain=v1 -z --untracked-files=all`, `for-each-ref --format=%(refname)%00%(objectname)%00%(symref)%00
+--sort=refname`, `config --local --null --list`, `worktree list --porcelain`, and `worktree remove --force
+<owned-absolute-path>`.
