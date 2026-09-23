@@ -87,8 +87,10 @@ Exactly four findings are recorded:
 | Abood I100-B-R2-F3 | Marker chronology and lock attribution | **Fixed.** B3 freezes marker/PID order, post-family-zero marker persistence, Git verification, first 32/33, RM list identity, host release barrier, retry, marker removal, and final root proof; marker is not required to disappear after child termination. |
 | Abood I100-B-R2-F4 | Owner attribution and review receipt | **Fixed.** Historical Ahmad readiness context is not owner authorization. Phase B requires worker Reviewer evidence, then the reserved human independently invokes Reviewer agent and posts an authenticated same-SHA GitHub receipt before Gate Runner. |
 | Abood I100-B-R2-F5 | Durable review evidence | **Fixed.** Raw session/task handles are excluded; unavailable reviewer metadata is explicitly unauthenticated, and the replacement PR must carry actor/SHA/agent/version/boundary/digest/outcome/findings/dispositions/evidence URL. |
-
 | Abood I100-B-R3-F1 | High — path-validation-to-mutation TOCTOU | **Fixed.** Qais concurred at formal review `https://github.com/Bilaltariq41/SeqDoc/pull/120#pullrequestreview-5282276127` and follow-up `https://github.com/Bilaltariq41/SeqDoc/pull/120#issuecomment-5782126057`. The checkpoint now requires live identity-bound parent/source handles, the exact x64 `CreateFileW`/`SetFileInformationByHandle`/`FileRenameInfo` contract with parent `RootDirectory` and `ReplaceIfExists=false`, share-denied source races, one generic pre-call barrier, exact postchecks that classify but never authorize, and no path-based fallback. Group 8 proves every race, refusal, success identity, exception, reconstruction, layout/handle admission, and terminal partition. |
+| Abood I100-B-R4-F1 | Medium — quarantine cannot truthfully follow mandatory RoleDeleted/state contradiction | **Fixed.** The disposition maps to `RoleCleanupInProgress`/`RoleCleanupComplete`/`DeletionBudgetExhausted`/`QuarantinedTerminal`/`FailedResidual`; groups 5 and 8 prove the transitions, prerequisites, root-only quarantine failure, and no `RoleDeleted` state. |
+| Abood I100-B-R4-F2 | Low — ambiguous source-name wording | **Fixed.** The checkpoint now distinguishes destination-name collision before the native call from a new unrelated object at the vacated source name after successful rename; group 8 proves both races and preservation. |
+| Abood I100-B-R4-F3 | Low — R3 disposition outside Markdown table | **Fixed.** R2, R3, and R4 rows are contiguous in this one valid PR120 table; review evidence: `https://github.com/Bilaltariq41/SeqDoc/pull/120#pullrequestreview-5288493974`. |
 
 ## Worker review finding dispositions
 
@@ -96,6 +98,15 @@ Exactly four findings are recorded:
 |---|---|
 | I100-B-F1 | **Fixed.** The csproj remains outside the initial allowlist and claims. If concrete compiler/build evidence proves it necessary, stop before edit; amend GH-107/I100-B target paths, claims, risks, and tests under T2, run worker readiness review, and obtain latest-head non-author peer approval on the amended SHA before resuming. Unamended target expansion remains a stop condition, not an automatic permanent block or undocumented bypass. |
 | I100-B-F2 | **Fixed.** Qais's controlling rule is accepted under `docs/project/collaboration-model.md` lines 37–39: the worker invokes its own Reviewer agent and self-reviews first; after green/dispositions at `ReviewRequired`, reserved independent human Qhatahet separately invokes Reviewer agent against the same complete latest SHA and posts an authenticated GitHub receipt before Gate Runner. The receipt records actor, exact SHA, reviewer agent name/version, invocation boundary, output digest/outcome, findings/dispositions, and evidence URL. |
+
+## Global audit worker advisory dispositions
+
+| Advisory ID | Disposition |
+|---|---|
+| I100-B-AUDIT-QUARANTINE-ROLE | **Fixed.** Removed quarantine from the receipt role map; quarantine is only separate parent/sibling move-target authority. |
+| I100-B-AUDIT-FOCUSED-COMMAND | **Fixed.** One required cumulative 86/0/0 focused command is declared; earlier phase counts are optional developer checks. |
+| I100-B-AUDIT-RM-CAPABILITY | **Fixed.** Missing or unloadable RM capability is an explicit blocking non-pass in group 6. |
+| I100-B-AUDIT-STATE-OUTCOME | **Fixed.** Total physical state transitions, separate final outcome, primary chronology, degradation precedence, and terminal residual rules are explicit. |
 
 ## Advisory worker review receipt
 
@@ -141,7 +152,7 @@ and proofs. Original issue URLs remain historical sources; the exact supplied Ab
 
 ## Internal commands and review receipts
 
-B1 focused `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~FixtureCleanupAuthorityTests` is exactly 3/0/0; affected `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~ProcessOwnershipTests"` is exactly 79/0/0. B2 focused `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~FixtureCleanupProcessTests` is exactly 3/0/0; affected `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~FixtureCleanupProcessTests|FullyQualifiedName~ProcessOwnershipTests"` is exactly 82/0/0. B3 focused `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~FixtureCleanupIntegrationTests` is exactly 4/0/0; complete affected `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~FixtureCleanupProcessTests|FullyQualifiedName~FixtureCleanupIntegrationTests|FullyQualifiedName~ProcessOwnershipTests"` is exactly 86/0/0 before ReviewRequired. These are internal verification, not final gates. The sole final gate is `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release`, once after human review and resolved findings.
+Required focused implementation command, before `ReviewRequired`: `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~FixtureCleanupProcessTests|FullyQualifiedName~FixtureCleanupIntegrationTests|FullyQualifiedName~ProcessOwnershipTests"`, exactly `86 passed/0 failed/0 skipped`. B1 3/0/0 and 79/0/0, B2 3/0/0 and 82/0/0, and B3 focused 4/0/0 remain optional developer checks only, not checkpoint commands, gates, or receipts. The sole final gate is `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release`, once after human review and resolved findings.
 
 Phase A requires both Qhatahet and Abood-essa to review the same immutable replacement planning SHA and post
 authenticated T2 receipts; these approve only same-issue sequencing/spec/allowlists. Phase B requires the worker/
@@ -150,6 +161,25 @@ at `ReviewRequired`, reserved independent human Qhatahet separately invokes Revi
 SHA and posts an authenticated GitHub receipt containing actor, exact SHA, agent name/version, invocation boundary,
 output digest/outcome, findings/dispositions, and evidence URL. Only then does Gate Runner run the final gate. Prior
 agent summaries are advisory and not formal independent-review completion. No Ready now.
+
+## State, roles, and outcome proof
+
+The sentinel role map is exactly sorted `cache`, `output`, `worktree`; quarantine is not a role or receipt-listed child.
+The total state transitions are `AdmissionFailedNoOwnership` terminal; `Provisioned` -> `FamilyZero` or `FailedResidual`;
+`FamilyZero` -> `GitDeregisteredAdminVerified` or `FailedResidual`; `GitDeregisteredAdminVerified` ->
+`RoleCleanupInProgress` or `FailedResidual`; `RoleCleanupInProgress` -> `RoleCleanupComplete`,
+`DeletionBudgetExhausted`, or `FailedResidual`; `RoleCleanupComplete` -> `RootDeleted` only, with root/sentinel failure
+to `FailedResidual`; `DeletionBudgetExhausted` -> `QuarantinedTerminal` only when native identity proves completion,
+otherwise `FailedResidual`. Terminal states reject later automatic destruction and there is no `RoleDeleted` state.
+The in-progress inventory is sorted by role and records proven postconditions, remaining roles, attempts/offsets, and last
+classification. Exhaustion requires a remaining role, admitted retry schedule, last retryable class, valid authority,
+family zero, registration/admin absence, exact sentinel, and quarantine budget; it never implies role completion.
+
+Final outcome is separate: only `RootDeleted` without primary failure/degradation is success. RM, EndSession, teardown,
+quarantine, and residual degradations preserve non-success. Primary is set once in order of pre-existing failure,
+first-observed cancellation, first cleanup failure, then deadline; later evidence is deterministic secondary chronology.
+Groups 3/8/10 do not duplicate proof: group 3 owns Git identity, group 8 owns all quarantine, and group 10 owns live
+successful cleanup only.
 
 ## Technical inheritance
 

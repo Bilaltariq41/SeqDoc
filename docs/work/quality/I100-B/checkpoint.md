@@ -53,7 +53,8 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
 ## Frozen semantic contract
 
 1. **Ownership authority.** Use an immutable in-memory receipt and versioned sentinel at one fixture control root,
-   with an unpredictable token and exact logical roles for worktree, cache, output, and quarantine. The sentinel is
+    with an unpredictable token and exact logical roles `cache`, `output`, and `worktree`, sorted in that order. Quarantine
+    is separate caller-parent and sibling move-target authority, never a role or child. The sentinel is
    UTF-8 schema v1: `schemaVersion=1`, a cryptographic 128-bit-or-longer base64url token, exact expected revision,
    source common-dir identity digest, and a sorted role-to-canonical-relative-path map; it contains no absolute paths
    or timestamps. The receipt additionally stores physical canonical paths and Windows `FILE_ID_INFO` volume serial
@@ -85,9 +86,10 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
    Deadline expiry is cleanup degradation, or primary if none, and never overwrites an earlier failure. The order is
    platform/Git/RM admission; unrelated-state snapshot; control root/sentinel; exact worktree registration; commands;
    primary outcome; terminate/wait/dispose every owned process; require `ACTIVE_PROCESS_ZERO` and inspect teardown;
-   repository gate; ownership revalidation; exact `git worktree remove --force`; registration/admin verification;
-   bounded residual deletion; sentinel/root last; unrelated-state equality. Without family-zero proof perform no
-   Git/filesystem deletion, RM, or quarantine.
+    repository gate; ownership revalidation; exact `git worktree remove --force`; registration/admin verification;
+    bounded residual deletion; sentinel/root last; unrelated-state equality. Without family-zero proof perform no
+    Git/filesystem deletion, RM, or quarantine. Process teardown remains permitted before family zero; the prohibition
+    before family zero is specifically Git/RM/delete/quarantine diagnostics and mutation.
 5. **Git removal.** Never run global `git worktree prune` or manually delete Git admin data. If exact remove fails while
    registration remains, preserve state and fail. Residual direct deletion may target only receipt-listed descendants
    inside the owned control root (worktree, cache, and output), never the captured common-dir admin path. If registration
@@ -150,8 +152,9 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
     root-relative, or x64 admission fails, fail quarantine before mutation; never downgrade. Hold both handles from final
     identity validation through native rename completion and postclassification. Target creation at the atomic call
     refuses without overwrite/merge/retry; target remains unchanged and source retains its ID. Source rename/delete/
-    replacement while paused after validation is denied by sharing. A same-name object may appear only after successful
-    rename and remains untouched.
+    replacement while paused after validation is denied by sharing. An object appearing at the destination name before the
+    native call causes atomic collision refusal and remains unchanged. A new unrelated object may appear at the vacated
+    source name only after successful rename; it is classified `SourceNameReused` and remains untouched.
 
     On success, open destination no-follow and prove exact pre-move source FILE_ID/volume under the same parent, unchanged
     sentinel bytes, destination/parent non-reparse, registration/admin absent, and source path does not resolve to the
@@ -170,18 +173,44 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
    paths, wall timestamps, unstable dictionary order, or application vocabulary. Raw PID/start time is local RM
    diagnostic data only, never persisted or user output.
 
-### Cleanup receipt state machine
+### Total physical state machine and per-role inventory
 
-The same cleanup owner holds an immutable receipt and monotonic in-memory stage: `Provisioned`, `FamilyZero`,
-`GitDeregisteredAdminVerified`, `RoleDeleted`, then either `RootDeleted` or `QuarantinedTerminal`. A missing path is accepted
-only after this receipt observed and recorded the prior stage postcondition. The sentinel remains until root completion or
-quarantine. A reconstructed process/receipt may report an orphan from the sentinel but cannot resume destructive cleanup
-from the sentinel alone and fails closed. After successful quarantine the original receipt is consumed for destructive
-purposes; a local terminal residual observation records moved path, parent/source/destination FILE_ID/volume, original
-token, sentinel bytes/hash, postconditions, and local exception evidence for report only. Stable evidence contains only
-stage/role/classification/count/certainty. No new or reconstructed process may delete the residual through FixtureCleanup;
-removal is outside this checkpoint and grants no automatic external removal authority; any external disposition must
-establish separate authority. The fixture reports only the local path and overall outcome remains degraded/non-success.
+The total physical states and only allowed transitions are:
+
+* `AdmissionFailedNoOwnership` is terminal and has no destructive authority.
+* `Provisioned` -> `FamilyZero` or `FailedResidual`.
+* `FamilyZero` -> `GitDeregisteredAdminVerified` or `FailedResidual`.
+* `GitDeregisteredAdminVerified` -> `RoleCleanupInProgress` or `FailedResidual`.
+* `RoleCleanupInProgress` carries sorted `cache`, `output`, `worktree` inventory, proven per-role delete
+  postconditions, remaining roles, per-target attempts/offsets, and last classification. It may remain in progress within
+  budget, then -> `RoleCleanupComplete`, `DeletionBudgetExhausted`, or `FailedResidual`. Missing path is accepted only
+  when the same receipt recorded the prior delete postcondition.
+* `RoleCleanupComplete` -> `RootDeleted` only on successful sentinel-last/root cleanup. Sentinel/root failure ->
+  `FailedResidual`; quarantine is forbidden after `RoleCleanupComplete`.
+* `DeletionBudgetExhausted` requires at least one remaining role, exact admitted attempt count/schedule (eight where a
+  retryable failure persists), last retryable classification, full authority, family zero, registration/admin absence,
+   exact sentinel, and enough outer budget to admit quarantine. It does not imply role completion or absence. It ->
+   `QuarantinedTerminal` only on proven move completion, otherwise -> `FailedResidual`. If outer time expires before
+   quarantine admission, transition directly to `FailedResidual` and start no new stage; process teardown remains
+   permitted until family zero.
+* `RootDeleted`, `QuarantinedTerminal`, and `FailedResidual` are terminal and reject all later automatic destructive
+  actions. External disposition is outside this checkpoint and must establish separate authority. There is no generic
+  `RoleDeleted` state.
+
+After successful quarantine the original destructive receipt is consumed. A local terminal residual observation records
+moved canonical path, parent/source/destination FILE_ID/volume, original token, sentinel bytes/hash, postconditions, and
+local exception evidence for report only. Stable evidence contains only stage/role/classification/count/certainty. No
+new, reconstructed, or same process may later delete via FixtureCleanup; the fixture grants no external removal authority
+and only reports the local path. `QuarantinedTerminal` and `FailedResidual` are always degraded/non-success.
+
+### Physical state and final outcome
+
+Final outcome is separate from physical state. Success requires physical `RootDeleted` and no primary failure or
+degradation. `RootDeleted` with RM, `EndSession`, or teardown degradation remains non-success; `QuarantinedTerminal`
+and `FailedResidual` are always non-success. Primary evidence is set once: seed a pre-existing fixture/command failure;
+otherwise use cancellation when it is the first observed failure; otherwise the first cleanup failure; otherwise deadline
+if it is first. Later evidence is secondary in deterministic chronology. Finally obligations and degradations never
+overwrite primary evidence or physical state.
 
 ### Restart Manager managed interop admission table
 
@@ -216,7 +245,7 @@ B1 technical strengthening freezes rooted `GitExecutablePath` admission only fro
 source-root and common-dir canonical non-reparse chains, volume serials, and 128-bit FILE_ID_INFO before every
 mutation. The sentinel is exact UTF-8 without BOM, one JSON line plus LF, ordered `schemaVersion`, `token`, `revision`,
 `commonDirectoryDigest`, `roles`; token is 32 random bytes base64url without padding, revision is lowercase 40-hex,
-digest is local `sha256:` plus 64 lowercase hex, and roles are sorted `cache`, `output`, `quarantine`, `worktree` with
+    digest is local `sha256:` plus 64 lowercase hex, and roles are sorted `cache`, `output`, `worktree` with
 ASCII relative values. Stable evidence contains only schema/stage/role/attempt/classification/count/certainty;
 token, paths, PID/FILETIME, wall time, checkout data, and credentials remain local. Paths are drive-local, full,
 separator-trimmed except roots, OrdinalIgnoreCase with boundary, and reject device/UNC/alternate streams, reparse,
@@ -269,33 +298,42 @@ primary-failure masking, unsafe quarantine, concurrency, and unavailable platfor
 Exactly 10 grouped test methods, with theories/subcases permitted and no duplicated assertion across groups:
 
 1. Windows/x64/rooted Git admission fails closed;
-2. receipt, v1 sentinel, FILE_ID_INFO replacement, containment, reparse, mismatch, and reconstructed-owner negatives;
+2. exact three receipt roles `cache`, `output`, `worktree`, v1 sentinel, stable sanitized receipt, FILE_ID_INFO
+   replacement, containment, reparse, partial, and reconstructed-owner authority negatives;
 3. real worktree registration/admin capture and exact successful cleanup, including absent registration and admin path;
-4. active-family or unproven-zero blocks every destructive and diagnostic action, including outer deadline/cancellation;
-5. exact `CleanupTimeout`/10-second grace and nested deletion schedule, transient success, and nonretryable boundaries;
-6. RM first-violation attribution, real admitted-platform empty/known-lock calls, Unicode Marshal layout, injected state-machine negatives, caps/errors/session end, and no shutdown;
-7. primary failure plus ordered cleanup degradation and #106 secondary evidence;
-8. wrong/replaced parent ID, source outside parent, target parent reparse/replacement, collision before/after check,
-   cross-volume, source replacement, success identity/sentinel/terminal, SourcePreserved/MoveCompleted/Indeterminate,
-   reconstructed observer no destruction, and concurrent sibling collision/isolation. The injectable generic quarantine
+4. active-family or unproven family zero blocks Git mutation, RM, direct filesystem deletion, and quarantine; owned-process
+   terminate/wait/dispose and evidence collection remain permitted and mandatory, with cancellation/deadline evidence
+   recorded;
+5. exact `CleanupTimeout`/10-second grace and nested deletion schedule, all-eight-fail/no-ninth, partial role success
+   then later role failure, per-role inventory, `DeletionBudgetExhausted` evidence, no `RoleCleanupComplete`, and no
+   premature quarantine;
+6. explicit missing/unloadable RM capability as blocking non-pass, plus RM scripts, first-violation attribution, real
+   admitted-platform empty/known-lock calls, Unicode Marshal layout, injected state-machine negatives, caps/errors,
+   session end, and no shutdown;
+7. exact physical-state versus outcome and primary/cancellation/deadline/RM/quarantine precedence matrix;
+8. exhaustion prerequisite, residual-role quarantine, no `RoleCleanupComplete`, wrong/replaced parent ID, source outside
+    parent, target parent reparse/replacement, pre/post-open replacement, source live-handle rename/delete/replacement
+    denial, destination race, unsupported native/layout/handle admission, exact barrier position, collision before/after
+    check, cross-volume, source replacement, success identity/sentinel/terminal, SourcePreserved/MoveCompleted/
+    Indeterminate, reconstructed observer no destruction, source-name reuse preserved, root-only quarantine after role
+    completion fails closed, and concurrent sibling collision/isolation. The injectable generic quarantine
    observer/barrier fires exactly after both live handles are open and all parent/source/target authority is validated,
    immediately before `SetFileInformationByHandle`; subcases prove competitor source rename/delete denial, same-path
    replacement denial, destination creation race refusal without overwrite, exact moved FILE_ID, unrelated post-success
    source replacement unchanged, unsupported native/layout/handle refusal before mutation, no path-based fallback, and
    terminal/report-only semantics. No sleeps;
 9. concurrent fixtures and unrelated repo/ref/config/worktree isolation;
-10. live Windows disposable-repo lock-release end-to-end with no residual registration/admin/root.
+10. successful live cleanup only, with no residual registration/admin/root; quarantine is exclusive to group 8.
 
 ## Focused verification
 
-B1 focused: `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~FixtureCleanupAuthorityTests`, exactly `3 passed/0 failed/0 skipped`; then internal affected `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~ProcessOwnershipTests"`, exactly `79 passed/0 failed/0 skipped`.
+The one required focused implementation command, before `ReviewRequired`, is:
+`dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~FixtureCleanupProcessTests|FullyQualifiedName~FixtureCleanupIntegrationTests|FullyQualifiedName~ProcessOwnershipTests"`, exactly `86 passed/0 failed/0 skipped`.
 
-B2 focused: `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~FixtureCleanupProcessTests`, exactly `3 passed/0 failed/0 skipped`; then internal affected `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~FixtureCleanupProcessTests|FullyQualifiedName~ProcessOwnershipTests"`, exactly `82 passed/0 failed/0 skipped`.
-
-B3 focused: `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter FullyQualifiedName~FixtureCleanupIntegrationTests`, exactly `4 passed/0 failed/0 skipped`; before ReviewRequired, internal complete affected `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~FixtureCleanupProcessTests|FullyQualifiedName~FixtureCleanupIntegrationTests|FullyQualifiedName~ProcessOwnershipTests"`, exactly `86 passed/0 failed/0 skipped`. All 79/82/86 commands are internal verification, never final gates. No zero-discovery `FixtureCleanupTests` command exists.
-
-These B1/B2/B3 commands are internal staged focused/affected verification, not final gates. Planning validation only;
-these commands are not run while preparing the package.
+B1 focused 3/0/0 and affected 79/0/0, B2 focused 3/0/0 and affected 82/0/0, and B3 focused 4/0/0 are optional
+developer checks only; they are not required checkpoint commands, gates, or receipts. The sole final gate remains the
+full Acceptance Release command once after Phase B human review and resolved findings. Planning validation only; no
+product or dotnet tests are run while preparing the package.
 
 ## Final gate
 
@@ -347,9 +385,13 @@ complete-suite counts/signatures and the rule for unrelated known failures; fixt
 
 ## Acceptance proof
 
-Groups 1–2 prove admission and receipt authority before mutation; groups 3–4 prove exact Git identity, chronology, and
-family-zero gating; groups 5–6 prove deterministic retry and bounded RM attribution; groups 7–8 prove precedence and
-quarantine refusal/success; group 9 proves concurrency and byte-equivalent unrelated state; group 10 is the first
-observable live Windows disposable-repository path and proves no residual registration, admin directory, or root. Each
-semantic contract above must map to its first observable grouped test and, where applicable, that live path. No planning
-activity claims product or test verification.
+Group 1 proves Windows/x64/rooted Git admission only; group 2 proves the three-role sentinel/receipt and authority
+negatives; group 3 proves Git identity and admin cleanup; group 4 proves family-zero/deadline gating; group 5 proves
+per-role inventory, exact retry exhaustion, and no premature quarantine; group 6 proves blocking RM capability and ABI/
+state machine; group 7 proves physical state versus outcome and primary/secondary precedence; group 8 proves every
+identity-bound quarantine race, ABI admission, native outcome classification, terminal/report-only rule, and sibling
+isolation; group 9 proves unrelated-state/concurrency isolation without duplicating group 8; group 10 proves successful
+live cleanup only. All states `AdmissionFailedNoOwnership`, `Provisioned`, `FamilyZero`,
+`GitDeregisteredAdminVerified`, `RoleCleanupInProgress`, `RoleCleanupComplete`, `DeletionBudgetExhausted`, `RootDeleted`,
+`QuarantinedTerminal`, and `FailedResidual` have a first observable proof in these groups, and group 8 is the only
+quarantine proof. No planning activity claims product or test verification.
