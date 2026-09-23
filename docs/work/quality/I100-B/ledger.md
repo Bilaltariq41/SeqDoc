@@ -15,6 +15,9 @@ amendment. The rejected candidate is preserved local-only and its old branch is 
 - Microsoft SetFileInformationByHandle: https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle
 - Microsoft FILE_RENAME_INFO: https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info
 - Microsoft FILE_RENAME_INFORMATION: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
+- Microsoft WDK `FILE_INFORMATION_CLASS` / `FileRenameInformation=10` enum ordering, and the Wine project's
+  `winternl.h`, independently confirmed against each other for the full native enum ordering 1–11: documented in the
+  Issue #107 comment thread following the recovery decision.
 - Local accepted #106 public API boundary and cleanup pattern findings: `I100-A/checkpoint.md` and `I100-A/ledger.md`,
   including public `ContainedProcess` observations, active-zero proof, teardown evidence, and ordered secondary evidence.
 - Reusable QHTTP/GH93 patterns were inspected as read-only risk input; neither contract supplies a sentinel, quarantine,
@@ -208,16 +211,17 @@ successful cleanup only.
 
 ## Technical inheritance
 
-The checkpoint's managed/native ABI table is authoritative and incorporates R5-F1: exact Kernel32 declarations,
-metadata, access/share masks, safe-handle/error/finally behavior, x64 `FILE_RENAME_INFO` offsets and buffer checks,
-identity-bound live handles, and no path fallback. The Microsoft and ntifs primary links above are the durable references;
-the ledger does not restate a second ABI variant.
+The checkpoint's managed/native ABI table is authoritative and incorporates R5-F1, as amended for the native rename ABI
+(see the dated amendment section below): exact Kernel32 `CreateFileW` handle-opening declarations plus `ntdll.dll`
+`NtSetInformationFile` for the rename call itself, metadata, access/share masks, safe-handle/`NTSTATUS`/finally behavior,
+x64 native `FileRenameInformation`-shaped buffer offsets and checks, identity-bound live handles, and no path fallback.
+The Microsoft and ntifs primary links above are the durable references; the ledger does not restate a second ABI variant.
 
 The checkpoint's technical strengthening is authoritative: rooted GitExecutablePath and Program Files admission; exact
 sentinel/stable-vs-local receipt and source/common FILE_ID chains; exact Git vectors without `--` fallback; four
 unrelated vectors; outer deadline, retry starts/delays/2-second budget and revalidation; exact RM ABI/state machine;
-identity-bound CreateFileW parent/source handles, FILE_ID checks, SetFileInformationByHandle/FileRenameInfo sibling
-rename with no `Directory.Move` fallback, collision/race classifications, and terminal report-only residual rules;
+identity-bound CreateFileW parent/source handles, FILE_ID checks, `NtSetInformationFile`/native `FileRenameInformation=10`
+sibling rename with no `Directory.Move` fallback, collision/race classifications, and terminal report-only residual rules;
 `sleep-with-marker <owned-marker-path> 30000`, marker PID equal to public
 ProcessId, independent test-host FileStream `FileShare.None`, deterministic 32/33+RM observer barrier, no sleeps or
 testhost termination; and common-dir FILE_ID concurrency. Exact Git vectors are `worktree add --detach
@@ -225,3 +229,35 @@ testhost termination; and common-dir FILE_ID concurrency. Exact Git vectors are 
 `status --porcelain=v1 -z --untracked-files=all`, `for-each-ref --format=%(refname)%00%(objectname)%00%(symref)%00
 --sort=refname`, `config --local --null --list`, `worktree list --porcelain`, and `worktree remove --force
 <owned-absolute-path>`.
+
+## 2026-09-23 quarantine rename ABI amendment (Issue #107 spike)
+
+A throwaway spike (not in this repo) empirically proved the quarantine ABI as originally frozen has no supported Win32
+implementation: `SetFileInformationByHandle` with `FileRenameInfo` (class 3) and a non-NULL `RootDirectory` handle fails
+unconditionally with `ERROR_INVALID_PARAMETER` on real Windows, and Microsoft's own docs confirm this
+`RootDirectory`-relative form is not actually supported at the Win32 layer, only at the native NT layer. The same spike
+then empirically proved the native alternative works: `NtSetInformationFile` (`ntdll.dll`) with native
+`FileRenameInformation` (class 10, independently confirmed against Microsoft's WDK docs and the Wine project's
+`winternl.h`, both agreeing on the full enum ordering 1–11) succeeds (`NTSTATUS = 0`), preserving file identity (proven
+via `FILE_ID_INFO` before/after). Two human reviewers (Ahmad, Abood-essa) have accepted this as the path forward via
+public GitHub comments; this amendment is authorized work, not speculative. See the Issue #107 spike packet and
+option-comparison comments, documented in the Issue #107 comment thread following the recovery decision, for full
+evidence.
+
+Selected replacement: native `NtSetInformationFile`, `FileRenameInformation=10`, replacing the Win32
+`SetFileInformationByHandle`/`FileRenameInfo=3` rename call only; the `CreateFileW` handle-opening sequence, buffer byte
+layout, and every other frozen quarantine design element are unchanged.
+
+| Change | Disposition |
+|---|---|
+| 1. Native rename ABI throughout `checkpoint.md` | **Applied.** The Frozen semantic contract quarantine clause, the B3 technical-strengthening paragraph, and the Technical inheritance sections here now consistently describe `NtSetInformationFile`/`ntdll.dll`, `IO_STATUS_BLOCK`, `FileRenameInformation=10`, and `NTSTATUS==0` success; `CreateFileW` handle-opening stays on `kernel32.dll` and is unaffected. |
+| 2. Risks | **Applied.** Added reliance on the undocumented native `NtSetInformationFile` API, with no Microsoft compatibility guarantee across Windows updates, accepted because this is test-only tooling that fails closed and loudly. |
+| 3. Group 8 test description | **Applied.** Updated to `NtSetInformationFile`/`ntdll.dll`, `IO_STATUS_BLOCK` layout, and `NTSTATUS==0` success check in place of `SetFileInformationByHandle`/BOOL marshalling; `CreateFileW` handle-opening assertions are unaffected. |
+| 4. Permitted test seams table | **Applied.** Added a closed "Permitted test seams" table (clock/sleeper, per-native-call return-code override hook, generic quarantine observer/barrier), each row limited to an OS return value or timing observation, never a stage/authority/outcome decision. |
+| 5. No-override positive-path rule | **Applied.** Added the rule that every group's positive/success partition runs with no test seam/hook active, and that each group's checkpoint/ledger can name the specific production guard whose removal/inversion would fail that group. |
+| 6. Exactly ten `[Fact]` methods, no theories | **Applied.** The test-budget section now requires exactly ten `[Fact]` methods in `FixtureCleanupTests.cs`, explicitly prohibits `[Theory]`/parameterized tests in that file, and withdraws the prior "theories/subcases permitted" flexibility, to keep the 86-count exact. |
+| 7. Rooted-Git-path boundary | **Applied.** Added an explicit sentence next to the existing `%ProgramFiles%\Git\cmd\git.exe`/x86 admission rule confirming a differently located Git installation is an accepted supported-environment boundary and a blocking non-pass, never a skip. |
+| 8. B1/B2/B3 intermediate Reviewer-agent checks and `TimeProvider` seam permission | **Applied.** Added a paragraph requiring an independent Reviewer-agent pass after each of B1, B2, and B3 (advisory containment checks only, not lifecycle states/approvals/gates), and explicitly permitted a hand-rolled `TimeProvider`-shaped test seam type inside `FixtureCleanupTests.cs` (not a NuGet package reference, to stay out of `csproj` scope) for the retry-schedule clock/sleeper seam. |
+
+This amendment changed only `docs/work/quality/I100-B/checkpoint.md` and this ledger; `docs/project/work-items/GH-107.json`
+is untouched, and no product/test command, implementation, or activation occurred.

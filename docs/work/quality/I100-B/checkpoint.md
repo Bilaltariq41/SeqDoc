@@ -154,21 +154,39 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
     handles remain live. An injectable generic quarantine observer/barrier fires exactly after both handles and all
     authority are validated, immediately before the native call.
 
-    The exact x64 Windows contract is mandatory. The `FILE_RENAME_INFO` manual
+    The exact x64 Windows contract is mandatory. The native `FILE_RENAME_INFORMATION`-shaped manual
     buffer is DWORD union/ReplaceIfExists false at offset 0, zero padding 4–7, parent HANDLE at offset 8, filename
     length uint at offset 16, and exact UTF-16 relative sibling bytes at offset 20 with no required terminator and byte
-    count excluding any terminator; total size is exactly `20 + FileNameLength`. `IntPtr.Size==8` and explicit offsets/
-    buffer length are mandatory group-8 admission checks. No FileRenameInfoEx or flags are allowed.
-    The exact managed admission table is mandatory: `kernel32.dll`, Winapi, `ExactSpelling=true`,
-    `SetLastError=true`; CreateFileW is Unicode with `BestFitMapping=false`, `ThrowOnUnmappableChar=true` and exact
-    declaration `[DllImport("kernel32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true, CallingConvention=CallingConvention.Winapi, BestFitMapping=false, ThrowOnUnmappableChar=true)] static extern SafeFileHandle CreateFileW([MarshalAs(UnmanagedType.LPWStr)] string fileName, uint desiredAccess, uint shareMode, IntPtr securityAttributes, uint creationDisposition, uint flagsAndAttributes, IntPtr templateFile);`. SetFileInformationByHandle is `[DllImport("kernel32.dll", ExactSpelling=true, SetLastError=true, CallingConvention=CallingConvention.Winapi)] [return: MarshalAs(UnmanagedType.Bool)] static extern bool SetFileInformationByHandle(SafeFileHandle file, FILE_INFO_BY_HANDLE_CLASS informationClass, IntPtr information, uint bufferSize);`. The enum underlying type is `int` and `FileRenameInfo=3`.
+    count excluding any terminator; total size is exactly `20 + FileNameLength`. This byte layout is unchanged from the
+    prior frozen Win32-targeted layout and was empirically verified to work identically at the native layer. `IntPtr.Size==8`
+    and explicit offsets/buffer length are mandatory group-8 admission checks. No `FileRenameInformationEx` or flags are allowed.
+    The exact managed admission table is mandatory: parent/source handle opening remains `kernel32.dll`, Winapi,
+    `ExactSpelling=true`, `SetLastError=true`; CreateFileW is Unicode with `BestFitMapping=false`,
+    `ThrowOnUnmappableChar=true` and exact
+    declaration `[DllImport("kernel32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true, CallingConvention=CallingConvention.Winapi, BestFitMapping=false, ThrowOnUnmappableChar=true)] static extern SafeFileHandle CreateFileW([MarshalAs(UnmanagedType.LPWStr)] string fileName, uint desiredAccess, uint shareMode, IntPtr securityAttributes, uint creationDisposition, uint flagsAndAttributes, IntPtr templateFile);`. The rename call itself moves to the native NT layer:
+    `NtSetInformationFile` is `[DllImport("ntdll.dll")] static extern int NtSetInformationFile(SafeFileHandle fileHandle, out IO_STATUS_BLOCK ioStatusBlock, IntPtr fileInformation, uint length, uint fileInformationClass);`, called on the already-open source
+    handle from the same handle-opening/validation sequence as before, with both handles held live through the call.
+    `IO_STATUS_BLOCK` is `[StructLayout(LayoutKind.Sequential)] struct IO_STATUS_BLOCK { public IntPtr Status; public IntPtr Information; }`.
+    The native information-class enum underlying type is `uint` and `FileRenameInformation=10` (plain `FileRenameInformation`
+    only, never the Win32 `FileRenameInfo=3`, the Win32 `FileRenameInfoEx=22`, or the native `FileRenameInformationEx=65`).
+    `NtSetInformationFile` returns an `NTSTATUS` as `int`; success is exactly `0` and any nonzero value is failure, with no
+    NTSTATUS-to-Win32 translation attempted.
+
+    **Accepted boundary.** This checkpoint depends on `NtSetInformationFile`, a native NT API exported by `ntdll.dll` that
+    is not part of Microsoft's documented Win32 application surface; `FileRenameInformation` (class 10) has been stable
+    since early Windows NT versions and this exact pattern is precedented in other language runtimes/tools for the same
+    reason (Win32 has no public equivalent for a `RootDirectory`-relative rename), but Microsoft provides no compatibility
+    guarantee across Windows updates for undocumented `ntdll.dll` exports. Because this is test-only developer tooling, not
+    shipped product behavior, an incompatibility on a future Windows build is accepted to surface as a loud, fail-closed
+    test failure, not a silent defect; this is recorded the same way the rooted-Git-path and RM-capability boundaries are
+    already recorded elsewhere in this document.
     Parent access is FILE_TRAVERSE 0x20 | FILE_READ_ATTRIBUTES 0x80 | SYNCHRONIZE 0x00100000, never FILE_ADD_SUBDIRECTORY;
     source access is DELETE 0x00010000 | FILE_READ_ATTRIBUTES | SYNCHRONIZE. Both calls use share
     `FILE_SHARE_READ` 1 | `FILE_SHARE_WRITE` 2 while omitting `FILE_SHARE_DELETE` 4, disposition `OPEN_EXISTING` 3,
     flags `FILE_FLAG_BACKUP_SEMANTICS` 0x02000000 | `FILE_FLAG_OPEN_REPARSE_POINT` 0x00200000, null security attributes,
     and a null template. Successful SafeFileHandles own and close handles; null/invalid/closed handles fail before
     mutation. Immediately after each `CreateFileW`, capture `Marshal.GetLastWin32Error` before inspecting the returned
-    handle; immediately after `SetFileInformationByHandle`, capture it before inspecting the Boolean result. Use the
+    handle; immediately after `NtSetInformationFile`, capture the returned `NTSTATUS` before evaluating it. Use the
     captured value only for a failed result. Dispose source then parent and free the unmanaged buffer in `finally`.
     Before unmanaged-buffer allocation, revalidate the source basename against clause 1 and construct the one target from
     that validated value. The target must equal the construction by exact ordinal equality, remain ASCII and normalization
@@ -177,10 +195,12 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
     non-ASCII input, or any normalization-changing representation before buffer allocation or native rename. Its checked
     even UTF-16 byte length is <= uint.MaxValue-20 and checked buffer length is `20+length`, with no terminator required.
     Any admission, handle, layout, name, or buffer failure makes no native rename call.
-    Rename only with `SetFileInformationByHandle` on the already-open source handle, class 3, pointer plus uint size,
-    `ReplaceIfExists=false`, the parent handle as `RootDirectory`, and exact relative sibling name
-    `sourceRootName + ".quarantine"`. Retain the immediately captured `GetLastWin32Error` as local failure evidence. If API, handle, share, layout,
-    root-relative, or x64 admission fails, fail quarantine before mutation; never downgrade. Hold both handles from final
+    Rename only with `NtSetInformationFile` on the already-open source handle, native class `FileRenameInformation=10`,
+    pointer plus uint size, `ReplaceIfExists=false`, the parent handle as `RootDirectory`, and exact relative sibling name
+    `sourceRootName + ".quarantine"`. Capture the returned `NTSTATUS` immediately as local failure evidence; treat exactly
+    `0` (`STATUS_SUCCESS`) as success and any nonzero value as failure, and do not attempt to translate the NTSTATUS to a
+    Win32 error code. If API, handle, share, layout, root-relative, or x64 admission fails, fail quarantine before
+    mutation; never downgrade. Hold both handles from final
     identity validation through native rename completion and postclassification. Target creation at the atomic call
     refuses without overwrite/merge/retry; target remains unchanged and source retains its ID. Source rename/delete/
     replacement while paused after validation is denied by sharing. An object appearing at the destination name before the
@@ -203,6 +223,20 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
 12. **Determinism/security.** Stable receipts are ordered by stage/role/attempt and contain no credentials, raw checkout
    paths, wall timestamps, unstable dictionary order, or application vocabulary. Raw PID/start time is local RM
    diagnostic data only, never persisted or user output.
+
+### Permitted test seams
+
+This is a closed table. No hook may return or influence a stage transition, authority/ownership decision, or final
+classification; a hook may only substitute what a real OS call would have returned, or when it would have returned it.
+
+| Seam | Exact location | What it may override |
+|---|---|---|
+| Injectable monotonic clock/sleeper | Retry-schedule attempt-offset/delay computation and wait | An OS monotonic-clock reading or a timing/sleep observation only |
+| Per-native-call return-code override hook | One specific named native call site (mirrors GH-106's `...ForTests` pattern), e.g. forcing a specific `NTSTATUS`/Win32 error from one call | The OS return value that call would have produced, for testing a hard-to-trigger negative partition |
+| Injectable generic quarantine observer/barrier | Fires exactly after both live handles are open and all parent/source/target authority is validated, immediately before `NtSetInformationFile` | A timing/synchronization observation only (when the native call is about to happen), never the call's outcome |
+
+Every group's positive/success partition must execute with no test seam/hook active; see the test-budget "no-override
+positive-path" rule below.
 
 ### Total physical state machine and per-role inventory
 
@@ -272,7 +306,9 @@ third `MORE_DATA` is unstable-list failure; no partial array is exposed on any f
 `RmEndSession`, whose result is recorded without erasing prior evidence. No `RmShutdown` declaration exists.
 
 B1 technical strengthening freezes rooted `GitExecutablePath` admission only from `%ProgramFiles%\Git\cmd\git.exe` or
-`%ProgramFiles(x86)%\Git\cmd\git.exe`; zero or multiple distinct FILE_ID candidates fail. Capture and revalidate
+`%ProgramFiles(x86)%\Git\cmd\git.exe`; zero or multiple distinct FILE_ID candidates fail. This is an accepted
+supported-environment boundary: a machine (developer or CI) with Git installed elsewhere makes every group a blocking
+non-pass, never a skip, and this is intentional, not an oversight to fix later. Capture and revalidate
 source-root and common-dir canonical non-reparse chains, volume serials, and 128-bit FILE_ID_INFO before every
 mutation. The sentinel is exact UTF-8 without BOM, one JSON line plus LF, ordered `schemaVersion`, `token`, `revision`,
 `commonDirectoryDigest`, `roles`; token is 32 random bytes base64url without padding, revision is lowercase 40-hex,
@@ -311,7 +347,7 @@ observer signals host disposal and barrier confirms release; retry deletes lock,
 final root/sentinel cleanup proves marker/output/root absent. No RM/delete before family zero, no Thread.Sleep/Task.Delay
 test synchronization, no testhost termination, and RM registration alone is not attribution. Concurrency key is canonical
 common-dir FILE_ID and serializes only metadata mutation. Group 8 uses the generic observer/barrier immediately before
-`SetFileInformationByHandle` and proves competitor source rename/delete/replacement denial, destination race refusal,
+`NtSetInformationFile` and proves competitor source rename/delete/replacement denial, destination race refusal,
 exact moved identity, unrelated post-success source replacement preservation, unsupported native/layout/handle refusal,
 no path-based fallback, and terminal/report-only semantics. No sleeps.
 
@@ -323,15 +359,26 @@ existing complete sentinel, quarantine, or Restart Manager contract.
 ## Risks
 
 Risks are ownership confusion, Git admin damage, family-zero races, stale PIDs, RM leaks/caps, retry nondeterminism,
-primary-failure masking, unsafe quarantine, concurrency, and unavailable platform capability.
+primary-failure masking, unsafe quarantine, concurrency, unavailable platform capability, and reliance on the undocumented
+native `NtSetInformationFile` API for quarantine rename, with no Microsoft compatibility guarantee across Windows
+updates — accepted because this is test-only tooling and any incompatibility fails closed and loudly.
 
 ## Test budget
 
-Soft target: 10 grouped test methods covering ten mandatory risk groups, with theories/subcases permitted and no
-duplicated assertion across groups. An additional focused nonduplicate regression is allowed only for a concrete finding
-or risk; record its reason, method/group, new total, and focused expected discovery count before `ReviewRequired`. Do not
-remove or combine mandatory groups to hide proof; current expected 86 is 76 accepted #106 plus 10, and any expansion
-amends the candidate expected count through the ordinary issue amendment/review path.
+Exactly ten `[Fact]` test methods in `FixtureCleanupTests.cs` cover the ten mandatory risk groups below, with no
+duplicated assertion across groups. `[Theory]`/parameterized tests are explicitly prohibited in this file: the flexibility
+to count theories/subcases toward the budget is withdrawn, to keep the `86 passed/0 failed/0 skipped` focused-command
+count exact and unambiguous (76 accepted ProcessOwnership tests + exactly 10 FixtureCleanup `[Fact]` methods = 86, with no
+theory-row multiplication). An additional focused nonduplicate regression is allowed only for a concrete finding or risk;
+record its reason, method/group, new total, and focused expected discovery count before `ReviewRequired`. Do not remove
+or combine mandatory groups to hide proof; current expected 86 is 76 accepted #106 plus 10, and any expansion amends the
+candidate expected count through the ordinary issue amendment/review path. Each group's substantive proof obligations
+(what each group must prove) are unchanged by this mechanical `[Fact]`-only tightening.
+
+Every group's positive/success partition must execute with no test seam/hook active — real `git.exe`, real filesystem,
+real native calls throughout — and, for each group, the checkpoint/ledger should be able to name the specific production
+guard whose removal or inversion would make that group fail. Enumerating each of the ten groups' exact guards is
+implementation-time/review-time work, not a planning-amendment obligation.
 
 1. Windows/x64/rooted Git admission fails closed;
 2. exact three receipt roles `cache`, `output`, `worktree`, v1 sentinel, stable sanitized receipt, FILE_ID_INFO
@@ -356,16 +403,18 @@ amends the candidate expected count through the ordinary issue amendment/review 
     Indeterminate, reconstructed observer no destruction, source-name reuse preserved, root-only quarantine after role
     completion fails closed, and concurrent sibling collision/isolation. The injectable generic quarantine
    observer/barrier fires exactly after both live handles are open and all parent/source/target authority is validated,
-   immediately before `SetFileInformationByHandle`; subcases prove competitor source rename/delete denial, same-path
+   immediately before `NtSetInformationFile`; subcases prove competitor source rename/delete denial, same-path
    replacement denial, destination creation race refusal without overwrite, exact moved FILE_ID, unrelated post-success
    source replacement unchanged, unsupported native/layout/handle refusal before mutation, no path-based fallback, and
     terminal/report-only semantics. Naming subcases prove the valid exact `seqdoc-fixture-<token>.quarantine` construction
     and reject missing/altered suffix, different token, extra dot/suffix, slash, backslash, colon, NUL, rooted/device/UNC
     form, `.`/`..`, non-ASCII or normalization-changing input, and a source basename that does not match the frozen token;
     every negative refuses before buffer allocation and native rename, and the positive encodes only the exact constructed
-    UTF-16 sibling bytes. It also asserts DllImport metadata/signatures, BOOL marshalling, enum width, access
-    masks, invalid-handle refusal, immediate error capture, reverse disposal, buffer free, and no-call-on-failure.
-    No sleeps;
+    UTF-16 sibling bytes. It also asserts `NtSetInformationFile`/`ntdll.dll` DllImport metadata/signatures, `IO_STATUS_BLOCK`
+    layout, `NTSTATUS==0` success/failure classification (not BOOL marshalling, which no longer applies to the rename
+    call itself), native information-class value, access masks, invalid-handle refusal, immediate NTSTATUS capture, reverse
+    disposal, buffer free, and no-call-on-failure. `CreateFileW` handle-opening calls are unaffected and remain
+    `SafeFileHandle`/`GetLastWin32Error`-based. No sleeps;
 9. concurrent fixtures and unrelated repo/ref/config/worktree isolation;
 10. successful live cleanup only, with no residual registration/admin/root; quarantine is exclusive to group 8.
 
@@ -386,6 +435,14 @@ B1 focused 3/0/0 and affected 79/0/0, B2 focused 3/0/0 and affected 82/0/0, and 
 developer checks only; they are not required checkpoint commands, gates, or receipts. The sole final gate remains the
 full Acceptance Release command once after Phase B human review and resolved findings. Planning validation only; no
 product or dotnet tests are run while preparing the package.
+
+After each of the internal build phases B1, B2, and B3, an independent Reviewer-agent pass must run against the same
+draft PR/branch before the next phase starts. These are advisory containment checks only — not lifecycle states, not
+human approvals, not final gates — and they do not block on their own; they exist to catch an incomplete/hollow phase
+before the next phase is built on top of it. A hand-rolled `TimeProvider`-shaped test seam type (not a
+`Microsoft.Extensions.TimeProvider`/`FakeTimeProvider` NuGet package reference, since that would require an out-of-scope
+`csproj` change) is explicitly permitted inside `FixtureCleanupTests.cs` for deterministic control over the retry
+schedule's clock/sleeper seam.
 
 ## Final gate
 
