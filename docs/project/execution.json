@@ -1,11 +1,54 @@
 {
-  "activeCheckpointId": null,
-  "activeCheckpointPath": null,
+  "activeCheckpointId": "I100-B",
+  "activeCheckpointPath": "docs/work/quality/I100-B",
   "activePlanPath": null,
-  "executions": [],
+  "executions": [
+    {
+      "branch": "testing/issue-107-fixture-cleanup-v2",
+      "checkpointId": "I100-B",
+      "checkpointPath": "docs/work/quality/I100-B",
+      "claims": [
+        {
+          "kind": "exclusive",
+          "value": "acceptance-git-worktree-metadata"
+        },
+        {
+          "kind": "fixture",
+          "value": "fixturecleanup"
+        },
+        {
+          "kind": "governance-tool",
+          "value": "tools/governance/work_state.py"
+        },
+        {
+          "kind": "path",
+          "value": "docs/project/work-items/gh-107.json"
+        },
+        {
+          "kind": "path",
+          "value": "docs/work/quality/i100-b"
+        },
+        {
+          "kind": "path",
+          "value": "tests/seqdoc.acceptancetests/fixturecleanup.cs"
+        },
+        {
+          "kind": "path",
+          "value": "tests/seqdoc.acceptancetests/fixturecleanuptests.cs"
+        }
+      ],
+      "dependencies": [
+        "GH-106"
+      ],
+      "executionId": "GH-107:I100-B:T1",
+      "owner": "ahmad",
+      "sourceId": "GH-107",
+      "worktreeId": "seqdoc-i107-transfer"
+    }
+  ],
   "generatedBy": "tools/governance/work_state.py",
-  "mode": "idle",
-  "nextAction": "No work item is selected.",
+  "mode": "active",
+  "nextAction": "Fresh checkpoint-builder owns the complete two-file I100-B candidate; run focused verification, then stop at ReviewRequired for Qhatahet.",
   "schemaVersion": 2,
-  "sourceId": null
+  "sourceId": "GH-107"
 }
