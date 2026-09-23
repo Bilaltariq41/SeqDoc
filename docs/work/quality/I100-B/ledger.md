@@ -272,10 +272,11 @@ contract... I will review the proposed amendment and evidence but will not autho
 
 Ahmad's coordinator selection of the specific recommended option (native `NtSetInformationFile`, Option 2 of the two
 compared in the option-comparison comment below) is delegated in his step-2/step-3 instructions
-(https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5795896275) but Ahmad has not yet posted a separate
-coordinator-selection confirmation naming Option 2 specifically. That confirmation remains outstanding and is required,
-as coordinator/canonical-record custodian authority separate from Abood-essa's independent T2 approval, before this
-amendment is treated as fully authorized; Abood-essa's approval of this SHA does not substitute for it.
+(https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5795896275) and was subsequently confirmed explicitly;
+see "2026-09-23 Ahmad coordinator-selection confirmation received" below. That confirmation is coordinator/
+canonical-record custodian authority, separate from and not a substitute for Abood-essa's independent T2 approval of
+this exact amendment SHA, and Ahmad's confirmation explicitly states it does not itself approve the amendment, resume
+canonical execution, or authorize product implementation.
 
 ### Spike evidence and selected replacement
 
@@ -335,12 +336,32 @@ requested, 2026-09-23T14:22:15Z) with 7 findings (5 High, 2 Medium). All seven a
 | I100-B-A6 (Medium) — no disposition rule for intermediate reviews | **Fixed.** The B1/B2/B3 paragraph now classifies these passes as advisory worker containment checks, requires every finding to be recorded as `Fixed`, `Rejected` with evidence, or explicitly `Carried` into the complete-candidate review before the next phase starts, and requires a High-severity safety/authority finding to stop the next phase until disposed as `Fixed` or `Rejected` (never silently `Carried`). It also states these checks do not replace the worker's complete-candidate Reviewer pass, Abood-essa's authenticated human review, or the final gate. |
 | I100-B-A7 (Medium) — future-build capability judgment left implicit | **Fixed.** The Accepted boundary paragraph now states explicitly: no version allowlist and no alternative-rename fallback; every admitted Group-8 positive partition must execute the real native call; a missing export, admission/declaration failure, nonzero `NTSTATUS`, contradictory `IO_STATUS_BLOCK`, or unproven postcondition is a fail-closed failure classified per the exact postclassification rule, never a skip; the focused-verification receipt records the exact measured Windows build; and an unsupported future build is a blocking non-pass for GH-107 promotion. |
 
-### Outstanding item not resolved by this repair
+### Outstanding item at time of this repair (resolved — see below)
 
-The Ahmad coordinator-selection confirmation referenced in I100-B-A1's disposition above and in the "Recovery decision
-and role change" subsection remains outstanding: AhmadKrarha has not yet posted a GitHub comment on Issue #107
-explicitly selecting native `NtSetInformationFile` (Option 2) as the coordinator-approved replacement boundary,
-distinct from his earlier delegation of the option-comparison/selection task and distinct from Abood-essa's
-independent T2 review of this amendment. This repair records the gap accurately rather than fabricating or implying
-that confirmation; per Abood-essa's own rereview checklist, it should be posted before requesting rereview of this
-amendment.
+At the time of this repair round (commits `2aa8d25`/`098f980`), the Ahmad coordinator-selection confirmation
+referenced in I100-B-A1's disposition above and in the "Recovery decision and role change" subsection was outstanding:
+AhmadKrarha had not yet posted a GitHub comment on Issue #107 explicitly selecting native `NtSetInformationFile`
+(Option 2) as the coordinator-approved replacement boundary, distinct from his earlier delegation of the
+option-comparison/selection task and distinct from Abood-essa's independent T2 review of this amendment. This repair
+recorded the gap accurately rather than fabricating or implying that confirmation. It was resolved shortly afterward;
+see "2026-09-23 Ahmad coordinator-selection confirmation received" below.
+
+## 2026-09-23 Ahmad coordinator-selection confirmation received
+
+AhmadKrarha posted the requested coordinator-selection confirmation at
+https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5799338486, explicitly selecting native
+`NtSetInformationFile`/`FileRenameInformation=10` (Option 2) as the approved replacement quarantine-rename boundary,
+citing the published spike evidence and option comparison
+(https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5796090920,
+https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5796097951). He also explicitly accepted the fail-closed
+boundary recorded at exact amendment head `098f98066add1deaef4b279a70d4ea2a6dcd0693` (no version allowlist, no
+synthetic positive capability probe, no alternative rename fallback, every admitted Group-8 positive partition calling
+the real native API with all override hooks inert, and a missing export/admission failure, nonzero `NTSTATUS`,
+contradictory `IO_STATUS_BLOCK`, or unproven postcondition as a loud fail-closed non-pass, never a skip or fallback).
+
+Ahmad's confirmation is explicit that it is distinct from Qhatahet's design authorship and from Abood-essa's
+independent T2 judgment, and that it does not itself approve the amendment, resume canonical execution, or authorize
+product implementation. The previously outstanding I100-B-A1 coordinator-selection item is therefore resolved; the
+amendment still requires Abood-essa's authenticated latest-head T2 approval of exact head
+`098f98066add1deaef4b279a70d4ea2a6dcd0693` before canonical resume, per the Review and activation contract in
+`checkpoint.md`.
