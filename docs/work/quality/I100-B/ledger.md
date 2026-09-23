@@ -84,6 +84,11 @@ Exactly four findings are recorded:
 
 ## PR120 finding dispositions
 
+Historical record: the "Qais I120-F1" row below describes the reviewer-role assignment as it stood before the
+2026-09-23 recovery decision (see the dated amendment section below), which made Qhatahet the implementer/candidate
+contributor for GH-107/I100-B B1–B3 and named Abood-essa the confirmed replacement reserved Phase-B reviewer.
+Preserved as historical record only, not current reviewer-eligibility authority.
+
 | Finding | Subject | Disposition and proof |
 |---|---|---|
 | Qais I120-F1 | Independent human peer must invoke Reviewer agent at Phase B | **Fixed.** Under `docs/project/collaboration-model.md, Delivery procedure, item 3`, the worker invokes its own Reviewer agent and self-reviews first; after green/dispositions at `ReviewRequired`, reserved independent human Qhatahet separately invokes Reviewer agent against the same complete latest SHA and posts the authenticated GitHub receipt before Gate Runner. |
@@ -305,9 +310,9 @@ layout, and every other frozen quarantine design element are unchanged.
 | 1. Native rename ABI throughout `checkpoint.md` | **Applied.** The Frozen semantic contract quarantine clause, the B3 technical-strengthening paragraph, and the Technical inheritance sections here now consistently describe `NtSetInformationFile`/`ntdll.dll`, `IO_STATUS_BLOCK`, `FileRenameInformation=10`, and `NTSTATUS==0` success; `CreateFileW` handle-opening stays on `kernel32.dll` and is unaffected. |
 | 2. Risks | **Applied.** Added reliance on the undocumented native `NtSetInformationFile` API, with no Microsoft compatibility guarantee across Windows updates, accepted because this is test-only tooling that fails closed and loudly. |
 | 3. Group 8 test description | **Applied.** Updated to `NtSetInformationFile`/`ntdll.dll`, `IO_STATUS_BLOCK` layout, and `NTSTATUS==0` success check in place of `SetFileInformationByHandle`/BOOL marshalling; `CreateFileW` handle-opening assertions are unaffected. |
-| 4. Permitted test seams table | **Applied.** Added a closed "Permitted test seams" table (clock/sleeper, per-native-call return-code override hook, generic quarantine observer/barrier), each row limited to an OS return value or timing observation, never a stage/authority/outcome decision. |
+| 4. Permitted test seams table | **Applied.** Added a closed "Permitted test seams" table (clock/sleeper, per-native-call return-code override hook, generic quarantine observer/barrier), each row limited to an OS return value or timing observation, never a stage/authority/outcome decision. **Superseded by the I100-B-A3 repair below: the table now has four exact rows (clock/sleeper; the one `NtSetInformationFile` hook; each of the four RM entry-point hooks; the barrier), not the three summarized here.** |
 | 5. No-override positive-path rule | **Applied.** Added the rule that every group's positive/success partition runs with no test seam/hook active, and that each group's checkpoint/ledger can name the specific production guard whose removal/inversion would fail that group. |
-| 6. Exactly ten `[Fact]` methods, no theories | **Applied.** The test-budget section now requires exactly ten `[Fact]` methods in `FixtureCleanupTests.cs`, explicitly prohibits `[Theory]`/parameterized tests in that file, and withdraws the prior "theories/subcases permitted" flexibility, to keep the 86-count exact. |
+| 6. Exactly ten `[Fact]` methods, no theories | **Applied.** The test-budget section now requires exactly ten `[Fact]` methods in `FixtureCleanupTests.cs`, explicitly prohibits `[Theory]`/parameterized tests in that file, and withdraws the prior "theories/subcases permitted" flexibility, to keep the 86-count exact. **Superseded by the I100-B-A5 repair below: ten is now a soft target, not an immutable cap, while `[Theory]` remains prohibited.** |
 | 7. Rooted-Git-path boundary | **Applied.** Added an explicit sentence next to the existing `%ProgramFiles%\Git\cmd\git.exe`/x86 admission rule confirming a differently located Git installation is an accepted supported-environment boundary and a blocking non-pass, never a skip. |
 | 8. B1/B2/B3 intermediate Reviewer-agent checks and `TimeProvider` seam permission | **Applied.** Added a paragraph requiring an independent Reviewer-agent pass after each of B1, B2, and B3 (advisory containment checks only, not lifecycle states/approvals/gates), and explicitly permitted a hand-rolled `TimeProvider`-shaped test seam type inside `FixtureCleanupTests.cs` (not a NuGet package reference, to stay out of `csproj` scope) for the retry-schedule clock/sleeper seam. |
 
