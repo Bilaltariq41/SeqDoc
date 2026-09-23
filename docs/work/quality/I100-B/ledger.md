@@ -11,6 +11,9 @@ amendment. The rejected candidate is preserved local-only and its old branch is 
 - Restart Manager resource registration: https://learn.microsoft.com/windows/win32/api/restartmanager/nf-restartmanager-rmregisterresources
 - Restart Manager process listing: https://learn.microsoft.com/windows/win32/api/restartmanager/nf-restartmanager-rmgetlist
 - Restart Manager session end: https://learn.microsoft.com/windows/win32/api/restartmanager/nf-restartmanager-rmendsession
+- Microsoft CreateFileW: https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew
+- Microsoft SetFileInformationByHandle: https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle
+- Microsoft FILE_RENAME_INFO: https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info
 - Local accepted #106 public API boundary and cleanup pattern findings: `I100-A/checkpoint.md` and `I100-A/ledger.md`,
   including public `ContainedProcess` observations, active-zero proof, teardown evidence, and ordered secondary evidence.
 - Reusable QHTTP/GH93 patterns were inspected as read-only risk input; neither contract supplies a sentinel, quarantine,
@@ -85,6 +88,8 @@ Exactly four findings are recorded:
 | Abood I100-B-R2-F4 | Owner attribution and review receipt | **Fixed.** Historical Ahmad readiness context is not owner authorization. Phase B requires worker Reviewer evidence, then the reserved human independently invokes Reviewer agent and posts an authenticated same-SHA GitHub receipt before Gate Runner. |
 | Abood I100-B-R2-F5 | Durable review evidence | **Fixed.** Raw session/task handles are excluded; unavailable reviewer metadata is explicitly unauthenticated, and the replacement PR must carry actor/SHA/agent/version/boundary/digest/outcome/findings/dispositions/evidence URL. |
 
+| Abood I100-B-R3-F1 | High — path-validation-to-mutation TOCTOU | **Fixed.** Qais concurred at formal review `https://github.com/Bilaltariq41/SeqDoc/pull/120#pullrequestreview-5282276127` and follow-up `https://github.com/Bilaltariq41/SeqDoc/pull/120#issuecomment-5782126057`. The checkpoint now requires live identity-bound parent/source handles, the exact x64 `CreateFileW`/`SetFileInformationByHandle`/`FileRenameInfo` contract with parent `RootDirectory` and `ReplaceIfExists=false`, share-denied source races, one generic pre-call barrier, exact postchecks that classify but never authorize, and no path-based fallback. Group 8 proves every race, refusal, success identity, exception, reconstruction, layout/handle admission, and terminal partition. |
+
 ## Worker review finding dispositions
 
 | Finding | Disposition and governing evidence |
@@ -148,10 +153,23 @@ agent summaries are advisory and not formal independent-review completion. No Re
 
 ## Technical inheritance
 
+The R3 native contract is exact, not an implementation choice: Kernel32.dll `CreateFileW` and
+`SetFileInformationByHandle`, Unicode where applicable, `ExactSpelling=true`, `SetLastError=true`, Winapi. Parent
+access is 0x80|0x00100000, share 1|2 (DELETE share omitted), disposition 3, flags 0x02000000|0x00200000, with no
+inheritance/template; source access is 0x00010000|0x80|0x00100000 with the same share/disposition/flags. Class
+`FileRenameInfo` is 3. On admitted x64, `FILE_RENAME_INFO` is manually packed as ReplaceIfExists DWORD 0 at offset 0,
+zero padding 4–7, parent HANDLE offset 8, filename length offset 16, UTF-16 relative sibling bytes offset 20, exact
+size `20 + FileNameLength`, no required terminator; `IntPtr.Size==8`, offsets, and buffer size are mandatory group-8
+checks. SetFileInformationByHandle receives the live source handle, class 3, pointer and uint size, and false records
+exact GetLastWin32Error locally. Parent/source handles remain live through the call and postclassification; omitted
+FILE_SHARE_DELETE prevents competing delete-access opens until handle close. No FileRenameInfoEx/flags or path fallback.
+
 The checkpoint's technical strengthening is authoritative: rooted GitExecutablePath and Program Files admission; exact
 sentinel/stable-vs-local receipt and source/common FILE_ID chains; exact Git vectors without `--` fallback; four
 unrelated vectors; outer deadline, retry starts/delays/2-second budget and revalidation; exact RM ABI/state machine;
-quarantine sibling/collision/owner rules; `sleep-with-marker <owned-marker-path> 30000`, marker PID equal to public
+identity-bound CreateFileW parent/source handles, FILE_ID checks, SetFileInformationByHandle/FileRenameInfo sibling
+rename with no `Directory.Move` fallback, collision/race classifications, and terminal report-only residual rules;
+`sleep-with-marker <owned-marker-path> 30000`, marker PID equal to public
 ProcessId, independent test-host FileStream `FileShare.None`, deterministic 32/33+RM observer barrier, no sleeps or
 testhost termination; and common-dir FILE_ID concurrency. Exact Git vectors are `worktree add --detach
 <owned-absolute-path> <40-lowercase-revision>`, `rev-parse --git-common-dir`, `rev-parse --absolute-git-dir`,

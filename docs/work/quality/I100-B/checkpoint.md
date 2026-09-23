@@ -121,16 +121,46 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
     direct-child move target but is never owned or deletable. The source control root is its exact immediate child with
     captured identity/token/sentinel/roles. Separate move-target authority is the exact absent sibling
     `<source-root-name>.quarantine` (equivalent token-derived exact name), under the same exact parent and volume, with
-    canonical boundary and non-reparse existing destination components. Immediately before one and only one atomic
-    `Directory.Move`, revalidate parent chain/identity, source chain/root FILE_ID/sentinel/roles/stage, target relation/
-    absence, destination components, volume, family zero, Git registration/admin absence, and exhausted deletion budget.
-    Target appearance or collision refuses without overwrite/merge/retry. Move-target authority never authorizes child
-    deletion outside the source receipt, and the parent itself is never a destructive target. On success source is absent,
-    destination is the direct sibling with the pre-move source-root FILE_ID, destination and parent are non-reparse,
-    sentinel bytes are unchanged, registration/admin remain absent, and state is terminal `QuarantinedTerminal`. On
-    exception or ambiguous outcome reobserve source/destination by identity and classify only `SourcePreserved`,
-    `MoveCompleted`, `Collision`, or `Indeterminate`; perform no second move/destructive action. Indeterminate stable
-    evidence and local observations are retained; overall result remains degraded/non-success.
+    canonical boundary and non-reparse existing destination components.
+
+    There is no `Directory.Move` and no path-based fallback. Open the authorized parent with `CreateFileW` using
+    `OPEN_EXISTING`, `FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT`, required read-attributes and
+    synchronization access, and sharing that prevents parent rename/deletion while permitting the required child
+    operation. Open the exact source control-root directory with `CreateFileW` using `DELETE|FILE_READ_ATTRIBUTES|
+    SYNCHRONIZE`, the same reparse-safe flags, and `FILE_SHARE_READ|FILE_SHARE_WRITE` while omitting
+    `FILE_SHARE_DELETE`. Read `FILE_ID_INFO` from these same live handles and compare parent/source volume plus
+    128-bit IDs to the immutable receipt; validate sentinel/roles/stage and exact authorized sibling target while the
+    handles remain live. An injectable generic quarantine observer/barrier fires exactly after both handles and all
+    authority are validated, immediately before the native call.
+
+    The exact x64 Windows contract is mandatory: `Kernel32.dll` `CreateFileW` and `SetFileInformationByHandle`, Unicode
+    where applicable, `ExactSpelling=true`, `SetLastError=true`, `CallingConvention.Winapi`. Parent CreateFileW uses
+    desired access `FILE_READ_ATTRIBUTES` 0x80 | `SYNCHRONIZE` 0x00100000, share `FILE_SHARE_READ` 1 |
+    `FILE_SHARE_WRITE` 2 (omit DELETE 4), disposition `OPEN_EXISTING` 3, flags
+    `FILE_FLAG_BACKUP_SEMANTICS` 0x02000000 | `FILE_FLAG_OPEN_REPARSE_POINT` 0x00200000, and no inheritance or
+    template. Source uses desired access `DELETE` 0x00010000 | FILE_READ_ATTRIBUTES | SYNCHRONIZE, the same share,
+    disposition, flags, no inheritance, and no template. `FileRenameInfo` is class 3. The x64 `FILE_RENAME_INFO` manual
+    buffer is DWORD union/ReplaceIfExists false at offset 0, zero padding 4–7, parent HANDLE at offset 8, filename
+    length uint at offset 16, and exact UTF-16 relative sibling bytes at offset 20 with no required terminator and byte
+    count excluding any terminator; total size is exactly `20 + FileNameLength`. `IntPtr.Size==8` and explicit offsets/
+    buffer length are mandatory group-8 admission checks. No FileRenameInfoEx or flags are allowed.
+    Rename only with `SetFileInformationByHandle` on the already-open source handle, class 3, pointer plus uint size,
+    `ReplaceIfExists=false`, the parent handle as `RootDirectory`, and exact relative sibling name
+    `<source-root-name>.quarantine`. Capture exact `GetLastWin32Error` as local evidence. If API, handle, share, layout,
+    root-relative, or x64 admission fails, fail quarantine before mutation; never downgrade. Hold both handles from final
+    identity validation through native rename completion and postclassification. Target creation at the atomic call
+    refuses without overwrite/merge/retry; target remains unchanged and source retains its ID. Source rename/delete/
+    replacement while paused after validation is denied by sharing. A same-name object may appear only after successful
+    rename and remains untouched.
+
+    On success, open destination no-follow and prove exact pre-move source FILE_ID/volume under the same parent, unchanged
+    sentinel bytes, destination/parent non-reparse, registration/admin absent, and source path does not resolve to the
+    moved ID. A new unrelated source object is preserved and classified locally as `SourceNameReused`; source absence is
+    not required in that case. On native failure reobserve by handle/path and classify only `SourcePreserved`,
+    `MoveCompleted`, `Collision`, `SourceNameReused`, or `Indeterminate`; postchecks classify and never authorize a move,
+    and no second destructive action occurs. Indeterminate stable evidence and local observations are retained; overall
+    result remains degraded/non-success. Move-target authority never authorizes child deletion outside the source receipt,
+    and the parent itself is never a destructive target.
 10. **Concurrency.** A repository-scoped in-process async gate keyed by canonical common Git dir serializes only
     worktree metadata mutations, bounded by the cleanup deadline. Tokens/roots remain independent and Git locks remain
     authority. Prove concurrent fixtures cannot delete/corrupt each other and unrelated snapshots are byte-equivalent.
@@ -207,7 +237,7 @@ service 63+1; exact Start/Register/GetList/End signatures use files LPArray and 
 three GetList calls permit one growth, cap 64, and fail malformed/non-growing/third MORE_DATA with no partial result;
 End evidence is mandatory and no RmShutdown exists.
 
-B3 technical strengthening freezes quarantine as atomic same-volume move to absent direct sibling
+B3 technical strengthening freezes identity-bound native rename to an absent same-volume direct sibling
 `seqdoc-fixture-<token>.quarantine`, collision refusal, and terminal `QuarantinedTerminal` only. The existing
 assembly-staged rooted stub vector is exactly `sleep-with-marker <owned-marker-path> 30000`, marker under receipt-listed
 output; bounded event/poll evidence parses marker bytes to public `ContainedProcess.ProcessId`. The exact live order is:
@@ -219,7 +249,10 @@ IOException low word 32/33; RM Start/Register/GetList identifies exact testhost 
 observer signals host disposal and barrier confirms release; retry deletes lock, role cleanup removes original marker, and
 final root/sentinel cleanup proves marker/output/root absent. No RM/delete before family zero, no Thread.Sleep/Task.Delay
 test synchronization, no testhost termination, and RM registration alone is not attribution. Concurrency key is canonical
-common-dir FILE_ID and serializes only metadata mutation.
+common-dir FILE_ID and serializes only metadata mutation. Group 8 uses the generic observer/barrier immediately before
+`SetFileInformationByHandle` and proves competitor source rename/delete/replacement denial, destination race refusal,
+exact moved identity, unrelated post-success source replacement preservation, unsupported native/layout/handle refusal,
+no path-based fallback, and terminal/report-only semantics. No sleeps.
 
 ## Existing coverage
 
@@ -244,7 +277,12 @@ Exactly 10 grouped test methods, with theories/subcases permitted and no duplica
 7. primary failure plus ordered cleanup degradation and #106 secondary evidence;
 8. wrong/replaced parent ID, source outside parent, target parent reparse/replacement, collision before/after check,
    cross-volume, source replacement, success identity/sentinel/terminal, SourcePreserved/MoveCompleted/Indeterminate,
-   reconstructed observer no destruction, and concurrent sibling collision/isolation;
+   reconstructed observer no destruction, and concurrent sibling collision/isolation. The injectable generic quarantine
+   observer/barrier fires exactly after both live handles are open and all parent/source/target authority is validated,
+   immediately before `SetFileInformationByHandle`; subcases prove competitor source rename/delete denial, same-path
+   replacement denial, destination creation race refusal without overwrite, exact moved FILE_ID, unrelated post-success
+   source replacement unchanged, unsupported native/layout/handle refusal before mutation, no path-based fallback, and
+   terminal/report-only semantics. No sleeps;
 9. concurrent fixtures and unrelated repo/ref/config/worktree isolation;
 10. live Windows disposable-repo lock-release end-to-end with no residual registration/admin/root.
 
