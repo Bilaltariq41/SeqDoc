@@ -12,14 +12,18 @@
   "kind": "github-issue",
   "lifecycle": "Blocked",
   "lifecycleLabel": "blocked",
-  "nextAction": "Amend the same-issue B1/B2/B3 plan and obtain both Qhatahet and Abood-essa reviews at the same immutable replacement SHA; do not implement until promoted.",
+  "nextAction": "Remain Blocked pending a new separately authorized recovery decision; do not review, run the final gate, merge PR #121, or close Issue #107.",
   "number": 107,
   "owner": "ahmad",
   "pr": null,
+  "resume": {
+    "reason": "Fresh-builder transfer authorized after repair-limit block; durable record https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5794406557; blocked worktree preserved and unpublished files excluded.",
+    "startHead": "69f587b9b4c4ebe52ef35a8059e3932bfa9fec52"
+  },
   "schemaVersion": 1,
   "selectedForExecution": false,
   "sourceUrl": "https://github.com/Bilaltariq41/SeqDoc/issues/107",
-  "statusReason": "I100-B remains Blocked for a clean-history same-issue planning amendment. Issues #116-#118 are closed superseded history only; PR119 is superseded unmerged and not activation ancestry. The rejected candidate is preserved local-only and its old branch is never reused. No owner bypass is claimed.",
+  "statusReason": "Authorized fresh-builder transfer was unavailable: the independent candidate stopped incomplete and omitted mandatory exact Git administration cleanup, Restart Manager execution/state machine, identity-bound quarantine, live process/repository integration, and the required 86-test command. Both blocked worktrees are preserved; no maintainer takeover is authorized.",
   "title": "[Testing] Prove fixture-owned worktree cleanup and lock attribution",
   "track": "quality"
 }

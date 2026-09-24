@@ -15,6 +15,9 @@ amendment. The rejected candidate is preserved local-only and its old branch is 
 - Microsoft SetFileInformationByHandle: https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle
 - Microsoft FILE_RENAME_INFO: https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info
 - Microsoft FILE_RENAME_INFORMATION: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
+- Microsoft WDK `FILE_INFORMATION_CLASS` / `FileRenameInformation=10` enum ordering, and the Wine project's
+  `winternl.h`, independently confirmed against each other for the full native enum ordering 1–11: documented in the
+  Issue #107 comment thread following the recovery decision.
 - Local accepted #106 public API boundary and cleanup pattern findings: `I100-A/checkpoint.md` and `I100-A/ledger.md`,
   including public `ContainedProcess` observations, active-zero proof, teardown evidence, and ordered secondary evidence.
 - Reusable QHTTP/GH93 patterns were inspected as read-only risk input; neither contract supplies a sentinel, quarantine,
@@ -46,7 +49,7 @@ amendment. The rejected candidate is preserved local-only and its old branch is 
 | F2 — Git residual safety | Fixed: only receipt-listed control-root descendants may be directly deleted; captured common-dir admin data is preserved on residual or quarantine paths, and success requires both admin and registration absence. |
 | F3 — exact sentinel, receipt, and partial identity | Fixed: schema-v1 sentinel, cryptographic token, FILE_ID_INFO identities, reparse-safe revalidation, monotonic owner stages, and reconstructed-owner fail-closed behavior are frozen. |
 | F4 — Restart Manager managed interop admission/state machine | Fixed: exact Unicode P/Invoke attributes, constants, layouts, signatures, 3-call count semantics, real admitted-platform empty/known-lock call, injected negatives, mandatory session end, and no shutdown/ownership inference are frozen. |
-| F5 — claims and reviewer | Fixed: exact GH-107 claims exclude csproj; Qhatahet is reserved for Phase B and both Qhatahet/Abood-essa are required for Phase A. |
+| F5 — claims and reviewer | Fixed: exact GH-107 claims exclude csproj; Qhatahet is reserved for Phase B and both Qhatahet/Abood-essa are required for Phase A. **Superseded for current authority by the 2026-09-23 recovery decision (see the dated amendment section below): Qhatahet became the implementer/candidate contributor and is no longer Phase-B reviewer-eligible; Abood-essa is the confirmed replacement reserved Phase-B reviewer. Preserved here as historical record only.** |
 | F6 — lifecycle truth | Fixed: GH-107 is Blocked and unselected; B1/B2/B3 are internal phases with no child lifecycle, PR, merge, or gate; execution remains idle. |
 
 ## Readiness and lifecycle
@@ -81,6 +84,11 @@ Exactly four findings are recorded:
 
 ## PR120 finding dispositions
 
+Historical record: the "Qais I120-F1" row below describes the reviewer-role assignment as it stood before the
+2026-09-23 recovery decision (see the dated amendment section below), which made Qhatahet the implementer/candidate
+contributor for GH-107/I100-B B1–B3 and named Abood-essa the confirmed replacement reserved Phase-B reviewer.
+Preserved as historical record only, not current reviewer-eligibility authority.
+
 | Finding | Subject | Disposition and proof |
 |---|---|---|
 | Qais I120-F1 | Independent human peer must invoke Reviewer agent at Phase B | **Fixed.** Under `docs/project/collaboration-model.md, Delivery procedure, item 3`, the worker invokes its own Reviewer agent and self-reviews first; after green/dispositions at `ReviewRequired`, reserved independent human Qhatahet separately invokes Reviewer agent against the same complete latest SHA and posts the authenticated GitHub receipt before Gate Runner. |
@@ -95,6 +103,12 @@ Exactly four findings are recorded:
 | Abood I100-B-R4-F3 | Low — R3 disposition outside Markdown table | **Fixed.** R2, R3, and R4 rows are contiguous in this one valid PR120 table; review evidence: `https://github.com/Bilaltariq41/SeqDoc/pull/120#pullrequestreview-5288493974`. |
 
 ## PR120 R5 and Qhatahet dispositions
+
+Historical record: at the time of this section, Qhatahet still held the reserved independent Phase-B human reviewer
+role referenced in rows below. The 2026-09-23 recovery decision (see the dated amendment section below) superseded
+that role assignment: Qhatahet became the implementer/candidate contributor for GH-107/I100-B B1–B3, and Abood-essa is
+the confirmed replacement reserved Phase-B reviewer. The rows below are preserved as historical record of PR120's
+findings and are not current reviewer-eligibility authority.
 
 | Finding | Subject | Disposition and proof |
 |---|---|---|
@@ -116,6 +130,10 @@ Exactly four findings are recorded:
 | Qhatahet same-head approval | R2–R5 and prior Qhatahet repairs | **Preserved as historical evidence.** Qhatahet approved `5ad33e85638b5ba2297a03351fe86e6b55709a66` at `https://github.com/Bilaltariq41/SeqDoc/pull/120#pullrequestreview-5289582563`; this R6 amendment makes that approval stale for authorization, so both peers must review the new exact SHA. |
 
 ## Worker review finding dispositions
+
+Historical record: row I100-B-F2 below describes the reviewer-role assignment as it stood before the 2026-09-23
+recovery decision (see the dated amendment section below), which made Qhatahet the implementer/candidate contributor
+and named Abood-essa the confirmed replacement reserved Phase-B reviewer. Preserved as historical record only.
 
 | Finding | Disposition and governing evidence |
 |---|---|
@@ -144,6 +162,10 @@ Phase A. The PR body claim is subordinate to this ledger and linked receipt; no 
 
 Child issue authority is deleted; these original technical findings are inherited by the corresponding internal clauses
 and proofs. Original issue URLs remain historical sources; the exact supplied Abood finding comment is retained for #116.
+Any "Qhatahet Phase B" mention in the tables below reflects the reviewer-role assignment as it stood at that historical
+point; the 2026-09-23 recovery decision (see the dated amendment section below) superseded it — Qhatahet is now the
+implementer/candidate contributor and Abood-essa is the confirmed replacement reserved Phase-B reviewer. Preserved as
+historical record only.
 
 ### Issue #116 — authority/Git phase
 
@@ -179,13 +201,16 @@ and proofs. Original issue URLs remain historical sources; the exact supplied Ab
 
 Required focused implementation command, before `ReviewRequired`: `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~FixtureCleanupProcessTests|FullyQualifiedName~FixtureCleanupIntegrationTests|FullyQualifiedName~ProcessOwnershipTests"`, exactly `86 passed/0 failed/0 skipped`. B1 3/0/0 and 79/0/0, B2 3/0/0 and 82/0/0, and B3 focused 4/0/0 remain optional developer checks only, not checkpoint commands, gates, or receipts. The sole final gate is `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release`, once after human review and resolved findings.
 
-Phase A requires both Qhatahet and Abood-essa to review the same immutable replacement planning SHA and post
-authenticated T2 receipts; these approve only same-issue sequencing/spec/allowlists. Phase B requires the worker/
-Orchestrator to invoke its own Reviewer agent and self-review first, then after focused/affected green and dispositions
-at `ReviewRequired`, reserved independent human Qhatahet separately invokes Reviewer agent against the same complete latest
-SHA and posts an authenticated GitHub receipt containing actor, exact SHA, agent name/version, invocation boundary,
-output digest/outcome, findings/dispositions, and evidence URL. Only then does Gate Runner run the final gate. Prior
-agent summaries are advisory and not formal independent-review completion. No Ready now.
+Phase A requires both reserved peers to review the same immutable replacement planning SHA and post authenticated T2
+receipts; these approve only same-issue sequencing/spec/allowlists. When one reserved peer authors the amendment
+under review, only the non-author peer's authenticated T2 approval is required for that exact SHA (see the Review and
+activation contract in `checkpoint.md`). Phase B requires the worker/Orchestrator to invoke its own Reviewer agent and
+self-review first, then after focused/affected green and dispositions at `ReviewRequired`, reserved independent human
+Abood-essa — the confirmed replacement Phase-B reviewer under the 2026-09-23 recovery decision, since implementer
+Qhatahet is disqualified from Phase B as of that decision — separately invokes Reviewer agent against the same complete
+latest SHA and posts an authenticated GitHub receipt containing actor, exact SHA, agent name/version, invocation
+boundary, output digest/outcome, findings/dispositions, and evidence URL. Only then does Gate Runner run the final
+gate. Prior agent summaries are advisory and not formal independent-review completion. No Ready now.
 
 ## State, roles, and outcome proof
 
@@ -208,16 +233,17 @@ successful cleanup only.
 
 ## Technical inheritance
 
-The checkpoint's managed/native ABI table is authoritative and incorporates R5-F1: exact Kernel32 declarations,
-metadata, access/share masks, safe-handle/error/finally behavior, x64 `FILE_RENAME_INFO` offsets and buffer checks,
-identity-bound live handles, and no path fallback. The Microsoft and ntifs primary links above are the durable references;
-the ledger does not restate a second ABI variant.
+The checkpoint's managed/native ABI table is authoritative and incorporates R5-F1, as amended for the native rename ABI
+(see the dated amendment section below): exact Kernel32 `CreateFileW` handle-opening declarations plus `ntdll.dll`
+`NtSetInformationFile` for the rename call itself, metadata, access/share masks, safe-handle/`NTSTATUS`/finally behavior,
+x64 native `FileRenameInformation`-shaped buffer offsets and checks, identity-bound live handles, and no path fallback.
+The Microsoft and ntifs primary links above are the durable references; the ledger does not restate a second ABI variant.
 
 The checkpoint's technical strengthening is authoritative: rooted GitExecutablePath and Program Files admission; exact
 sentinel/stable-vs-local receipt and source/common FILE_ID chains; exact Git vectors without `--` fallback; four
 unrelated vectors; outer deadline, retry starts/delays/2-second budget and revalidation; exact RM ABI/state machine;
-identity-bound CreateFileW parent/source handles, FILE_ID checks, SetFileInformationByHandle/FileRenameInfo sibling
-rename with no `Directory.Move` fallback, collision/race classifications, and terminal report-only residual rules;
+identity-bound CreateFileW parent/source handles, FILE_ID checks, `NtSetInformationFile`/native `FileRenameInformation=10`
+sibling rename with no `Directory.Move` fallback, collision/race classifications, and terminal report-only residual rules;
 `sleep-with-marker <owned-marker-path> 30000`, marker PID equal to public
 ProcessId, independent test-host FileStream `FileShare.None`, deterministic 32/33+RM observer barrier, no sleeps or
 testhost termination; and common-dir FILE_ID concurrency. Exact Git vectors are `worktree add --detach
@@ -225,3 +251,143 @@ testhost termination; and common-dir FILE_ID concurrency. Exact Git vectors are 
 `status --porcelain=v1 -z --untracked-files=all`, `for-each-ref --format=%(refname)%00%(objectname)%00%(symref)%00
 --sort=refname`, `config --local --null --list`, `worktree list --porcelain`, and `worktree remove --force
 <owned-absolute-path>`.
+
+## 2026-09-23 quarantine rename ABI amendment (Issue #107 spike)
+
+### Recovery decision and role change
+
+The 2026-09-23 recovery decision
+(https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5795266589) named Qhatahet as implementer/candidate
+contributor for GH-107/I100-B B1–B3 product implementation, AhmadKrarha as coordinator/canonical-record custodian, and
+Abood-essa as the proposed replacement independent Phase-B reviewer, subsequently confirmed by Abood-essa
+(https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5795300539). Because Qhatahet's own investigation
+design is incorporated into this amendment and he authored it, he is disqualified as its reviewer and as GH-107's
+Phase-B reviewer; every "reserved independent human Qhatahet" reference elsewhere in this ledger and in
+`checkpoint.md` that predates this decision is preserved as historical record only and does not authorize current
+review of this or any later B1–B3 candidate. Abood-essa's T2 approval of this exact amendment SHA is independent
+approval of the amendment, not authorship of its design or its own acceptance of the underlying native-API boundary;
+Abood-essa explicitly reserved his own judgment on the replacement design when acknowledging the measured blocker
+(https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5795782960: "This is not approval of a replacement
+contract... I will review the proposed amendment and evidence but will not author or repair its design.").
+
+Ahmad's coordinator selection of the specific recommended option (native `NtSetInformationFile`, Option 2 of the two
+compared in the option-comparison comment below) is delegated in his step-2/step-3 instructions
+(https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5795896275) and was subsequently confirmed explicitly;
+see "2026-09-23 Ahmad coordinator-selection confirmation received" below. That confirmation is coordinator/
+canonical-record custodian authority, separate from and not a substitute for Abood-essa's independent T2 approval of
+this exact amendment SHA, and Ahmad's confirmation explicitly states it does not itself approve the amendment, resume
+canonical execution, or authorize product implementation.
+
+### Spike evidence and selected replacement
+
+A throwaway, read-only spike (not in this repo; full harness source, build/run commands, and results table published at
+https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5796090920) measured, on one machine — Windows build
+`10.0.26200.0` (a Windows 11 24H2/25H2-era build), x64, .NET runtime `10.0.11` (SDK `10.0.302`) — that
+`SetFileInformationByHandle` with `FileRenameInfo` (class 3) and a non-NULL `RootDirectory` handle repeatedly fails
+with Win32 error 87 (`ERROR_INVALID_PARAMETER`) across three development runs, with the source object's `FILE_ID_INFO`
+provably unchanged after each failure (a true no-op, not a partial rename). This is a measured result on that one
+environment, not a universal claim across every supported Windows build. It also observably conflicts with current
+Microsoft `FILE_RENAME_INFO` documentation, which describes a `RootDirectory`-relative name as a supported form of the
+structure; the conflict is between that public documentation and this empirical Win32-layer observation, not a
+confirmation by the documentation that the form is unsupported.
+
+The spike's original report left the volume's filesystem as an unconfirmed assumption ("assumed-NTFS... not
+independently confirmed"). That gap is now closed: on the same physical machine, `Get-Volume -DriveLetter C |
+Select-Object FileSystem,FileSystemType` (run without elevation) reports `FileSystem: NTFS` / `FileSystemType: NTFS`
+for the `C:` volume, which is confirmed via `$env:TEMP` to be the same volume hosting `%TEMP%`
+(`C:\Users\<user>\AppData\Local\Temp`) and therefore the same volume the spike's scratch directory and all four
+scenarios ran on. The filesystem is accordingly frozen as an admitted boundary rather than left an assumption:
+`checkpoint.md` clause 11 now requires NTFS for the control-root volume, with a non-NTFS volume a blocking non-pass,
+never a skip, matching the existing Git/RM capability boundaries.
+
+The same spike measured, on the same one machine, that the native alternative succeeds: `NtSetInformationFile`
+(`ntdll.dll`) with native `FileRenameInformation` (class 10, independently confirmed against Microsoft's WDK docs and
+the Wine project's `winternl.h`, both agreeing on the full enum ordering 1–11) returns `NTSTATUS = 0`, preserving file
+identity (proven via `FILE_ID_INFO` before/after). Abood-essa acknowledged this measured blocker but did not approve or
+author the replacement design (see the Recovery decision and role change subsection above); this PR's amendment review
+is the first authenticated T2 review of the native proposal. The full option comparison (path-based narrowed-TOCTOU
+rename versus native `NtSetInformationFile`, with the native option recommended as the smaller change against the
+already-reviewed contract) is published at
+https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5796097951.
+
+Selected replacement: native `NtSetInformationFile`, `FileRenameInformation=10`, replacing the Win32
+`SetFileInformationByHandle`/`FileRenameInfo=3` rename call only; the `CreateFileW` handle-opening sequence, buffer byte
+layout, and every other frozen quarantine design element are unchanged.
+
+| Change | Disposition |
+|---|---|
+| 1. Native rename ABI throughout `checkpoint.md` | **Applied.** The Frozen semantic contract quarantine clause, the B3 technical-strengthening paragraph, and the Technical inheritance sections here now consistently describe `NtSetInformationFile`/`ntdll.dll`, `IO_STATUS_BLOCK`, `FileRenameInformation=10`, and `NTSTATUS==0` success; `CreateFileW` handle-opening stays on `kernel32.dll` and is unaffected. |
+| 2. Risks | **Applied.** Added reliance on the undocumented native `NtSetInformationFile` API, with no Microsoft compatibility guarantee across Windows updates, accepted because this is test-only tooling that fails closed and loudly. |
+| 3. Group 8 test description | **Applied.** Updated to `NtSetInformationFile`/`ntdll.dll`, `IO_STATUS_BLOCK` layout, and `NTSTATUS==0` success check in place of `SetFileInformationByHandle`/BOOL marshalling; `CreateFileW` handle-opening assertions are unaffected. |
+| 4. Permitted test seams table | **Applied.** Added a closed "Permitted test seams" table (clock/sleeper, per-native-call return-code override hook, generic quarantine observer/barrier), each row limited to an OS return value or timing observation, never a stage/authority/outcome decision. **Superseded by the I100-B-A3 repair below: the table now has four exact rows (clock/sleeper; the one `NtSetInformationFile` hook; each of the four RM entry-point hooks; the barrier), not the three summarized here.** |
+| 5. No-override positive-path rule | **Applied.** Added the rule that every group's positive/success partition runs with no test seam/hook active, and that each group's checkpoint/ledger can name the specific production guard whose removal/inversion would fail that group. |
+| 6. Exactly ten `[Fact]` methods, no theories | **Applied.** The test-budget section now requires exactly ten `[Fact]` methods in `FixtureCleanupTests.cs`, explicitly prohibits `[Theory]`/parameterized tests in that file, and withdraws the prior "theories/subcases permitted" flexibility, to keep the 86-count exact. **Superseded by the I100-B-A5 repair below: ten is now a soft target, not an immutable cap, while `[Theory]` remains prohibited.** |
+| 7. Rooted-Git-path boundary | **Applied.** Added an explicit sentence next to the existing `%ProgramFiles%\Git\cmd\git.exe`/x86 admission rule confirming a differently located Git installation is an accepted supported-environment boundary and a blocking non-pass, never a skip. |
+| 8. B1/B2/B3 intermediate Reviewer-agent checks and `TimeProvider` seam permission | **Applied.** Added a paragraph requiring an independent Reviewer-agent pass after each of B1, B2, and B3 (advisory containment checks only, not lifecycle states/approvals/gates), and explicitly permitted a hand-rolled `TimeProvider`-shaped test seam type inside `FixtureCleanupTests.cs` (not a NuGet package reference, to stay out of `csproj` scope) for the retry-schedule clock/sleeper seam. |
+
+This amendment changed only `docs/work/quality/I100-B/checkpoint.md` and this ledger; `docs/project/work-items/GH-107.json`
+is untouched, and no product/test command, implementation, or activation occurred.
+
+## 2026-09-23 I100-B-A1–A7 repair (Abood-essa PR121 amendment review)
+
+Abood-essa reviewed exact head `141e3a06f6c5cbead035c6aab444f17b013c3859` (this file's prior amendment) and requested
+changes at https://github.com/Bilaltariq41/SeqDoc/pull/121#pullrequestreview-5292257454 (T2 amendment review, changes
+requested, 2026-09-23T14:22:15Z) with 7 findings (5 High, 2 Medium). All seven are repaired in this same round.
+
+| Finding | Disposition and proof |
+|---|---|
+| I100-B-A1 (High) — evidence and authorization overstated | **Fixed.** The "Spike evidence and selected replacement" subsection above now states the exact measured one-machine environment (Windows `10.0.26200.0`, x64, .NET `10.0.11`/SDK `10.0.302`, assumed-NTFS) without universalizing the result, records the observed conflict between current Microsoft `FILE_RENAME_INFO` documentation and the empirical Win32-layer failure instead of claiming documentation confirmation, removes the false "two human reviewers accepted" claim, links the exact spike-packet (`...5796090920`) and option-comparison (`...5796097951`) comments, and the new "Recovery decision and role change" subsection records that Ahmad's own coordinator-selection confirmation of the specific native option remains outstanding and that Abood-essa's T2 approval is independent approval, not design authorship. |
+| I100-B-A2 (High) — reviewer contract still names the implementer as reviewer | **Fixed.** `checkpoint.md`'s Review boundary and Phase A/Phase B paragraphs now name Qhatahet as implementer and Abood-essa as the reserved independent Phase-B reviewer, with an exact link to the recovery decision and Abood-essa's confirmation. This ledger's "Internal commands and review receipts" section is corrected to match. Older "reserved independent human Qhatahet" rows in the PR120 R5/Qhatahet dispositions, Worker review finding dispositions, and Abood finding inheritance map sections are explicitly labeled historical record only, pointing to this section, rather than rewritten out of the historical trace. |
+| I100-B-A3 (High) — open-ended native-hook table | **Fixed.** `checkpoint.md`'s "Permitted test seams" table now enumerates every permitted hook by exact call site (the one `NtSetInformationFile` rename call; each of the four `RmStartSession`/`RmRegisterResources`/`RmGetList`/`RmEndSession` entry points; the clock/sleeper wait; the quarantine barrier), states each hook's allowed override domain is failure-only and never synthesizes success/identity/path/sentinel/Git output/family-zero/RM ownership/stage/classification/postcondition, states each hook must be inert during every positive partition, names the consuming test group for each row, and states an unlisted hook fails review. |
+| I100-B-A4 (High) — native ABI declaration not exact enough | **Fixed.** The Quarantine clause's `NtSetInformationFile` declaration now freezes `ExactSpelling=true`, `CallingConvention=Winapi`, `SetLastError=false` (with the reason `SetLastError=false` is exact, not an omission), a signed 32-bit `int fileInformationClass=10` matching the native C enum's default underlying type, frozen `IO_STATUS_BLOCK` x64 field offsets (`Status` at 0, `Information` at 8, size 16) and `SafeFileHandle` lifetime through postclassification, and an exact postclassification rule for nonzero `NTSTATUS`, `NTSTATUS==0` with contradictory `IO_STATUS_BLOCK`, `NTSTATUS==0` with a failed postcondition check, and any other partial/unrecognized observation — none of which may trigger a fallback rename or a second destructive action. |
+| I100-B-A5 (Medium) — self-contradictory test budget | **Fixed.** The Test budget section now states "current soft target: ten `[Fact]` methods, current focused expectation: 86" explicitly, describes ten as a soft target rather than an immutable cap, keeps `[Theory]`/parameterized tests prohibited, and permits a concrete nonduplicate regression for a real finding or risk (including one surfaced by a B1/B2/B3 intermediate Reviewer-agent pass) through the existing amendment/count-recording process. |
+| I100-B-A6 (Medium) — no disposition rule for intermediate reviews | **Fixed.** The B1/B2/B3 paragraph now classifies these passes as advisory worker containment checks, requires every finding to be recorded as `Fixed`, `Rejected` with evidence, or explicitly `Carried` into the complete-candidate review before the next phase starts, and requires a High-severity safety/authority finding to stop the next phase until disposed as `Fixed` or `Rejected` (never silently `Carried`). It also states these checks do not replace the worker's complete-candidate Reviewer pass, Abood-essa's authenticated human review, or the final gate. |
+| I100-B-A7 (Medium) — future-build capability judgment left implicit | **Fixed.** The Accepted boundary paragraph now states explicitly: no version allowlist and no alternative-rename fallback; every admitted Group-8 positive partition must execute the real native call; a missing export, admission/declaration failure, nonzero `NTSTATUS`, contradictory `IO_STATUS_BLOCK`, or unproven postcondition is a fail-closed failure classified per the exact postclassification rule, never a skip; the focused-verification receipt records the exact measured Windows build; and an unsupported future build is a blocking non-pass for GH-107 promotion. |
+
+### Outstanding item at time of this repair (resolved — see below)
+
+At the time of this repair round (commits `2aa8d25`/`098f980`), the Ahmad coordinator-selection confirmation
+referenced in I100-B-A1's disposition above and in the "Recovery decision and role change" subsection was outstanding:
+AhmadKrarha had not yet posted a GitHub comment on Issue #107 explicitly selecting native `NtSetInformationFile`
+(Option 2) as the coordinator-approved replacement boundary, distinct from his earlier delegation of the
+option-comparison/selection task and distinct from Abood-essa's independent T2 review of this amendment. This repair
+recorded the gap accurately rather than fabricating or implying that confirmation. It was resolved shortly afterward;
+see "2026-09-23 Ahmad coordinator-selection confirmation received" below.
+
+## 2026-09-23 Ahmad coordinator-selection confirmation received
+
+AhmadKrarha posted the requested coordinator-selection confirmation at
+https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5799338486, explicitly selecting native
+`NtSetInformationFile`/`FileRenameInformation=10` (Option 2) as the approved replacement quarantine-rename boundary,
+citing the published spike evidence and option comparison
+(https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5796090920,
+https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5796097951). He also explicitly accepted the fail-closed
+boundary recorded at exact amendment head `098f98066add1deaef4b279a70d4ea2a6dcd0693` (no version allowlist, no
+synthetic positive capability probe, no alternative rename fallback, every admitted Group-8 positive partition calling
+the real native API with all override hooks inert, and a missing export/admission failure, nonzero `NTSTATUS`,
+contradictory `IO_STATUS_BLOCK`, or unproven postcondition as a loud fail-closed non-pass, never a skip or fallback).
+
+Ahmad's confirmation is explicit that it is distinct from Qhatahet's design authorship and from Abood-essa's
+independent T2 judgment, and that it does not itself approve the amendment, resume canonical execution, or authorize
+product implementation. The previously outstanding I100-B-A1 coordinator-selection item is therefore resolved; the
+amendment still requires Abood-essa's authenticated latest-head T2 approval of whichever commit is the actual current
+PR #121 head at the time of his review — not a SHA fixed in this sentence, which would otherwise go stale every time a
+later repair commit changes the head — before canonical resume, per the Review and activation contract in
+`checkpoint.md`.
+
+## 2026-09-24 I100-B-A8–A11 repair (Abood-essa latest-head rereview)
+
+Abood-essa reviewed exact head `9c4334cc9d5171b82a1c6fca448b2d6e5171fe13` and requested changes at
+https://github.com/Bilaltariq41/SeqDoc/pull/121#pullrequestreview-5296597077 with 4 new findings (2 High, 2 Medium),
+while confirming A1–A7 are "substantially and responsively repaired" and that Ahmad's coordinator-selection receipt is
+now posted. All four are repaired in this round.
+
+| Finding | Disposition and proof |
+|---|---|
+| I100-B-A8 (High) — unauthorized fourth path added | **Fixed.** `docs/project/delegated-contribution-workflow.md` is restored exactly to its content at parent commit `141e3a0` (before this repair series touched it), removing the out-of-scope "Repair trace: PR #121" section added there. The equivalent repair trace already lives inside this ledger's "2026-09-23 I100-B-A1–A7 repair" section and this one, both inside the frozen checkpoint/ledger scope. |
+| I100-B-A9 (High) — requested SHA and worker review are stale | **Fixed.** The stale hardcoded-SHA authorization sentence in the "Recovery decision and role change" subsection above no longer pins a specific commit (which would go stale again the moment this repair commits); it now refers to whichever commit is the actual current PR #121 head at the time of Abood-essa's review. A fresh independent `reviewer-medium` complete-amendment pass ran against this exact commit (`b5e5ba3`), confirming all four A8–A11 findings repaired, scope clean, and governance checks passing; its receipt is posted as an Issue #107 comment (the same pattern as the prior worker-review receipt at https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5796469380), with rereview requested only at that same, subsequently unchanged, head. |
+| I100-B-A10 (Medium) — closed RM hook contract contradicts its failure-only rule | **Fixed.** `checkpoint.md`'s "Permitted test seams" table now states two distinct closed override domains: a failure-only domain (clock/sleeper, `NtSetInformationFile`, and the three simple-failure RM calls `RmStartSession`/`RmRegisterResources`/`RmEndSession`), and a separate RM diagnostic negative-tuple domain used only by `RmGetList`, whose hook may substitute only an exact `(result, needed, count)` tuple from a closed enumerated set (malformed count, non-growing count, third `MORE_DATA`, `needed>64`, or an outright failure DWORD). No tuple in either domain may establish RM ownership, admission, attribution, stage success, or final success, regardless of whether `RmGetList`'s nominal `result` is `SUCCESS`/`MORE_DATA` or a failure code. |
+| I100-B-A11 (Medium) — spike filesystem assumed, not observed | **Fixed with real evidence, not just a frozen assumption.** Independently confirmed on the same physical machine that ran the spike: `Get-Volume -DriveLetter C` reports `FileSystem: NTFS`/`FileSystemType: NTFS` for the `C:` volume, and `$env:TEMP` confirms `%TEMP%` (the spike's scratch-directory parent) is on that same `C:` volume. `checkpoint.md` clause 11 now requires NTFS for the control-root volume as an explicit admitted boundary, with a non-NTFS volume a blocking non-pass, never a skip; the focused-verification receipt sentence now also requires recording the control-root volume's filesystem identity alongside the Windows build. |
+
+Verification: `git diff --check` clean; `python tools/governance/work_state.py validate`, `project-execution --check`,
+and `python -m unittest tests.governance.test_work_state` re-run and pass at the final head of this round.
