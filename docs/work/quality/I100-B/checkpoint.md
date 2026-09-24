@@ -243,8 +243,11 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
 10. **Concurrency.** A repository-scoped in-process async gate keyed by canonical common Git dir serializes only
     worktree metadata mutations, bounded by the cleanup deadline. Tokens/roots remain independent and Git locks remain
     authority. Prove concurrent fixtures cannot delete/corrupt each other and unrelated snapshots are byte-equivalent.
-11. **Platform.** Windows 10/Server 2016 x64 per #106, with Git and RM capability. Missing capability is blocking and
-    non-passing, never skip/pass.
+11. **Platform.** Windows 10/Server 2016 x64 per #106, with Git, RM, and NTFS capability. Missing Git or RM capability
+    is blocking and non-passing, never skip/pass. The admitted filesystem boundary is exactly NTFS: independently
+    confirmed for the control root's volume via `Get-Volume`/`FileSystemType` (or equivalent), matching the spike's
+    measured environment (see the ledger's dated amendment sections); a non-NTFS control-root volume is likewise
+    blocking and non-passing, never skip/pass.
 12. **Determinism/security.** Stable receipts are ordered by stage/role/attempt and contain no credentials, raw checkout
    paths, wall timestamps, unstable dictionary order, or application vocabulary. Raw PID/start time is local RM
    diagnostic data only, never persisted or user output.
@@ -253,17 +256,28 @@ unowned force removal; no unbounded waits; and no cross-platform claim.
 
 This is a closed table: exactly these rows exist, and no other hook, hand-rolled seam, or injected override exists
 anywhere in `FixtureCleanup.cs`/`FixtureCleanupTests.cs`. No hook may return or influence a stage transition,
-authority/ownership decision, or final classification; a return-code override hook may substitute only a caller-supplied
-*failure* value for what a real OS/native call would otherwise have returned — it must never synthesize success, a
-`FILE_ID`, a path, sentinel bytes, Git command output, family-zero proof, RM ownership/attribution, a stage, a
-classification, or a postcondition, and it must be inert (unset/no-op) during every group's positive/success partition.
-An unlisted or unenumerated hook fails review.
+authority/ownership decision, or final classification. Two distinct override domains exist, both closed:
+
+- **Failure-only override** (clock/sleeper timing excepted): a hook may substitute only a caller-supplied value that a
+  real OS/native call could itself have returned as failure/degradation for that call — it must never synthesize
+  success, a `FILE_ID`, a path, sentinel bytes, Git command output, family-zero proof, RM ownership/attribution, a
+  stage, a classification, or a postcondition.
+- **RM diagnostic negative-tuple override** (`RmGetList` only): because a mandatory malformed/non-growing-count
+  negative genuinely returns `SUCCESS`/`MORE_DATA` at the Win32 layer with an invalid accompanying `needed`/`count`
+  value — the malformed *shape*, not the return code, is what production code must classify as failure/degradation —
+  this one call site's hook may substitute the exact tuple `(result, needed, count)` only from the closed set listed
+  in its row below. No tuple in that set may establish RM ownership, admission, attribution, stage success, or final
+  success, regardless of whether its `result` field is nominally `SUCCESS`/`MORE_DATA` or an outright failure DWORD.
+
+Every override, in either domain, must be inert (unset/no-op) during every group's positive/success partition. An
+unlisted or unenumerated hook, or a tuple outside its row's closed set, fails review.
 
 | Seam | Exact call site | Allowed override domain | Consuming group | Real positive-path proof (no seam active) |
 |---|---|---|---|---|
 | Injectable monotonic clock/sleeper | The retry loop's `IClock`/`ISleeper`-shaped seam (a hand-rolled `TimeProvider`-shaped test type, not a NuGet reference) wrapping every attempt-offset/delay wait | An OS monotonic-clock reading or a `Task.Delay`/`Thread.Sleep`-shaped timing observation only; never a stage/authority/outcome value | Group 5 | Group 5's successful-retry-then-delete positive case runs the real retry loop with the real clock; the seam is exercised only for the deterministic boundary subcases (1950/2000/2001 ms). |
-| `NtSetInformationFile` return-code override hook | The one call site in the quarantine rename path, immediately after live parent/source handles and all authority are validated | Only the returned `NTSTATUS`, to a caller-supplied nonzero failure value, for Group 8's single "unsupported native/layout/handle admission refusal" negative partition; never `0`/`STATUS_SUCCESS` | Group 8 | Group 8's `QuarantinedTerminal` positive case executes the real `NtSetInformationFile` call with the hook unset. |
-| `RmStartSession`/`RmRegisterResources`/`RmGetList`/`RmEndSession` return-code override hook | The one call site for each of these four RM entry points in the admission/registration/list/session-end sequence | Only that call's own returned DWORD (and, for `RmGetList` only, its `needed`/`count` out-values), to a caller-supplied combination representing a malformed count, non-growing count, third `MORE_DATA`, or an admission/registration/session-end failure code — never a combination already provable on the real admitted platform | Group 6 | Group 6's first-violation-attribution positive case executes the real `RmStartSession`/`RmRegisterResources`/`RmGetList`/`RmEndSession` sequence with every hook unset. |
+| `NtSetInformationFile` return-code override hook | The one call site in the quarantine rename path, immediately after live parent/source handles and all authority are validated | Failure-only domain: only the returned `NTSTATUS`, to a caller-supplied nonzero failure value, for Group 8's single "unsupported native/layout/handle admission refusal" negative partition; never `0`/`STATUS_SUCCESS` | Group 8 | Group 8's `QuarantinedTerminal` positive case executes the real `NtSetInformationFile` call with the hook unset. |
+| `RmStartSession`/`RmRegisterResources`/`RmEndSession` return-code override hook | The one call site for each of these three RM entry points (admission, registration, session-end) | Failure-only domain: only that call's own returned DWORD, to a caller-supplied nonzero failure code — never `ERROR_SUCCESS`/`0` | Group 6 | Group 6's first-violation-attribution positive case executes the real `RmStartSession`/`RmRegisterResources`/`RmEndSession` calls with every hook unset. |
+| `RmGetList` negative-tuple override hook | The one call site for each of the up-to-three permitted `RmGetList` invocations | RM diagnostic negative-tuple domain: only the exact returned tuple `(result, needed, count)`, restricted to this closed set — `SUCCESS` with `count` greater than the currently allocated capacity (malformed count); `MORE_DATA` with `needed` <= the currently allocated `count` (non-growing count); a third successive `MORE_DATA` response after one prior resize (unstable-list degradation, cap violation); `needed` > 64 on the first call (capped failure); or any nonzero failure DWORD — never a tuple representing a genuine, capacity-consistent `SUCCESS`/`MORE_DATA` admission already provable on the real platform | Group 6 | Group 6's first-violation-attribution positive case executes the real `RmGetList` sequence with the hook unset. |
 | Injectable generic quarantine observer/barrier | Fires exactly after both live handles are open and all parent/source/target authority is validated, immediately before `NtSetInformationFile` | A timing/synchronization observation only (signals that the native call is about to happen); never the call's outcome | Group 8 | Group 8's `QuarantinedTerminal` positive case fires the barrier with no competitor action taken. |
 
 Every group's positive/success partition must execute with no test seam/hook active — real `git.exe`, real filesystem,
@@ -459,11 +473,12 @@ implementation-time/review-time work, not a planning-amendment obligation.
 
 Before GH-107 promotion/activation, on clean then-current main run the full Acceptance Release command once as a
 baseline observation, not a focused/final gate and not a consumption of the candidate final gate. Record a public Issue
-#107 receipt with exact SHA, relevant `dotnet --info` SDK version, Windows version/architecture, rooted Git identity and
-capability, RM capability, discovered/pass/fail/skip counts, and exact sorted failure signatures. If unavailable, GH-107
-remains Blocked. Candidate comparison requires all ProcessOwnership/FixtureCleanup tests pass with zero skips, no new
-failure signature beyond baseline, and no baseline pass becoming fail; disappeared baseline failures are allowed and count
-changes require explanation. Prefer the same environment and classify differences explicitly.
+#107 receipt with exact SHA, relevant `dotnet --info` SDK version, Windows version/architecture, control-root volume
+filesystem identity (must be NTFS per clause 11), rooted Git identity and capability, RM capability, discovered/pass/
+fail/skip counts, and exact sorted failure signatures. If unavailable, GH-107 remains Blocked. Candidate comparison
+requires all ProcessOwnership/FixtureCleanup tests pass with zero skips, no new failure signature beyond baseline, and
+no baseline pass becoming fail; disappeared baseline failures are allowed and count changes require explanation.
+Prefer the same environment and classify differences explicitly.
 
 The one required focused implementation command, before `ReviewRequired`, is:
 `dotnet test tests/SeqDoc.AcceptanceTests/SeqDoc.AcceptanceTests.csproj -c Release --filter "FullyQualifiedName~FixtureCleanupAuthorityTests|FullyQualifiedName~FixtureCleanupProcessTests|FullyQualifiedName~FixtureCleanupIntegrationTests|FullyQualifiedName~ProcessOwnershipTests"`, exactly `86 passed/0 failed/0 skipped`.

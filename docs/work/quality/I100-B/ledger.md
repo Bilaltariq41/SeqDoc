@@ -282,8 +282,7 @@ canonical execution, or authorize product implementation.
 
 A throwaway, read-only spike (not in this repo; full harness source, build/run commands, and results table published at
 https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5796090920) measured, on one machine — Windows build
-`10.0.26200.0` (a Windows 11 24H2/25H2-era build), x64, .NET runtime `10.0.11` (SDK `10.0.302`), assumed-NTFS volume
-(filesystem name not independently confirmed on that machine; treated as lower-confidence evidence) — that
+`10.0.26200.0` (a Windows 11 24H2/25H2-era build), x64, .NET runtime `10.0.11` (SDK `10.0.302`) — that
 `SetFileInformationByHandle` with `FileRenameInfo` (class 3) and a non-NULL `RootDirectory` handle repeatedly fails
 with Win32 error 87 (`ERROR_INVALID_PARAMETER`) across three development runs, with the source object's `FILE_ID_INFO`
 provably unchanged after each failure (a true no-op, not a partial rename). This is a measured result on that one
@@ -291,6 +290,15 @@ environment, not a universal claim across every supported Windows build. It also
 Microsoft `FILE_RENAME_INFO` documentation, which describes a `RootDirectory`-relative name as a supported form of the
 structure; the conflict is between that public documentation and this empirical Win32-layer observation, not a
 confirmation by the documentation that the form is unsupported.
+
+The spike's original report left the volume's filesystem as an unconfirmed assumption ("assumed-NTFS... not
+independently confirmed"). That gap is now closed: on the same physical machine, `Get-Volume -DriveLetter C |
+Select-Object FileSystem,FileSystemType` (run without elevation) reports `FileSystem: NTFS` / `FileSystemType: NTFS`
+for the `C:` volume, which is confirmed via `$env:TEMP` to be the same volume hosting `%TEMP%`
+(`C:\Users\<user>\AppData\Local\Temp`) and therefore the same volume the spike's scratch directory and all four
+scenarios ran on. The filesystem is accordingly frozen as an admitted boundary rather than left an assumption:
+`checkpoint.md` clause 11 now requires NTFS for the control-root volume, with a non-NTFS volume a blocking non-pass,
+never a skip, matching the existing Git/RM capability boundaries.
 
 The same spike measured, on the same one machine, that the native alternative succeeds: `NtSetInformationFile`
 (`ntdll.dll`) with native `FileRenameInformation` (class 10, independently confirmed against Microsoft's WDK docs and
@@ -362,6 +370,24 @@ contradictory `IO_STATUS_BLOCK`, or unproven postcondition as a loud fail-closed
 Ahmad's confirmation is explicit that it is distinct from Qhatahet's design authorship and from Abood-essa's
 independent T2 judgment, and that it does not itself approve the amendment, resume canonical execution, or authorize
 product implementation. The previously outstanding I100-B-A1 coordinator-selection item is therefore resolved; the
-amendment still requires Abood-essa's authenticated latest-head T2 approval of exact head
-`098f98066add1deaef4b279a70d4ea2a6dcd0693` before canonical resume, per the Review and activation contract in
+amendment still requires Abood-essa's authenticated latest-head T2 approval of whichever commit is the actual current
+PR #121 head at the time of his review — not a SHA fixed in this sentence, which would otherwise go stale every time a
+later repair commit changes the head — before canonical resume, per the Review and activation contract in
 `checkpoint.md`.
+
+## 2026-09-24 I100-B-A8–A11 repair (Abood-essa latest-head rereview)
+
+Abood-essa reviewed exact head `9c4334cc9d5171b82a1c6fca448b2d6e5171fe13` and requested changes at
+https://github.com/Bilaltariq41/SeqDoc/pull/121#pullrequestreview-5296597077 with 4 new findings (2 High, 2 Medium),
+while confirming A1–A7 are "substantially and responsively repaired" and that Ahmad's coordinator-selection receipt is
+now posted. All four are repaired in this round.
+
+| Finding | Disposition and proof |
+|---|---|
+| I100-B-A8 (High) — unauthorized fourth path added | **Fixed.** `docs/project/delegated-contribution-workflow.md` is restored exactly to its content at parent commit `141e3a0` (before this repair series touched it), removing the out-of-scope "Repair trace: PR #121" section added there. The equivalent repair trace already lives inside this ledger's "2026-09-23 I100-B-A1–A7 repair" section and this one, both inside the frozen checkpoint/ledger scope. |
+| I100-B-A9 (High) — requested SHA and worker review are stale | **Fixed.** The stale hardcoded-SHA authorization sentence in the "Recovery decision and role change" subsection above no longer pins a specific commit (which would go stale again the moment this repair commits); it now refers to whichever commit is the actual current PR #121 head at the time of Abood-essa's review. A fresh worker complete-amendment Reviewer pass is run against the exact final head of this repair round and its receipt posted as an Issue #107 comment (the same pattern as the prior worker-review receipt at https://github.com/Bilaltariq41/SeqDoc/issues/107#issuecomment-5796469380), with rereview requested only at that same, subsequently unchanged, head. |
+| I100-B-A10 (Medium) — closed RM hook contract contradicts its failure-only rule | **Fixed.** `checkpoint.md`'s "Permitted test seams" table now states two distinct closed override domains: a failure-only domain (clock/sleeper, `NtSetInformationFile`, and the three simple-failure RM calls `RmStartSession`/`RmRegisterResources`/`RmEndSession`), and a separate RM diagnostic negative-tuple domain used only by `RmGetList`, whose hook may substitute only an exact `(result, needed, count)` tuple from a closed enumerated set (malformed count, non-growing count, third `MORE_DATA`, `needed>64`, or an outright failure DWORD). No tuple in either domain may establish RM ownership, admission, attribution, stage success, or final success, regardless of whether `RmGetList`'s nominal `result` is `SUCCESS`/`MORE_DATA` or a failure code. |
+| I100-B-A11 (Medium) — spike filesystem assumed, not observed | **Fixed with real evidence, not just a frozen assumption.** Independently confirmed on the same physical machine that ran the spike: `Get-Volume -DriveLetter C` reports `FileSystem: NTFS`/`FileSystemType: NTFS` for the `C:` volume, and `$env:TEMP` confirms `%TEMP%` (the spike's scratch-directory parent) is on that same `C:` volume. `checkpoint.md` clause 11 now requires NTFS for the control-root volume as an explicit admitted boundary, with a non-NTFS volume a blocking non-pass, never a skip; the focused-verification receipt sentence now also requires recording the control-root volume's filesystem identity alongside the Windows build. |
+
+Verification: `git diff --check` clean; `python tools/governance/work_state.py validate`, `project-execution --check`,
+and `python -m unittest tests.governance.test_work_state` re-run and pass at the final head of this round.
